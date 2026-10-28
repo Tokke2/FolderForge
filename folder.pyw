@@ -4323,6 +4323,12 @@ def dialog_layout(win):
     return body, footer
 
 
+def project_year_choices(today=None):
+    """Innevarande år och tre år bakåt, beräknat när väljaren öppnas."""
+    year = (today or datetime.now()).year
+    return [str(year - offset) for offset in range(4)]
+
+
 def focus_project_name(entry) -> None:
     """Fokusera namn och markera befintlig text när dialogen har visats."""
     if entry.winfo_exists():
@@ -5443,18 +5449,23 @@ class FolderForgeApp(_DnDCTkBase):
     # LOGIK: Skapa mappar
     # ============================================================
     @staticmethod
-    def _bygg_projektnamn(namn_text: str, lokal: str) -> str:
+    def _bygg_projektnamn(namn_text: str, lokal: str, year: str = "—") -> str:
         """Sätter ihop slutnamnet för standardprojekt.
 
-        Lokalen (om vald i dropdownen) läggs ALLTID sist i namnet —
+        Lokalen läggs efter projektnamnet, och valt år efter lokalen —
         användarens beslut ("JPM602 SIDORUTA LAXÅ"). Handskrivna lokal-
         ord i textfältet plockas bort först (case-insensitivt), så
         dropdownen är enda källan → inga dubbletter möjliga.
         """
         ord_lista = [o for o in str(namn_text).split()
                      if o.upper() not in LOKAL_CHOICES]
+        # Undvik dubbelt valt år utan att radera andra år i fri text.
+        if year and year != "—":
+            ord_lista = [o for o in ord_lista if o != year]
         if lokal and lokal != "—":
             ord_lista.append(lokal)
+        if year and year != "—":
+            ord_lista.append(year)
         return " ".join(ord_lista)
 
     def _create_folder_dialog(self) -> None:
@@ -5502,6 +5513,7 @@ class FolderForgeApp(_DnDCTkBase):
         resultat: Dict[str, Optional[str]] = {"namn": None}
         namn_var = ctk.StringVar()
         lokal_var = ctk.StringVar(value="—")
+        year_var = ctk.StringVar(value="—")
 
         def _rubrik(text: str) -> None:
             ctk.CTkLabel(
@@ -5565,7 +5577,7 @@ class FolderForgeApp(_DnDCTkBase):
             _avsluta_redigering()
 
         # ── Lokal ──────────────────────────────────────────────────
-        _rubrik("LOKAL  ·  hamnar sist i namnet")
+        _rubrik("LOKAL  ·  före valt år")
         ctk.CTkOptionMenu(
             body, values=["—"] + list(LOKAL_CHOICES),
             variable=lokal_var,
@@ -5574,6 +5586,25 @@ class FolderForgeApp(_DnDCTkBase):
             height=scaled(28, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s)),
         ).pack(anchor="w", padx=scaled(15, s))
+
+        _rubrik("ÅR  ·  valfritt, läggs efter lokalen")
+        year_menu = ctk.CTkOptionMenu(
+            body, values=["—"] + project_year_choices(), variable=year_var,
+            command=lambda _v: _förnya_utseende(),
+            height=scaled(28, s), corner_radius=8,
+            font=ctk.CTkFont(size=scaled_font(12, s)),
+        )
+        year_menu.pack(anchor="w", padx=scaled(15, s))
+
+        def refresh_year_choices():
+            values = ["—"] + project_year_choices()
+            year_menu.configure(values=values)
+            if year_var.get() not in values:
+                year_var.set("—")
+            # Även en dialog som är öppen över nyår följer med.
+            win.after(60_000, refresh_year_choices)
+
+        win.after(60_000, refresh_year_choices)
 
         # ── Live-förhandsvisning av slutnamnet ─────────────────────
         preview_ram = ctk.CTkFrame(body, corner_radius=8,
@@ -5593,7 +5624,7 @@ class FolderForgeApp(_DnDCTkBase):
             if not namn_var.get().strip():
                 return    # Return-vakt: lokal ensam är INTE ett projektnamn
             resultat["namn"] = self._bygg_projektnamn(
-                namn_var.get(), lokal_var.get())
+                namn_var.get(), lokal_var.get(), year_var.get())
             win.destroy()
 
         skapa_knapp = ctk.CTkButton(
@@ -5623,11 +5654,12 @@ class FolderForgeApp(_DnDCTkBase):
             eget_namn = namn_var.get().strip()
             # Viktigt: "tomt namn" mäts på textfältet — ENBART en vald
             # lokal (utan eget namn) är aldrig ett giltigt projektnamn.
-            namn = self._bygg_projektnamn(eget_namn, lokal_var.get()).strip()
+            namn = self._bygg_projektnamn(eget_namn, lokal_var.get(), year_var.get()).strip()
             preview_var.set(f"📁 {namn}" if eget_namn
                             else "📁 (ange ett projektnamn)")
             skapa_knapp.configure(state=("normal" if eget_namn else "disabled"))
 
+        year_var.trace_add("write", _förnya_utseende)
         namn_var.trace_add("write", _förnya_utseende)
         _förnya_utseende()                  # startläge: chips släckta, Skapa av
 

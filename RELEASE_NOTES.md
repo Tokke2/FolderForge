@@ -1,6 +1,7 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Valfri årsväljare i projektdialogen: innevarande år och tre år bakåt, automatiskt vid årsskifte. Året läggs efter lokalen.
 - Både X (stäng) och minimeringsknappen gömmer huvudfönstret i systemfältet.
 - Appen fortsätter köra i bakgrunden; välj Avsluta i tray-menyn för att avsluta.
 - Händelser från barnwidgetar och redan dolda/återställda fönster ignoreras.
@@ -16,7 +17,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-36 automatiserade tester godkända och Python-syntax kontrollerad.
+41 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

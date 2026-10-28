@@ -118,3 +118,11 @@ Färdiga kodändringar testas och pushas till arbetsgrenen
 Appen uppdaterar från publicerade releaser, inte direkt från en branch.
 `main` ändras eller mergas inte som del av publiceringen.
 Senaste version: **v0.0.2**. Se RELEASE_NOTES.md för ändringslista.
+
+## År i projektnamnet
+
+Dialogen **Nytt Standardprojekt** har en valfri årsväljare. Den visar
+innevarande år och de tre föregående åren (2026: 2026, 2025, 2024, 2023).
+Året placeras efter vald lokal, exempelvis `ABC123 SIDORUTA LAXÅ 2025`.
+Välj `—` för inget år. Listan räknas om för varje ny dialog och kontrolleras
+även varje minut om dialogen hålls öppen över ett årsskifte.
