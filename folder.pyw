@@ -4386,6 +4386,7 @@ class FolderForgeApp(_DnDCTkBase):
 
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_systray)
         self.bind("<Configure>", self._on_resize)
+        self.bind("<Unmap>", self._on_window_unmap, add="+")
 
         if start_minimerad:
             self.after_idle(self._minimize_to_systray)
@@ -6292,6 +6293,18 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Tray & Autostart
     # ============================================================
+    def _on_window_unmap(self, event) -> None:
+        # Barnwidgetar och withdraw() får också Unmap. Bara en verklig
+        # minimering av huvudfönstret ska skapa/återanvända tray-ikonen.
+        if event.widget is self:
+            self.after_idle(self._send_iconic_window_to_tray)
+
+    def _send_iconic_window_to_tray(self) -> None:
+        # Läs läget efter att fönsterhanteraren hunnit uppdatera det.
+        # Ett återställt fönster ska inte döljas av ett gammalt event.
+        if self.winfo_exists() and self.state() == "iconic":
+            self._minimize_to_systray()
+
     def _minimize_to_systray(self) -> None:
         self.withdraw()
         # ENDAST EN TRAY-IKON, alltid:

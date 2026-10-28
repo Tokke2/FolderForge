@@ -1,3 +1,27 @@
+# FolderForge v0.0.2
+
+## Ändringar
+- Både X (stäng) och minimeringsknappen gömmer huvudfönstret i systemfältet.
+- Appen fortsätter köra i bakgrunden; välj Avsluta i tray-menyn för att avsluta.
+- Händelser från barnwidgetar och redan dolda/återställda fönster ignoreras.
+- Separata dialogers X stänger fortfarande endast respektive dialog.
+
+## Uppdatering och installation
+Installerad v0.0.1 hämtar den nya stabila releasen vid nästa schemalagda
+kontroll (var 12:e timme). Hämtad uppdatering installeras vid nästa appstart.
+Status visas under Hjälp → Uppdateringsstatus.
+
+För manuell installation: ladda ned Source code (zip) under Assets och packa
+upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
+Detta är ett källkodspaket, inte en fristående Windows-exe.
+
+## Verifiering
+36 automatiserade tester godkända och Python-syntax kontrollerad.
+Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
+på Windows. Publicerad från arbetsgrenen; main är orörd.
+
+---
+
 # FolderForge v0.0.1
 
 Första publicerade releasen i 0.0-serien.

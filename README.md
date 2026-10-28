@@ -102,3 +102,19 @@ Se [RELEASE_NOTES.md](RELEASE_NOTES.md) för installation och ändringslista.
 Dialogerna har nu scrollbart innehåll och separat knappfot, med flerradiga
 knappar där utrymmet kräver det. Appikonen har en egen mapp-/hammardesign.
 Ikonerna kan återskapas med `python tools/build_icon.py` (kräver Pillow).
+
+## Stäng och minimera
+
+Både huvudfönstrets **X** och **minimeringsknapp** gömmer appen i systemfältet,
+inte som en minimerad knapp i aktivitetsfältet. Appen fortsätter köra i
+bakgrunden. Öppna via tray-ikonen eller snabbtangenten; välj **Avsluta** i
+tray-menyn för att avsluta programmet. Separata dialogers X stänger bara dialogen.
+
+
+## Publicering av kodändringar
+
+Färdiga kodändringar testas och pushas till arbetsgrenen
+`arena/319fd9b1-folderforge`, med ny versionsbeteckning och stabil GitHub-release.
+Appen uppdaterar från publicerade releaser, inte direkt från en branch.
+`main` ändras eller mergas inte som del av publiceringen.
+Senaste version: **v0.0.2**. Se RELEASE_NOTES.md för ändringslista.

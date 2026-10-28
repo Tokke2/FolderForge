@@ -36,7 +36,7 @@ from typing import Any, Dict, Final, Optional, Sequence, Tuple
 #  1. APPIDENTITET — vem/vad appen är
 # ══════════════════════════════════════════════════════════════════════════
 APP_NAME: Final[str] = "FolderForge"
-APP_VERSION: Final[str] = "0.0.1"
+APP_VERSION: Final[str] = "0.0.2"
 COPYRIGHT_OWNER: Final[str] = f"© Rickard Längkvist {datetime.now().year}"
 
 
