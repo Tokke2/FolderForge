@@ -234,6 +234,7 @@ DEFAULT_HOTKEY: frozenset[str] = frozenset({"ctrl", "shift", "m"})
 # alltid samma normalisering/sanering som handskriven text.
 DAMAGE_TYPE_CHIPS: Final[Tuple[str, ...]] = (
     "STENSKOTT",
+    "VINDRUTA",
     "SIDORUTA",
     "BAKRUTA",
 )

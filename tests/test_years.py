@@ -34,3 +34,8 @@ class YearTests(unittest.TestCase):
 
     def test_selected_year_not_duplicated(self):
         self.assertEqual(self.ns['_bygg_projektnamn']('ABC123 2026', 'LAXÅ', '2026'), 'ABC123 LAXÅ 2026')
+
+    def test_windscreen_damage_type_and_project_name(self):
+        self.assertEqual(settings.DAMAGE_TYPE_CHIPS.count('VINDRUTA'), 1)
+        self.assertEqual(self.ns['_bygg_projektnamn']('ABC123 VINDRUTA', 'LAXÅ', '2026'),
+                         'ABC123 VINDRUTA LAXÅ 2026')
