@@ -628,7 +628,7 @@ class SingleInstanceLock:
             # Detach() överför ägandet till oss; release() stänger explicit.
             self._mutex_handle = handle.Detach()
             self._mutex_name = name
-            self._backend = f"win32-mutex-{'global' if prefix == 'Global\\' else 'local'}"
+            self._backend = "win32-mutex-" + prefix.rstrip(chr(92)).lower()
             self._is_primary = True
             self._write_pid()
             self._register_atexit()
@@ -1701,6 +1701,7 @@ class AppSettings:
     save_root: str = field(default_factory=lambda: str(Path.home() / "Projects"))
     open_after_creation: bool = True
     theme: str = "Dark"
+    default_template: str = "Skaderapport"
     last_template: str = ""
     plate_mode: bool = True
     start_minimized: bool = True    # starta i systray utan att visa fönstret
@@ -1728,6 +1729,7 @@ class AppSettings:
             save_root=data.get("save_root", str(Path.home() / "Projects")),
             open_after_creation=data.get("open_after_creation", True),
             theme=data.get("theme", "Dark"),
+            default_template=data.get("default_template", "Skaderapport"),
             last_template=data.get("last_template", ""),
             plate_mode=data.get("plate_mode", True),
             start_minimized=data.get("start_minimized", True),
@@ -1800,12 +1802,17 @@ class TemplateManager:
                                f.name)
                 continue
             try:
-                templates[data["name"]] = data["structure"]
+                if isinstance(data["name"], str) and isinstance(data["structure"], str):
+                    templates[data["name"]] = data["structure"]
             except KeyError as e:
                 logger.warning("Kunde inte läsa mall %s: %s", f.name, e)
         return templates
 
     def save_template(self, name: str, structure: str) -> None:
+        if name in self._builtin:
+            raise ValueError("Inbyggda mallar kan inte skrivas över. Välj ett eget namn.")
+        if not StructureEngine.parse_structure_text(structure)[1]:
+            raise ValueError("Mallen måste innehålla en struktur.")
         safe = NameValidator.sanitize(name)
         # M1/F1 — atomisk skrivning med backup. Obs: filen får nu indent=2
         # (atomic_write_json:s standard) istället för en enda lång rad;
@@ -1814,8 +1821,7 @@ class TemplateManager:
             TEMPLATES_DIR / f"{safe}.json",
             {"name": name, "structure": structure},
         ):
-            logger.error("Kunde inte spara mall '%s' (atomisk skrivning misslyckades)",
-                         name)
+            raise OSError(f"Kunde inte spara mall {name!r}")
 
     def delete_template(self, name: str) -> bool:
         if name in self._builtin:
@@ -4306,6 +4312,25 @@ class _DnDCTkBase(ctk.CTk):
             DND_AVAILABLE = False
 
 
+def dialog_layout(win):
+    """Scrollbart innehåll och en separat knappfot som aldrig scrollas bort."""
+    win.grid_rowconfigure(0, weight=1)
+    win.grid_columnconfigure(0, weight=1)
+    body = ctk.CTkScrollableFrame(win, fg_color="transparent")
+    body.grid(row=0, column=0, sticky="nsew")
+    footer = ctk.CTkFrame(win, fg_color="transparent")
+    footer.grid(row=1, column=0, sticky="ew", padx=12, pady=10)
+    return body, footer
+
+
+def focus_project_name(entry) -> None:
+    """Fokusera namn och markera befintlig text när dialogen har visats."""
+    if entry.winfo_exists():
+        entry.focus_set()
+        entry.select_range(0, "end")
+        entry.icursor("end")
+
+
 # ============================================================
 # Huvudapplikation
 # ============================================================
@@ -4317,6 +4342,9 @@ class FolderForgeApp(_DnDCTkBase):
         # originalkrokarna, är idempotent och kastar aldrig.
         install_crash_hooks(logger)
         super().__init__(**kwargs)
+        # Dölj före update_idletasks så att inget fönster blinkar till.
+        if start_minimerad:
+            self.withdraw()
 
         # M19/C44 — självläkning: reparera ett autostartvärde som pekar på
         # konsol-python (svart ruta vid inloggning) INNAN något annat körs.
@@ -4360,7 +4388,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.bind("<Configure>", self._on_resize)
 
         if start_minimerad:
-            self.after(100, self._minimize_to_systray)
+            self.after_idle(self._minimize_to_systray)
 
     # ============================================================
     # Fönster
@@ -4457,6 +4485,8 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
+        help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
+        help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
         help_menu.add_command(label="Om FolderForge", command=self._show_info)
 
     def _rebuild_visa_menu(self) -> None:
@@ -4673,8 +4703,8 @@ class FolderForgeApp(_DnDCTkBase):
         ctk.CTkLabel(
             scroll,
             text=(
-                "Skapar ett projekt med standardmappar:\n"
-                "Bilder, Skadeanmälan, Diagnos, Instruktioner, Kvalitetsrapport"
+                "Använder din sparade standardmall (väljs under Projektmallar).\n"
+                "Egen struktur nedan gäller endast det aktuella projektet."
             ),
             font=ctk.CTkFont(size=scaled_font(12, s)),
             justify="left", wraplength=0,
@@ -4843,7 +4873,7 @@ class FolderForgeApp(_DnDCTkBase):
 
             ctk.CTkLabel(
                 left,
-                text=f"📁  {item['name']}",
+                text=f"📁  {item['name']}" + (" (saknas)" if not path.exists() else ""),
                 font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
                 anchor="w",
             ).pack(fill="x")
@@ -5448,21 +5478,22 @@ class FolderForgeApp(_DnDCTkBase):
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
         win.grab_set()
-        win.resizable(False, False)
+        win.resizable(True, True)
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        bredd = min(scaled(480, s), int(sw * 0.5))
-        höjd = min(scaled(390, s), int(sh * 0.6))
+        bredd = min(scaled(560, s), max(320, sw - 80))
+        höjd = min(scaled(560, s), max(240, sh - 100))
         win.geometry(f"{bredd}x{höjd}+{(sw - bredd) // 2}+{(sh - höjd) // 2}")
+        body, footer = dialog_layout(win)
 
         # ── Rubrik + underrubrik ───────────────────────────────────
         ctk.CTkLabel(
-            win, text="📁  Nytt standardprojekt",
+            body, text="📁  Nytt standardprojekt",
             font=ctk.CTkFont(size=scaled_font(15, s), weight="bold"),
             anchor="w", text_color=("gray15", "gray90"),
         ).pack(anchor="w", padx=scaled(15, s), pady=(scaled(12, s), 0))
         ctk.CTkLabel(
-            win, text="Skapar projektmappen med alla standardundermappar.",
+            body, text="Skapar projektmappen med din valda standardmall.",
             font=ctk.CTkFont(size=scaled_font(11, s)),
             text_color=("gray40", "gray55"), anchor="w",
         ).pack(anchor="w", padx=scaled(15, s), pady=(0, scaled(4, s)))
@@ -5473,7 +5504,7 @@ class FolderForgeApp(_DnDCTkBase):
 
         def _rubrik(text: str) -> None:
             ctk.CTkLabel(
-                win, text=text,
+                body, text=text,
                 font=ctk.CTkFont(size=scaled_font(11, s), weight="bold"),
                 text_color=("gray40", "gray55"), anchor="w",
             ).pack(anchor="w", padx=scaled(15, s),
@@ -5482,7 +5513,7 @@ class FolderForgeApp(_DnDCTkBase):
         # ── Projektnamn ────────────────────────────────────────────
         _rubrik("PROJEKTNAMN")
         entry = ctk.CTkEntry(
-            win, textvariable=namn_var,
+            body, textvariable=namn_var,
             placeholder_text="t.ex. DSS817 eller dss 817 ...",
             font=ctk.CTkFont(size=scaled_font(13, s)),
             height=scaled(34, s),
@@ -5499,7 +5530,7 @@ class FolderForgeApp(_DnDCTkBase):
 
         # ── Skadetyp-chips med visuellt markeringsläge ─────────────
         _rubrik("SKADETYP  ·  SIDORUTA/BAKRUTA utesluter varandra")
-        chips_row = ctk.CTkFrame(win, fg_color="transparent")
+        chips_row = ctk.CTkFrame(body, fg_color="transparent")
         chips_row.pack(fill="x", padx=scaled(15, s))
         chip_färger = (ACCENT_ORANGE, ACCENT_PURPLE, ACCENT_TEAL, ACCENT_BLUE)
         chip_knappar: Dict[str, Any] = {}
@@ -5511,7 +5542,8 @@ class FolderForgeApp(_DnDCTkBase):
                 height=scaled(26, s), corner_radius=13,
                 font=ctk.CTkFont(size=scaled_font(11, s)),
             )
-            knapp.pack(side="left", padx=(0, scaled(6, s)), pady=scaled(2, s))
+            knapp.grid(row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
+            chips_row.grid_columnconfigure(i % 2, weight=1)
             chip_knappar[chip] = knapp
 
         def toggla(chip: str) -> None:
@@ -5534,7 +5566,7 @@ class FolderForgeApp(_DnDCTkBase):
         # ── Lokal ──────────────────────────────────────────────────
         _rubrik("LOKAL  ·  hamnar sist i namnet")
         ctk.CTkOptionMenu(
-            win, values=["—"] + list(LOKAL_CHOICES),
+            body, values=["—"] + list(LOKAL_CHOICES),
             variable=lokal_var,
             command=lambda _v: _förnya_utseende(),
             fg_color=ACCENT_BLUE, button_color=ACCENT_BLUE,
@@ -5543,7 +5575,7 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(anchor="w", padx=scaled(15, s))
 
         # ── Live-förhandsvisning av slutnamnet ─────────────────────
-        preview_ram = ctk.CTkFrame(win, corner_radius=8,
+        preview_ram = ctk.CTkFrame(body, corner_radius=8,
                                    fg_color=("gray88", "gray20"))
         preview_ram.pack(fill="x", padx=scaled(15, s), pady=(scaled(12, s), 0))
         preview_var = ctk.StringVar()
@@ -5554,9 +5586,7 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(anchor="w", padx=scaled(12, s), pady=scaled(8, s))
 
         # ── Knappar ────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s),
-                     pady=(scaled(10, s), scaled(14, s)))
+        btn_row = footer
 
         def ok(*_e) -> None:
             if not namn_var.get().strip():
@@ -5603,7 +5633,7 @@ class FolderForgeApp(_DnDCTkBase):
         entry.bind("<Return>", ok)
         win.bind("<Escape>", lambda _e: win.destroy())
         win.protocol("WM_DELETE_WINDOW", win.destroy)
-        entry.focus_set()
+        win.after(150, lambda: focus_project_name(entry))
 
         self.wait_window(win)
         namn = (resultat["namn"] or "").strip()
@@ -5611,15 +5641,8 @@ class FolderForgeApp(_DnDCTkBase):
             self._create_std_proj(namn)
 
     def _create_std_proj(self, name: str) -> None:
-        regnr_info = ""
         if self.settings.plate_mode:
-            name, regnr = normalize_plate_name(name)
-            if regnr is None:
-                # MJUK varning — visas i förhandsdialogen, stoppar aldrig.
-                regnr_info = (
-                    "\n\nℹ️ Hittade inget regnr i början av namnet "
-                    "(format ABC123 eller ABC12A) — skapar som angivet."
-                )
+            name, _regnr = normalize_plate_name(name)
         try:
             safe_name = NameValidator.sanitize(name)
         except ValueError as e:
@@ -5630,41 +5653,16 @@ class FolderForgeApp(_DnDCTkBase):
         # namn även om jag skriver lower case") — ta INTE bort .upper() igen.
         root = Path(self.settings.save_root) / safe_name.upper()
 
-        if root.exists():
-            choice = messagebox.askyesnocancel(
-                "Mappen finns redan",
-                f"'{root.name}' finns redan.\n\n"
-                f"Ja      → Öppna befintlig mapp\n"
-                f"Nej     → Avbryt\n"
-                f"Avbryt  → Stäng dialogen",
-            )
-            if choice is True:
-                self._open_path(root)
-                self._set_result(f"📂 Öppnade: {root.name}", ACCENT_ORANGE)
+        templates = self.template_mgr.list_templates()
+        selected = self.settings.default_template
+        if selected not in templates:
+            messagebox.showwarning("Standardmall saknas", "Välj en ny standard under Projektmallar.")
             return
-
-        folders = [
-            "Bilder", "Skadeanmälan", "Diagnos",
-            "Instruktioner", "Kvalitetsrapport",
-        ]
-        preview = (
-            f"📁 {root.name}/\n"
-            + "\n".join(f"    📁 {f}/" for f in folders)
-            + f"\n\nTotalt: {len(folders)} undermappar"
-        )
-
-        if not messagebox.askyesno(
-            "Förhandsvisning", f"Skapa detta?\n\n{preview}{regnr_info}",
-        ):
-            return
-
-        try:
-            root.mkdir(parents=True)
-            for folder in folders:
-                (root / folder).mkdir()
-            self._on_creation_success(root)
-        except OSError as e:
-            self._set_result(f"❌ Fel: {e}", ACCENT_RED)
+        structure = templates[selected]
+        _, items = StructureEngine.parse_structure_text(structure)
+        items, _ = strip_root_level(items, root.name)
+        if self._show_preview(root.name, items):
+            self._build_structure(root.name, items)
 
     def _create_from_structure_dialog(self) -> None:
         s = self._scale
@@ -5683,19 +5681,20 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_PURPLE,
+            body, fg_color=ACCENT_PURPLE,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📋  Skapa från Struktur",
+            body, text="📋  Skapa från Struktur",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
-        inner = ctk.CTkScrollableFrame(win, fg_color="transparent")
+        inner = ctk.CTkScrollableFrame(body, fg_color="transparent")
         inner.pack(
             fill="both", expand=True,
             padx=scaled(15, s), pady=scaled(10, s),
@@ -5707,12 +5706,14 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(anchor="w", pady=(scaled(5, s), scaled(2, s)))
 
         root_var = ctk.StringVar()
-        ctk.CTkEntry(
+        root_entry = ctk.CTkEntry(
             inner, textvariable=root_var,
             height=scaled(36, s),
             font=ctk.CTkFont(size=scaled_font(13, s)),
             placeholder_text="T.ex. MittProjekt",
-        ).pack(fill="x")
+        )
+        root_entry.pack(fill="x")
+        win.after(150, lambda: focus_project_name(root_entry))
 
         ctk.CTkLabel(
             inner, text="Klistra in trädstruktur:",
@@ -5726,8 +5727,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         txt.pack(fill="both", expand=True)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        btn_row = footer
 
         def preview_and_create():
             raw = txt.get("1.0", "end")
@@ -5796,25 +5796,29 @@ class FolderForgeApp(_DnDCTkBase):
         )
 
     def _build_structure(self, root_name: str, items: List[dict]) -> bool:
+        try:
+            root_name = NameValidator.sanitize(root_name)
+        except ValueError as exc:
+            messagebox.showwarning("Ogiltigt namn", str(exc))
+            return False
         base = Path(self.settings.save_root) / root_name
 
-        if base.exists():
-            choice = messagebox.askyesnocancel(
-                "Mappen finns redan",
-                f"'{base.name}' finns redan.\n\n"
-                f"Ja      → Slå ihop (lägg till filer som saknas)\n"
-                f"Nej     → Öppna befintlig mapp och avbryt\n"
-                f"Avbryt  → Gör ingenting",
-            )
-            if choice is None:
-                return False
-            elif choice is False:
-                self._open_path(base)
-                self._set_result(f"📂 Öppnade: {base.name}", ACCENT_ORANGE)
-                return False
+        # Samma namn med annan skiftning räknas också som en dubblett.
+        try:
+            existing = next((p for p in base.parent.iterdir()
+                             if p.name.casefold() == base.name.casefold()), None) if base.parent.exists() else None
+        except OSError as exc:
+            messagebox.showerror("Fel", f"Kunde inte läsa projektmappen: {exc}")
+            return False
+        if existing is not None:
+            if messagebox.askyesno("Mappen finns redan",
+                                  f"'{existing.name}' finns redan. Öppna befintlig mapp istället?"):
+                self._open_path(existing)
+            return False
 
         try:
-            base.mkdir(parents=True, exist_ok=True)
+            # exist_ok=False skyddar även om mappen skapas efter kontrollen.
+            base.mkdir(parents=True, exist_ok=False)
             for it in items:
                 p = base.joinpath(*it['path'])
                 if not NameValidator.is_safe_path(base, p):
@@ -5891,28 +5895,29 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_ORANGE,
+            body, fg_color=ACCENT_ORANGE,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📤  Exporterad Mappstruktur",
+            body, text="📤  Exporterad Mappstruktur",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         ctk.CTkLabel(
-            win, text="Mappstruktur:",
+            body, text="Mappstruktur:",
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
         ).pack(
             anchor="w", padx=scaled(15, s),
-            pady=(scaled(60, s), scaled(5, s)),
+            pady=(scaled(8, s), scaled(5, s)),
         )
 
         textbox = ctk.CTkTextbox(
-            win,
+            body,
             font=ctk.CTkFont(family="Consolas", size=scaled_font(12, s)),
         )
         textbox.pack(
@@ -5921,8 +5926,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         textbox.insert("1.0", text)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        btn_row = footer
 
         def copy_clip():
             self.clipboard_clear()
@@ -5945,24 +5949,27 @@ class FolderForgeApp(_DnDCTkBase):
                 title="Spara mall", text="Mallens namn:",
             ).get_input()
             if name and name.strip():
-                self.template_mgr.save_template(
-                    name.strip(), textbox.get("1.0", "end-1c"),
-                )
+                try:
+                    self.template_mgr.save_template(name.strip(), textbox.get("1.0", "end-1c"))
+                except (ValueError, OSError) as exc:
+                    messagebox.showerror("Kunde inte spara mall", str(exc))
+                    return
                 messagebox.showinfo("Sparat", f"Mall '{name}' sparad!")
 
-        for txt_btn, cmd, color in [
+        for index, (txt_btn, cmd, color) in enumerate([
             ("📋 Kopiera", copy_clip, ACCENT_BLUE),
             ("💾 Spara fil", save_file, ACCENT_GREEN),
             ("⭐ Spara som mall", save_as_template, ACCENT_ORANGE),
             ("Stäng", win.destroy, "gray"),
-        ]:
+        ]):
+            btn_row.grid_columnconfigure(index % 2, weight=1)
             ctk.CTkButton(
                 btn_row, text=txt_btn, command=cmd,
                 fg_color=color,
                 hover_color="#555" if color == "gray" else None,
                 height=scaled(36, s), corner_radius=8,
                 font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
-            ).pack(side="left", padx=(0, scaled(6, s)))
+            ).grid(row=index // 2, column=index % 2, sticky="ew", padx=3, pady=3)
 
     # ============================================================
     # LOGIK: Mallar
@@ -5985,27 +5992,28 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_GREEN,
+            body, fg_color=ACCENT_GREEN,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📋  Projektmallar",
+            body, text="📋  Projektmallar",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         selected_var = ctk.StringVar()
 
         list_frame = ctk.CTkScrollableFrame(
-            win, height=scaled(200, s),
+            body, height=scaled(100, s),
             fg_color=("gray92", "gray18"),
         )
         list_frame.pack(
             fill="both", expand=True,
-            padx=scaled(15, s), pady=(scaled(58, s), 0),
+            padx=scaled(15, s), pady=(scaled(8, s), 0),
         )
 
         for name in templates:
@@ -6013,14 +6021,14 @@ class FolderForgeApp(_DnDCTkBase):
             icon = "⭐" if is_builtin else "📄"
             ctk.CTkRadioButton(
                 list_frame,
-                text=f"{icon}  {name}",
+                text=f"{icon}  {name}" + (" — standard" if name == self.settings.default_template else ""),
                 variable=selected_var, value=name,
                 font=ctk.CTkFont(size=scaled_font(13, s)),
                 fg_color=ACCENT_GREEN, hover_color="#27ae60",
             ).pack(anchor="w", pady=scaled(4, s), padx=scaled(8, s))
 
         ctk.CTkLabel(
-            win, text="Förhandsvisning:",
+            body, text="Struktur (redigerbar, rotmappen på första raden):",
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
         ).pack(
             anchor="w", padx=scaled(15, s),
@@ -6028,7 +6036,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
 
         preview_box = ctk.CTkTextbox(
-            win, height=scaled(130, s),
+            body, height=scaled(130, s),
             font=ctk.CTkFont(family="Consolas", size=scaled_font(11, s)),
         )
         preview_box.pack(fill="x", padx=scaled(15, s))
@@ -6040,14 +6048,51 @@ class FolderForgeApp(_DnDCTkBase):
                 preview_box.insert("1.0", templates[sel])
 
         selected_var.trace_add("write", on_select)
+        if self.settings.default_template in templates:
+            selected_var.set(self.settings.default_template)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        edit_row = ctk.CTkFrame(body, fg_color="transparent")
+        edit_row.pack(fill="x", padx=scaled(15, s), pady=scaled(5, s))
+
+        def save_edited():
+            name = ctk.CTkInputDialog(title="Spara mall", text="Namn på den egna mallen:").get_input()
+            if not name or not name.strip():
+                return
+            name = name.strip()
+            if name in templates and not messagebox.askyesno("Skriv över mall", f"Ersätt '{name}'?"):
+                return
+            try:
+                self.template_mgr.save_template(name, preview_box.get("1.0", "end-1c"))
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Kunde inte spara mall", str(exc))
+                return
+            win.destroy()
+            self._template_dialog()
+
+        def set_default():
+            sel = selected_var.get()
+            if sel not in templates:
+                messagebox.showwarning("Välj mall", "Spara och välj en mall först.")
+                return
+            self.settings.default_template = sel
+            self._save_settings_silent()
+            messagebox.showinfo("Standardmall", f"Nya standardprojekt använder nu '{sel}'.")
+            win.destroy()
+            self._template_dialog()
+
+        ctk.CTkButton(edit_row, text="Ny mall", command=lambda: (
+            selected_var.set(""), preview_box.delete("1.0", "end"),
+            preview_box.insert("1.0", "projektnamn/\n    Bilder/\n")), width=100).pack(fill="x", pady=3)
+        ctk.CTkButton(edit_row, text="Spara som mall", command=save_edited, width=130).pack(fill="x", pady=3)
+        ctk.CTkButton(edit_row, text="Ange som standard", command=set_default, width=150).pack(fill="x", pady=3)
+
+        btn_row = footer
+        for column in range(3):
+            btn_row.grid_columnconfigure(column, weight=1)
 
         def use_template():
-            sel = selected_var.get()
-            if not sel:
-                messagebox.showwarning("Välj mall", "Välj en mall i listan.")
+            if not preview_box.get("1.0", "end-1c").strip():
+                messagebox.showwarning("Tom struktur", "Välj en mall eller skriv en egen struktur.")
                 return
             name = ctk.CTkInputDialog(
                 title="Projektnamn", text="Namnge projektet:",
@@ -6059,7 +6104,7 @@ class FolderForgeApp(_DnDCTkBase):
             except ValueError as e:
                 messagebox.showwarning("Ogiltigt namn", str(e))
                 return
-            structure = templates[sel].replace(
+            structure = preview_box.get("1.0", "end-1c").replace(
                 "projektnamn", safe,
             ).replace("ärendenummer", safe)
             _, items = StructureEngine.parse_structure_text(structure)
@@ -6071,6 +6116,9 @@ class FolderForgeApp(_DnDCTkBase):
             # v4.2, och strip_root_level() gör aldrig en icke-tom lista tom
             # (den returnerar items oförändrad om resultatet skulle bli tomt).
             items, _stripped = strip_root_level(items, safe)
+            if not items:
+                messagebox.showwarning("Tom struktur", "Ange en struktur först.")
+                return
             if self._show_preview(safe, items):
                 if self._build_structure(safe, items):
                     win.destroy()
@@ -6078,6 +6126,9 @@ class FolderForgeApp(_DnDCTkBase):
         def delete_template():
             sel = selected_var.get()
             if not sel:
+                return
+            if sel == self.settings.default_template:
+                messagebox.showinfo("Standardmall", "Välj en annan standardmall innan denna tas bort.")
                 return
             if not self.template_mgr.delete_template(sel):
                 messagebox.showinfo(
@@ -6089,12 +6140,12 @@ class FolderForgeApp(_DnDCTkBase):
             self._template_dialog()
 
         ctk.CTkButton(
-            btn_row, text="✅ Använd mall",
+            btn_row, text="✅ Skapa (tillfälligt)",
             command=use_template,
             fg_color=ACCENT_GREEN, hover_color="#27ae60",
             height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
-        ).pack(side="right")
+        ).grid(row=0, column=2, sticky="ew", padx=3)
 
         ctk.CTkButton(
             btn_row, text="🗑 Ta bort",
@@ -6103,7 +6154,7 @@ class FolderForgeApp(_DnDCTkBase):
             width=scaled(90, s), height=scaled(38, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
-        ).pack(side="right", padx=(0, scaled(8, s)))
+        ).grid(row=0, column=1, sticky="ew", padx=3)
 
         ctk.CTkButton(
             btn_row, text="Stäng", command=win.destroy,
@@ -6111,12 +6162,15 @@ class FolderForgeApp(_DnDCTkBase):
             width=scaled(80, s), height=scaled(38, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="ew", padx=3)
 
     # ============================================================
     # Hjälpfunktioner
     # ============================================================
     def _open_path(self, path: Path) -> None:
+        if not path.exists():
+            messagebox.showwarning("Mappen saknas", f"Mappen finns inte längre:\n{path}")
+            return
         try:
             if IS_WINDOWS:
                 os.startfile(path)
@@ -6300,6 +6354,10 @@ class FolderForgeApp(_DnDCTkBase):
         self.focus_force()
 
     def _quit_app(self, *_) -> None:
+        if hasattr(self, "_cleanup_stop"):
+            self._cleanup_stop.set()
+        if hasattr(self, "_update_stop"):
+            self._update_stop.set()
         self._stop_tray_icon()
         if self.global_hotkey:
             self.global_hotkey.stop()
@@ -6307,6 +6365,91 @@ class FolderForgeApp(_DnDCTkBase):
             self.hotkey_listener.stop()
         self.quit()
         sys.exit(0)
+
+    def _show_cache_cleanup(self) -> None:
+        from cache_cleanup import clean_cache, status_text
+
+        win = ctk.CTkToplevel(self)
+        win.title("Smart cacherensning")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f"{scaled(520, self._scale)}x{scaled(460, self._scale)}")
+        body, footer = dialog_layout(win)
+        content = ctk.CTkScrollableFrame(body)
+        content.pack(fill="both", expand=True, padx=15, pady=15)
+        rules = ("Automatisk rensning en gång per 24 timmar när appen körs.\n"
+                 "Om appen varit stängd görs förfallen rensning vid nästa start.\n\n"
+                 "Smartfilter (gäller även manuell rensning):\n"
+                 "• Filer i data/cache och data/tmp: minst 24 timmar gamla.\n"
+                 "• Roterade loggarkiv: minst 14 dagar gamla.\n"
+                 "• Länkar, aktiv logg och okända filer utanför cache lämnas kvar.\n\n"
+                 "Projekt, mallar, historik, inställningar, väntande uppdateringar "
+                 "och uppdateringsbackuper rörs aldrig.")
+        ctk.CTkLabel(content, text=rules, justify="left", wraplength=scaled(450, self._scale)).pack(fill="x")
+        status = ctk.CTkLabel(content, text=status_text(BASE_DIR), justify="left")
+        status.pack(fill="x", pady=15)
+
+        def finished(result=None, error=None):
+            if not win.winfo_exists():
+                return
+            button.configure(state="normal")
+            status.configure(text=(f"Rensningen misslyckades: {error}" if error else status_text(BASE_DIR)))
+
+        def run():
+            if not messagebox.askyesno("Rensa cache", "Rensa gamla filer enligt smartfiltret?", parent=win):
+                return
+            button.configure(state="disabled")
+            status.configure(text="Rensar…")
+
+            def worker():
+                try:
+                    result = clean_cache(BASE_DIR, manual=True)
+                except Exception as exc:
+                    ui_call(self, finished, None, str(exc))
+                else:
+                    ui_call(self, finished, result)
+
+            threading.Thread(target=worker, name="manual-cache-cleanup", daemon=True).start()
+
+        button = ctk.CTkButton(footer, text="Rensa nu med smartfilter", command=run)
+        button.pack(pady=(0, 10))
+        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, 15))
+
+    def _show_update_status(self) -> None:
+        from updater import get_update_status
+
+        s = self._scale
+        win = ctk.CTkToplevel(self)
+        win.title("Uppdateringsstatus")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f"{scaled(560, s)}x{scaled(570, s)}")
+        body, footer = dialog_layout(win)
+        win.minsize(scaled(400, s), scaled(350, s))
+        ctk.CTkLabel(body, text="Uppdateringsstatus", font=ctk.CTkFont(
+            size=scaled_font(20, s), weight="bold")).pack(pady=scaled(15, s))
+        content = ctk.CTkScrollableFrame(body)
+        content.pack(fill="both", expand=True, padx=scaled(15, s))
+        labels = {}
+        for name in get_update_status(BASE_DIR, APP_VERSION):
+            ctk.CTkLabel(content, text=name, anchor="w", font=ctk.CTkFont(
+                size=scaled_font(12, s), weight="bold")).pack(fill="x", pady=(scaled(8, s), 0))
+            value = ctk.CTkLabel(content, text="", anchor="w", justify="left",
+                                 wraplength=scaled(440, s))
+            value.pack(fill="x")
+            labels[name] = value
+        ctk.CTkLabel(body, text="Hämtade uppdateringar installeras vid nästa appstart.\n"
+                     "Ingen pågående session avbryts.", justify="left").pack(pady=scaled(8, s))
+        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, scaled(12, s)))
+
+        def refresh():
+            if not win.winfo_exists():
+                return
+            for name, value in get_update_status(BASE_DIR, APP_VERSION).items():
+                labels[name].configure(text=value)
+            win.after(2000, refresh)
+
+        refresh()
 
     def _show_info(self) -> None:
         s = self._scale
@@ -6317,19 +6460,20 @@ class FolderForgeApp(_DnDCTkBase):
         apply_icon_to_window(win, APP_ICON)
         win.grab_set()
         win.geometry(f"{scaled(420, s)}x{scaled(500, s)}")
-        win.resizable(False, False)
+        body, footer = dialog_layout(win)
+        win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_BLUE,
+            body, fg_color=ACCENT_BLUE,
             height=scaled(60, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📁 FolderForge",
+            body, text="📁 FolderForge",
             font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
             text_color="white",
         ).place(x=scaled(15, s), y=scaled(15, s))
 
-        info_frame = ctk.CTkFrame(win, fg_color="transparent")
+        info_frame = ctk.CTkFrame(body, fg_color="transparent")
         info_frame.pack(
             fill="both", expand=True,
             padx=scaled(20, s), pady=scaled(15, s),
@@ -6369,7 +6513,7 @@ class FolderForgeApp(_DnDCTkBase):
         # Autostart-status per mekanism (M29) — samma avläsning som
         # _check_autostart() men uppdelad, så att användaren ser VAR appen
         # startas ifrån istället för bara "på/av".
-        status_frame = ctk.CTkFrame(win, fg_color="transparent")
+        status_frame = ctk.CTkFrame(body, fg_color="transparent")
         status_frame.pack(
             fill="x", padx=scaled(20, s), pady=(0, scaled(8, s)),
         )
@@ -6397,8 +6541,8 @@ class FolderForgeApp(_DnDCTkBase):
                 anchor="w",
             ).pack(anchor="w")
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(20, s), pady=(0, scaled(10, s)))
+        btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, scaled(8, s)))
         ctk.CTkButton(
             btn_row, text="🔍 Testa autostart",
             command=self._test_autostart_ui,
@@ -6413,7 +6557,7 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(side="left", fill="x", expand=True, padx=(scaled(6, s), 0))
 
         ctk.CTkButton(
-            win, text="Stäng", command=win.destroy,
+            footer, text="Stäng", command=win.destroy,
             fg_color=ACCENT_BLUE, height=scaled(36, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
@@ -6662,7 +6806,20 @@ if __name__ == "__main__":
                         or "--tray" in sys.argv)
 
     try:
+        from updater import apply_pending, start_updates
+        try:
+            _updated = apply_pending(BASE_DIR)
+        except Exception:
+            logger.exception("Kunde inte installera release; befintlig version används")
+            _updated = False
+        if _updated:
+            # Läs in alla nya moduler i en ren process, med samma startläge.
+            _instance_lock.release()
+            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "folder.pyw"), *sys.argv[1:]])
         app = FolderForgeApp(start_minimerad=_start_minimerad)
+        app._update_stop = start_updates(BASE_DIR, APP_VERSION)
+        from cache_cleanup import start_cleanup
+        app._cleanup_stop = start_cleanup(BASE_DIR)
         app._instance_lock = _instance_lock  # visar lås-backend i Om-dialogen
         # Polla triggerfilen i Tk-huvudtråden (~1 s) och återställ fönstret.
         # root.after() är den trådsäkra vägen in i Tk (C43).

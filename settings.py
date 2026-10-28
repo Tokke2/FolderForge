@@ -36,7 +36,7 @@ from typing import Any, Dict, Final, Optional, Sequence, Tuple
 #  1. APPIDENTITET — vem/vad appen är
 # ══════════════════════════════════════════════════════════════════════════
 APP_NAME: Final[str] = "FolderForge"
-APP_VERSION: Final[str] = "5.0"
+APP_VERSION: Final[str] = "0.0.1"
 COPYRIGHT_OWNER: Final[str] = f"© Rickard Längkvist {datetime.now().year}"
 
 
@@ -134,6 +134,7 @@ SETTINGS_SCHEMA: Final[Dict[str, Tuple[type, Any]]] = {
     "save_root": (str, ""),                 # rotmapp för nya projekt
     "open_after_creation": (bool, True),    # öppna Utforskaren efter skapande
     "theme": (str, "Dark"),                 # se SETTINGS_ENUMS nedan
+    "default_template": (str, "Skaderapport"), # sparad standardmall
     "last_template": (str, ""),             # senast använda mall
     "plate_mode": (bool, True),             # regns-läge (ABC 123 → ABC123)
     "start_minimized": (bool, True),        # starta alltid minimerad i systray

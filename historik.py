@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from settings import HISTORY_FILE, IS_WINDOWS, MAX_HISTORY
+from settings import HISTORY_FILE, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,18 @@ class ProjectHistory:
         # enda trasig fil, utan backup och utan att försöka återställa.
         data = read_json_safe(HISTORY_FILE, [])
         if isinstance(data, list):
-            return data
+            result, seen = [], set()
+            for item in data:
+                if not isinstance(item, dict) or not isinstance(item.get("path"), str) or not item["path"]:
+                    continue
+                key = self._path_key(item["path"])
+                if key in seen:
+                    continue
+                seen.add(key)
+                item = dict(item)
+                item.setdefault("name", Path(item["path"]).name)
+                result.append(item)
+            return result
         logger.warning("history.json innehöll inte en lista — tom historik används")
         return []
 
@@ -153,26 +164,30 @@ class ProjectHistory:
         if not atomic_write_json(HISTORY_FILE, self._items):
             logger.warning("Kunde inte spara historik (atomisk skrivning misslyckades)")
 
+    @staticmethod
+    def _path_key(path) -> str:
+        return str(Path(path).resolve()).casefold()
+
     def add(self, path: Path) -> None:
+        path = path.resolve()
         path_str = str(path)
-        self._items = [i for i in self._items if i.get("path") != path_str]
+        key = self._path_key(path)
+        if any(self._path_key(i["path"]) == key for i in self._items):
+            return  # Bevara det ursprungliga skapandedatumet.
+
         self._items.insert(0, {
             "path": path_str,
             "name": path.name,
             "created": datetime.now().isoformat(),
         })
-        self._items = self._items[:MAX_HISTORY]
         self._save()
 
     def get_all(self) -> List[Dict]:
-        valid = [i for i in self._items if Path(i.get("path", "")).exists()]
-        if len(valid) != len(self._items):
-            self._items = valid
-            self._save()
-        return valid
+        # Behåll även flyttade/borttagna projekt; historik rensas endast på begäran.
+        return [dict(item) for item in self._items]
 
     def remove(self, path_str: str) -> None:
-        self._items = [i for i in self._items if i.get("path") != path_str]
+        self._items = [i for i in self._items if self._path_key(i["path"]) != self._path_key(path_str)]
         self._save()
 
     def clear(self) -> None:
