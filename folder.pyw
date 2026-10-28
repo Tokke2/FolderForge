@@ -4493,6 +4493,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
         help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
+        help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
         help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
         help_menu.add_command(label="Om FolderForge", command=self._show_info)
 
@@ -6365,6 +6366,10 @@ class FolderForgeApp(_DnDCTkBase):
                 default=True,
             ),
             pystray.MenuItem(
+                "Sök uppdatering nu",
+                lambda *args: ui_call(self, self._check_updates_now),
+            ),
+            pystray.MenuItem(
                 "Avsluta",
                 lambda *args: self.after(0, self._quit_app),
             ),
@@ -6462,11 +6467,41 @@ class FolderForgeApp(_DnDCTkBase):
         button.pack(pady=(0, 10))
         ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, 15))
 
+    def _check_updates_now(self) -> None:
+        from updater import check_once
+
+        # Tray-menyn använder samma vy och bakgrundsjobb som knappen i appen.
+        self._restore_from_tray()
+        self._show_update_status()
+        if getattr(self, "_manual_update_running", False):
+            return
+        self._manual_update_running = True
+
+        def finished():
+            self._manual_update_running = False
+
+        def worker():
+            try:
+                if not check_once(BASE_DIR, APP_VERSION, force=True):
+                    logger.info("En uppdateringskontroll pågår redan")
+            except Exception:
+                logger.warning("Manuell uppdateringskontroll misslyckades", exc_info=True)
+            finally:
+                ui_call(self, finished)
+
+        threading.Thread(target=worker, name="manual-release-check", daemon=True).start()
+
     def _show_update_status(self) -> None:
         from updater import get_update_status
 
+        existing = getattr(self, "_update_status_window", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            return
         s = self._scale
         win = ctk.CTkToplevel(self)
+        self._update_status_window = win
         win.title("Uppdateringsstatus")
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
@@ -6487,6 +6522,7 @@ class FolderForgeApp(_DnDCTkBase):
             labels[name] = value
         ctk.CTkLabel(body, text="Hämtade uppdateringar installeras vid nästa appstart.\n"
                      "Ingen pågående session avbryts.", justify="left").pack(pady=scaled(8, s))
+        ctk.CTkButton(footer, text="Sök uppdatering nu", command=self._check_updates_now).pack(fill="x", pady=(0, scaled(8, s)))
         ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, scaled(12, s)))
 
         def refresh():

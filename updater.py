@@ -26,6 +26,7 @@ INTERVAL = 12 * 60 * 60
 MAX_DOWNLOAD = 32 * 1024 * 1024
 FILES = frozenset({"folder.pyw", "settings.py", "historik.py", "logg.py", "updater.py", "cache_cleanup.py"})
 logger = logging.getLogger(__name__)
+_check_lock = threading.Lock()
 
 
 def version(value):
@@ -92,11 +93,11 @@ def unpack(data, destination):
         raise ValueError("Releasen saknar obligatoriska appfiler")
 
 
-def _check_once(base, current_version, now=None):
+def _check_once(base, current_version, now=None, *, force=False):
     now = time.time() if now is None else now
     state = read_state(base)
     last = state.get("last_check", 0)
-    if isinstance(last, (int, float)) and 0 <= now - last < INTERVAL:
+    if not force and isinstance(last, (int, float)) and 0 <= now - last < INTERVAL:
         return
     # Även nätverksfel begränsas till två försök per dygn, även efter omstart.
     state["last_check"] = now
@@ -107,6 +108,8 @@ def _check_once(base, current_version, now=None):
     tag = release.get("tag_name", "")
     candidate = version(tag)
     state["latest"] = tag if candidate else ""
+    notes = release.get("body")
+    state["release_notes"] = notes[:12000] if isinstance(notes, str) else "Ingen ändringslista publicerad."
     installed = max(version(current_version) or (0,) * 4,
                     version(state.get("installed", "")) or (0,) * 4)
     if release.get("draft") or release.get("prerelease") or candidate is None or candidate < installed:
@@ -147,6 +150,7 @@ def _check_once(base, current_version, now=None):
             # En tidigare hämtad revision får inte installeras över aktuell kod.
             state.pop("pending", None)
             state.pop("pending_revision", None)
+            state.pop("pending_notes", None)
             write_state(base, state)
             return
         pending = base / "data/update-pending"
@@ -155,14 +159,15 @@ def _check_once(base, current_version, now=None):
         os.replace(staged, pending)
     state["pending"] = tag
     state["pending_revision"] = revision
+    state["pending_notes"] = state["release_notes"]
     state["status"] = "checked"
     write_state(base, state)
     logger.info("Release %s hämtad; installeras vid nästa start", tag)
 
 
-def check_once(base, current_version, now=None):
+def _checked_once(base, current_version, now=None, *, force=False):
     try:
-        _check_once(base, current_version, now)
+        _check_once(base, current_version, now, force=force)
     except Exception as exc:
         state = read_state(base)
         if (isinstance(exc, HTTPError) and exc.code == 404
@@ -176,6 +181,17 @@ def check_once(base, current_version, now=None):
         state["error"] = str(exc)[:300]
         write_state(base, state)
         raise
+
+
+def check_once(base, current_version, now=None, *, force=False):
+    """Manuell kontroll får kringgå intervallet, men aldrig starta parallell hämtning."""
+    if not _check_lock.acquire(blocking=False):
+        return False
+    try:
+        _checked_once(base, current_version, now, force=force)
+        return True
+    finally:
+        _check_lock.release()
 
 
 def get_update_status(base, current_version):
@@ -208,6 +224,8 @@ def get_update_status(base, current_version):
         "Senaste kontrollförsök": checked,
         "Senast hittade release": state.get("latest") or "Okänd",
         "Status": status,
+        "Ändringar i hämtad uppdatering": (state.get("pending_notes") or "Ingen ändringslista publicerad.")
+            if version(pending) and (base / "data/update-pending").is_dir() else "Ingen hämtad uppdatering väntar.",
         "Senaste fel": state.get("error") or "Inget registrerat",
         "Kontrollintervall": "Var 12:e timme när appen körs",
         "Källa": f"GitHub Releases: {REPOSITORY} (endast stabila)",
@@ -258,6 +276,7 @@ def apply_pending(base):
             shutil.copy2(source, temporary)
             os.replace(temporary, target)
             changed.append((target, saved, existed))
+        state.pop("pending_notes", None)
         state["installed"] = state.pop("pending")
         revision = state.pop("pending_revision", None)
         if revision:

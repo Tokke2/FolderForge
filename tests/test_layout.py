@@ -31,6 +31,15 @@ class LayoutTests(unittest.TestCase):
         self.assertLess(code.index('preview_ram.pack('), code.index('btn_row.pack('))
         self.assertLess(code.index('btn_row.pack('), code.index('skapa_knapp ='))
 
+    def test_manual_update_available_in_app_and_tray(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        code = ast.unparse(app)
+        self.assertIn("label='Sök uppdatering nu'", code)
+        self.assertIn("text='Sök uppdatering nu'", code)
+        tray = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_minimize_to_systray')
+        self.assertIn("'Sök uppdatering nu'", ast.unparse(tray))
+        self.assertIn('ui_call(self, self._check_updates_now)', ast.unparse(tray))
+
     def test_dialogs_use_pinned_footer_layout(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         for name in ['_create_folder_dialog', '_create_from_structure_dialog', '_template_dialog',

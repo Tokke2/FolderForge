@@ -183,6 +183,36 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(status['Senaste bygg-ID'], 'b' * 12)
         self.assertEqual(status['Väntande bygg-ID'], 'c' * 12)
 
+    def test_manual_check_bypasses_interval(self):
+        updater.write_state(self.base, {'last_check': 100000})
+        release = json.dumps({'tag_name': 'v4.0'}).encode()
+        with patch.object(updater, 'fetch', return_value=release) as fetch:
+            updater.check_once(self.base, '5.0', now=100001, force=True)
+            fetch.assert_called_once()
+        self.assertEqual(updater.read_state(self.base)['last_check'], 100001)
+
+    def test_parallel_manual_check_does_not_fetch(self):
+        with updater._check_lock, patch.object(updater, 'fetch') as fetch:
+            self.assertFalse(updater.check_once(self.base, '0.0.2', force=True))
+            fetch.assert_not_called()
+
+    def test_release_notes_saved_for_pending_revision(self):
+        release = json.dumps({'tag_name': 'v0.0.2', 'body': 'Ny funktion: VINDRUTA'}).encode()
+        with patch.object(updater, 'fetch', side_effect=[release, COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000, force=True)
+        status = updater.get_update_status(self.base, '0.0.2')
+        self.assertEqual(status['Ändringar i hämtad uppdatering'], 'Ny funktion: VINDRUTA')
+        updater.apply_pending(self.base)
+        self.assertNotIn('pending_notes', updater.read_state(self.base))
+        self.assertIn('Ingen hämtad', updater.get_update_status(self.base, '0.0.2')['Ändringar i hämtad uppdatering'])
+
+    def test_failed_manual_check_releases_lock(self):
+        with patch.object(updater, 'fetch', side_effect=OSError('offline')):
+            with self.assertRaises(OSError):
+                updater.check_once(self.base, '0.0.2', force=True)
+        self.assertTrue(updater._check_lock.acquire(blocking=False))
+        updater._check_lock.release()
+
     def test_incomplete_archive_rejected(self):
         with self.assertRaises(ValueError):
             output = io.BytesIO()

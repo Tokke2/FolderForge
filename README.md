@@ -149,3 +149,17 @@ uppdaterare. Därefter fungerar uppdateringar inom samma version automatiskt.
 
 I projektdialogen ligger **Skapa** och **Avbryt** direkt under det
 förhandsvisade slutnamnet, i samma scrollbara innehåll utan tomrum till botten.
+
+
+## Manuell uppdateringskontroll och ändringslista
+
+**Sök uppdatering nu** finns i Hjälp-menyn, i fönstret Uppdateringsstatus och
+i tray-menyn. Den kör en kontroll direkt i bakgrunden, oavsett när den
+schemalagda kontrollen kördes senast. Samtidiga kontroller spärras.
+Nästa automatiska kontroll förfaller 12 timmar efter den manuella kontrollen.
+Tray-valet öppnar appens uppdateringsstatus. Samma statusfönster återanvänds.
+
+Releasens ändringslista visas i Uppdateringsstatus när en uppdatering har
+hämtats. Texten hör till den väntande hämtningen och ligger kvar tills den
+installerats. Saknas releasebeskrivning visas ett tydligt besked om detta.
+Ingen pågående session avbryts och ingen automatisk omstart görs.
