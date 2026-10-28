@@ -40,6 +40,15 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("'Sök uppdatering nu'", ast.unparse(tray))
         self.assertIn('ui_call(self, self._check_updates_now)', ast.unparse(tray))
 
+    def test_main_window_has_visible_manual_update_button(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_gui')
+        code = ast.unparse(method)
+        self.assertIn('self._update_check_button = ctk.CTkButton(self,', code)
+        self.assertIn("text='Sök uppdatering nu'", code)
+        self.assertIn('command=self._check_updates_now', code)
+        self.assertIn("self._update_check_button.pack(fill='x'", code)
+
     def test_dialogs_use_pinned_footer_layout(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         for name in ['_create_folder_dialog', '_create_from_structure_dialog', '_template_dialog',

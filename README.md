@@ -167,3 +167,6 @@ Ingen pågående session avbryts och ingen automatisk omstart görs.
 Årsväljaren är redigerbar: välj ett förslag eller skriv valfritt fyrsiffrigt
 år, exempelvis `2010`. Tomt fält eller `—` betyder inget år. Eget årtal
 behålls när förslagen uppdateras vid årsskifte. Ogiltigt år stoppas före skapande.
+
+En synlig **Sök uppdatering nu**-knapp finns även direkt under huvudfönstrets
+rubrik och är tillgänglig oavsett vald flik.

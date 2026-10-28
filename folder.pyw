@@ -4596,6 +4596,18 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self._theme_btn.pack(side="right", pady=scaled(5, s))
 
+        # Synlig manuell kontroll på alla flikar, även i ett smalt fönster.
+        self._update_check_button = ctk.CTkButton(
+            self, text="Sök uppdatering nu",
+            command=self._check_updates_now,
+            height=scaled(34, s), corner_radius=8,
+            fg_color=ACCENT_TEAL,
+            font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
+        )
+        self._update_check_button.pack(
+            fill="x", padx=scaled(15, s), pady=(scaled(8, s), 0),
+        )
+
         # Resultat-banner
         self._result_banner = ctk.CTkFrame(
             self, fg_color="transparent", height=scaled(36, s),
