@@ -109,24 +109,52 @@ def _check_once(base, current_version, now=None):
     state["latest"] = tag if candidate else ""
     installed = max(version(current_version) or (0,) * 4,
                     version(state.get("installed", "")) or (0,) * 4)
-    if release.get("draft") or release.get("prerelease") or candidate is None or candidate <= installed:
+    if release.get("draft") or release.get("prerelease") or candidate is None or candidate < installed:
         state["status"] = "checked"
         write_state(base, state)
         return
-    if state.get("pending") == tag and (base / "data/update-pending").is_dir():
+    # Lös releasens tagg till ett bestämt commit-ID, även för annoterade taggar.
+    # target_commitish/updated_at säger inte säkert vilken kod taggen pekar på.
+    commit = json.loads(fetch(f"https://api.github.com/repos/{REPOSITORY}/commits/{tag}", 1024 * 1024))
+    revision = commit.get("sha", "")
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("Releasen saknar ett giltigt commit-ID")
+    state["latest_revision"] = revision
+    if (candidate == installed and state.get("installed_revision") == revision
+            and version(state.get("installed", "")) == candidate):
         state["status"] = "checked"
         write_state(base, state)
         return
-    # Bygg URL själv: godtyckliga release-URL:er ska inte kunna köras som kod.
-    data = fetch(f"https://api.github.com/repos/{REPOSITORY}/zipball/{tag}", MAX_DOWNLOAD)
+    if (state.get("pending") == tag and state.get("pending_revision") == revision
+            and (base / "data/update-pending").is_dir()):
+        state["status"] = "checked"
+        write_state(base, state)
+        return
+    # Hämta exakt den kontrollerade revisionen även om taggen flyttas under tiden.
+    data = fetch(f"https://api.github.com/repos/{REPOSITORY}/zipball/{revision}", MAX_DOWNLOAD)
     with tempfile.TemporaryDirectory(dir=base / "data") as temporary:
         staged = Path(temporary)
         unpack(data, staged)
+        # Äldre installationer saknar commit-ID. Jämför faktiska appfiler en
+        # gång i stället för att anta att samma versionsnummer betyder samma kod.
+        same_content = all((base / file.relative_to(staged)).is_file()
+                           and (base / file.relative_to(staged)).read_bytes() == file.read_bytes()
+                           for file in staged.rglob("*") if file.is_file())
+        if same_content:
+            state["installed"] = tag
+            state["installed_revision"] = revision
+            state["status"] = "checked"
+            # En tidigare hämtad revision får inte installeras över aktuell kod.
+            state.pop("pending", None)
+            state.pop("pending_revision", None)
+            write_state(base, state)
+            return
         pending = base / "data/update-pending"
         if pending.exists():
             shutil.rmtree(pending)
         os.replace(staged, pending)
     state["pending"] = tag
+    state["pending_revision"] = revision
     state["status"] = "checked"
     write_state(base, state)
     logger.info("Release %s hämtad; installeras vid nästa start", tag)
@@ -174,6 +202,9 @@ def get_update_status(base, current_version):
         status = f"{pending} är hämtad och väntar på nästa appstart."
     return {
         "Installerad version": installed,
+        "Installerat bygg-ID": str(state.get("installed_revision") or "Okänt")[:12],
+        "Senaste bygg-ID": str(state.get("latest_revision") or "Okänt")[:12],
+        "Väntande bygg-ID": str(state.get("pending_revision") or "Inget")[:12],
         "Senaste kontrollförsök": checked,
         "Senast hittade release": state.get("latest") or "Okänd",
         "Status": status,
@@ -228,6 +259,11 @@ def apply_pending(base):
             os.replace(temporary, target)
             changed.append((target, saved, existed))
         state["installed"] = state.pop("pending")
+        revision = state.pop("pending_revision", None)
+        if revision:
+            state["installed_revision"] = revision
+        else:
+            state.pop("installed_revision", None)
         write_state(base, state)
     except Exception:
         for target, saved, existed in reversed(changed):

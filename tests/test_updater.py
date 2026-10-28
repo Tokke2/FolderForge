@@ -10,6 +10,9 @@ from urllib.error import HTTPError
 
 import updater
 
+REVISION = "a" * 40
+COMMIT = json.dumps({"sha": REVISION}).encode()
+
 
 def archive(extra=None):
     output = io.BytesIO()
@@ -58,7 +61,7 @@ class UpdateTests(unittest.TestCase):
     def test_success_clears_previous_error(self):
         updater.write_state(self.base, {'status': 'error', 'error': 'offline'})
         release = json.dumps({'tag_name': 'v5.0', 'draft': False, 'prerelease': False}).encode()
-        with patch.object(updater, 'fetch', return_value=release):
+        with patch.object(updater, 'fetch', side_effect=[release, COMMIT, archive()]):
             updater.check_once(self.base, '5.0', now=100000)
         status = updater.get_update_status(self.base, '5.0')
         self.assertEqual(status['Senaste fel'], 'Inget registrerat')
@@ -84,9 +87,9 @@ class UpdateTests(unittest.TestCase):
 
     def test_download_and_apply_preserves_data(self):
         release = json.dumps({'tag_name': 'v5.1', 'draft': False, 'prerelease': False}).encode()
-        with patch.object(updater, 'fetch', side_effect=[release, archive()]) as fetch:
+        with patch.object(updater, 'fetch', side_effect=[release, COMMIT, archive()]) as fetch:
             updater.check_once(self.base, '5.0', now=100000)
-            self.assertTrue(fetch.call_args[0][0].endswith('/zipball/v5.1'))
+            self.assertTrue(fetch.call_args[0][0].endswith('/zipball/' + REVISION))
         data = self.base / 'data/settings.json'
         data.write_text('user settings')
         (self.base / 'folder.pyw').write_text('# old')
@@ -117,6 +120,68 @@ class UpdateTests(unittest.TestCase):
                 updater.check_once(self.base, '5.0', now=100000)
             updater.check_once(self.base, '5.0', now=100001)
             self.assertEqual(fetch.call_count, 1)
+
+    def release(self, tag='v0.0.2'):
+        return json.dumps({'tag_name': tag, 'draft': False, 'prerelease': False}).encode()
+
+    def test_same_version_new_commit_is_downloaded_and_remembered(self):
+        updater.write_state(self.base, {'installed': 'v0.0.2', 'installed_revision': 'b' * 40})
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]) as fetch:
+            updater.check_once(self.base, '0.0.2', now=100000)
+            self.assertTrue(fetch.call_args.args[0].endswith('/zipball/' + REVISION))
+        self.assertEqual(updater.read_state(self.base)['pending_revision'], REVISION)
+        self.assertTrue(updater.apply_pending(self.base))
+        self.assertEqual(updater.read_state(self.base)['installed_revision'], REVISION)
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
+            updater.check_once(self.base, '0.0.2', now=100000 + updater.INTERVAL)
+            self.assertEqual(fetch.call_count, 2)
+        self.assertFalse(updater.apply_pending(self.base))
+
+    def test_legacy_same_version_without_revision_is_updated(self):
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000)
+        self.assertTrue((self.base / 'data/update-pending').is_dir())
+        self.assertEqual(updater.read_state(self.base)['pending'], 'v0.0.2')
+
+    def test_identical_files_establish_baseline_without_reinstall(self):
+        updater.unpack(archive(), self.base)
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000)
+        state = updater.read_state(self.base)
+        self.assertEqual(state['installed_revision'], REVISION)
+        self.assertNotIn('pending', state)
+        self.assertFalse(updater.apply_pending(self.base))
+
+    def test_pending_revision_not_downloaded_twice(self):
+        updater.write_state(self.base, {'pending': 'v0.0.2', 'pending_revision': REVISION})
+        (self.base / 'data/update-pending').mkdir()
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
+            updater.check_once(self.base, '0.0.2', now=100000)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_changed_pending_revision_replaces_old_download(self):
+        updater.write_state(self.base, {'pending': 'v0.0.2', 'pending_revision': 'b' * 40})
+        (self.base / 'data/update-pending').mkdir()
+        (self.base / 'data/update-pending/stale').touch()
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000)
+        self.assertFalse((self.base / 'data/update-pending/stale').exists())
+        self.assertEqual(updater.read_state(self.base)['pending_revision'], REVISION)
+
+    def test_invalid_revision_not_downloaded(self):
+        with patch.object(updater, 'fetch', side_effect=[self.release(), b'{"sha": "main"}']) as fetch:
+            with self.assertRaises(ValueError):
+                updater.check_once(self.base, '0.0.2', now=100000)
+            self.assertEqual(fetch.call_count, 2)
+        self.assertFalse((self.base / 'data/update-pending').exists())
+
+    def test_build_ids_visible_in_status(self):
+        updater.write_state(self.base, {'installed_revision': 'a' * 40,
+                                       'latest_revision': 'b' * 40, 'pending_revision': 'c' * 40})
+        status = updater.get_update_status(self.base, '0.0.2')
+        self.assertEqual(status['Installerat bygg-ID'], 'a' * 12)
+        self.assertEqual(status['Senaste bygg-ID'], 'b' * 12)
+        self.assertEqual(status['Väntande bygg-ID'], 'c' * 12)
 
     def test_incomplete_archive_rejected(self):
         with self.assertRaises(ValueError):

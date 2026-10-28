@@ -1,6 +1,7 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Uppdateraren upptäcker ny kod inom samma release via commit-ID, även utan högre versionsnummer. Bygg-ID visas i Uppdateringsstatus.
 - Valfri årsväljare i projektdialogen: innevarande år och tre år bakåt, automatiskt vid årsskifte. Året läggs efter lokalen.
 - Både X (stäng) och minimeringsknappen gömmer huvudfönstret i systemfältet.
 - Appen fortsätter köra i bakgrunden; välj Avsluta i tray-menyn för att avsluta.
@@ -8,8 +9,12 @@
 - Separata dialogers X stänger fortfarande endast respektive dialog.
 
 ## Uppdatering och installation
-Installerad v0.0.1 hämtar den nya stabila releasen vid nästa schemalagda
-kontroll (var 12:e timme). Hämtad uppdatering installeras vid nästa appstart.
+Installerad v0.0.1 hämtar v0.0.2 vid nästa schemalagda kontroll (var 12:e
+timme). Den nya uppdateraren hittar därefter även ändringar inom samma
+v0.0.2 via releasens commit-ID. Hämtad kod installeras vid nästa appstart.
+Äldre v0.0.2-exemplar med enbart versionsjämförelse behöver installera den
+här uppdateraren manuellt en gång; därefter fungerar ändringar inom samma
+version automatiskt.
 Status visas under Hjälp → Uppdateringsstatus.
 
 För manuell installation: ladda ned Source code (zip) under Assets och packa
@@ -17,7 +22,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-41 automatiserade tester godkända och Python-syntax kontrollerad.
+48 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

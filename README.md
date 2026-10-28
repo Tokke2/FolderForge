@@ -126,3 +126,23 @@ innevarande år och de tre föregående åren (2026: 2026, 2025, 2024, 2023).
 Året placeras efter vald lokal, exempelvis `ABC123 SIDORUTA LAXÅ 2025`.
 Välj `—` för inget år. Listan räknas om för varje ny dialog och kontrolleras
 även varje minut om dialogen hålls öppen över ett årsskifte.
+
+
+## Ändringar inom samma release
+
+Uppdateraren jämför både versionsnummer och det commit-ID som den stabila
+releasens tagg pekar på. Om `v0.0.2` publiceras om med ny kod hämtas även
+den ändringen, utan ett nytt versionsnummer. Arkivet hämtas från det exakta
+commit-ID:t, så att en flyttad tagg under hämtningen inte ger fel kod.
+Installerat, senaste och väntande bygg-ID visas i Uppdateringsstatus.
+
+Efter installation sparas bygg-ID:t; samma kod hämtas inte upprepade gånger.
+Installationer utan känt bygg-ID jämför först appfilerna med releasearkivet.
+Enbart redigering av releasebeskrivningen räknas inte som ny programkod.
+Ändringar direkt på en branch hämtas inte förrän releasens tagg uppdaterats.
+Kontrollintervallet är fortfarande 12 timmar, med installation vid nästa start.
+
+**Engångsövergång:** exemplar som fortfarande kör den äldre, enbart
+versionsbaserade uppdateraren måste uppdateras manuellt till denna kod en gång.
+Ändringar i GitHub kan inte i sig ändra logiken i en redan installerad gammal
+uppdaterare. Därefter fungerar uppdateringar inom samma version automatiskt.
