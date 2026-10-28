@@ -22,6 +22,15 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(footer.grid.call_args.kwargs['row'], 1)
         self.assertEqual(footer.grid.call_args.kwargs['sticky'], 'ew')
 
+    def test_project_actions_follow_final_name_without_footer_gap(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(method)
+        self.assertIn('footer.grid_remove()', code)
+        self.assertIn("btn_row = ctk.CTkFrame(body, fg_color='transparent')", code)
+        self.assertLess(code.index('preview_ram.pack('), code.index('btn_row.pack('))
+        self.assertLess(code.index('btn_row.pack('), code.index('skapa_knapp ='))
+
     def test_dialogs_use_pinned_footer_layout(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         for name in ['_create_folder_dialog', '_create_from_structure_dialog', '_template_dialog',

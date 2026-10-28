@@ -146,3 +146,6 @@ Kontrollintervallet är fortfarande 12 timmar, med installation vid nästa start
 versionsbaserade uppdateraren måste uppdateras manuellt till denna kod en gång.
 Ändringar i GitHub kan inte i sig ändra logiken i en redan installerad gammal
 uppdaterare. Därefter fungerar uppdateringar inom samma version automatiskt.
+
+I projektdialogen ligger **Skapa** och **Avbryt** direkt under det
+förhandsvisade slutnamnet, i samma scrollbara innehåll utan tomrum till botten.

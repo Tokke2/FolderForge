@@ -5497,6 +5497,7 @@ class FolderForgeApp(_DnDCTkBase):
         höjd = min(scaled(560, s), max(240, sh - 100))
         win.geometry(f"{bredd}x{höjd}+{(sw - bredd) // 2}+{(sh - höjd) // 2}")
         body, footer = dialog_layout(win)
+        footer.grid_remove()  # Knapparna följer slutnamnet, inte fönstrets nederkant.
 
         # ── Rubrik + underrubrik ───────────────────────────────────
         ctk.CTkLabel(
@@ -5618,7 +5619,8 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(anchor="w", padx=scaled(12, s), pady=scaled(8, s))
 
         # ── Knappar ────────────────────────────────────────────────
-        btn_row = footer
+        btn_row = ctk.CTkFrame(body, fg_color="transparent")
+        btn_row.pack(fill="x", padx=scaled(15, s), pady=(scaled(8, s), scaled(12, s)))
 
         def ok(*_e) -> None:
             if not namn_var.get().strip():
