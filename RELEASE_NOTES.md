@@ -13,8 +13,8 @@ Första publicerade releasen i 0.0-serien.
 - Smart cacherensning en gång per 24 timmar och manuell rensning via Hjälp-menyn.
 
 ## Installation
-Ladda ned `FolderForge-0.0.1.zip` och packa upp hela mappen till en skrivbar
-plats. Python 3.11 eller senare med Tkinter krävs. Starta `folder.pyw` på
+Ladda ned **Source code (zip)** under Assets på GitHub och packa upp hela
+mappen till en skrivbar plats. Python 3.11 eller senare med Tkinter krävs. Starta `folder.pyw` på
 Windows. Appen frågar om installation av saknade Pythonpaket.
 Appen startar minimerad; öppna via ikonen i systemfältet.
 
