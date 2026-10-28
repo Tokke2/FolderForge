@@ -4323,6 +4323,16 @@ def dialog_layout(win):
     return body, footer
 
 
+def validate_project_year(value):
+    """År kan väljas eller skrivas; tomt/streck betyder inget år."""
+    year = str(value).strip()
+    if year in ("", "—"):
+        return "—"
+    if not re.fullmatch(r"[1-9][0-9]{3}", year):
+        raise ValueError("Ange ett fyrsiffrigt år, till exempel 2020, eller lämna fältet tomt.")
+    return year
+
+
 def project_year_choices(today=None):
     """Innevarande år och tre år bakåt, beräknat när väljaren öppnas."""
     year = (today or datetime.now()).year
@@ -5458,6 +5468,7 @@ class FolderForgeApp(_DnDCTkBase):
         ord i textfältet plockas bort först (case-insensitivt), så
         dropdownen är enda källan → inga dubbletter möjliga.
         """
+        year = str(year).strip()
         ord_lista = [o for o in str(namn_text).split()
                      if o.upper() not in LOKAL_CHOICES]
         # Undvik dubbelt valt år utan att radera andra år i fri text.
@@ -5589,8 +5600,8 @@ class FolderForgeApp(_DnDCTkBase):
             font=ctk.CTkFont(size=scaled_font(12, s)),
         ).pack(anchor="w", padx=scaled(15, s))
 
-        _rubrik("ÅR  ·  valfritt, läggs efter lokalen")
-        year_menu = ctk.CTkOptionMenu(
+        _rubrik("ÅR  ·  välj eller skriv ett år, valfritt")
+        year_menu = ctk.CTkComboBox(
             body, values=["—"] + project_year_choices(), variable=year_var,
             command=lambda _v: _förnya_utseende(),
             height=scaled(28, s), corner_radius=8,
@@ -5601,8 +5612,6 @@ class FolderForgeApp(_DnDCTkBase):
         def refresh_year_choices():
             values = ["—"] + project_year_choices()
             year_menu.configure(values=values)
-            if year_var.get() not in values:
-                year_var.set("—")
             # Även en dialog som är öppen över nyår följer med.
             win.after(60_000, refresh_year_choices)
 
@@ -5626,8 +5635,14 @@ class FolderForgeApp(_DnDCTkBase):
         def ok(*_e) -> None:
             if not namn_var.get().strip():
                 return    # Return-vakt: lokal ensam är INTE ett projektnamn
+            try:
+                year = validate_project_year(year_var.get())
+            except ValueError as exc:
+                messagebox.showwarning("Ogiltigt år", str(exc), parent=win)
+                year_menu.focus_set()
+                return
             resultat["namn"] = self._bygg_projektnamn(
-                namn_var.get(), lokal_var.get(), year_var.get())
+                namn_var.get(), lokal_var.get(), year)
             win.destroy()
 
         skapa_knapp = ctk.CTkButton(
@@ -5666,6 +5681,7 @@ class FolderForgeApp(_DnDCTkBase):
         namn_var.trace_add("write", _förnya_utseende)
         _förnya_utseende()                  # startläge: chips släckta, Skapa av
 
+        year_menu.bind("<Return>", ok)
         entry.bind("<Return>", ok)
         win.bind("<Escape>", lambda _e: win.destroy())
         win.protocol("WM_DELETE_WINDOW", win.destroy)

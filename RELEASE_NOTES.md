@@ -1,6 +1,7 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- År kan både väljas och skrivas manuellt. Egna fyrsiffriga årtal behålls när förslagslistan uppdateras; ogiltiga år stoppas före skapande.
 - Sök uppdatering nu i appens Hjälp-meny, uppdateringsstatus och tray-meny; kontrollen sker i bakgrunden utan att invänta 12-timmarsintervallet.
 - Ändringslista för hämtad uppdatering visas före nästa appstart. Samtidiga kontroller spärras.
 - Skapa och Avbryt ligger direkt under det förhandsvisade mappnamnet, utan tomrummet till fönstrets nederkant.
@@ -26,7 +27,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-55 automatiserade tester godkända och Python-syntax kontrollerad.
+59 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

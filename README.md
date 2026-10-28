@@ -163,3 +163,7 @@ Releasens ändringslista visas i Uppdateringsstatus när en uppdatering har
 hämtats. Texten hör till den väntande hämtningen och ligger kvar tills den
 installerats. Saknas releasebeskrivning visas ett tydligt besked om detta.
 Ingen pågående session avbryts och ingen automatisk omstart görs.
+
+Årsväljaren är redigerbar: välj ett förslag eller skriv valfritt fyrsiffrigt
+år, exempelvis `2010`. Tomt fält eller `—` betyder inget år. Eget årtal
+behålls när förslagen uppdateras vid årsskifte. Ogiltigt år stoppas före skapande.
