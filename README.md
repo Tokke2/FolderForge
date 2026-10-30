@@ -100,7 +100,7 @@ Låsta filer hoppas över och rapporteras utan att stoppa appen.
 
 Se [RELEASE_NOTES.md](RELEASE_NOTES.md) för installation och ändringslista.
 Dialogerna har nu scrollbart innehåll och separat knappfot, med flerradiga
-knappar där utrymmet kräver det. Appikonen har en egen mapp-/hammardesign.
+knappar där utrymmet kräver det. Appikonen har en egen mapp-/strukturdesign.
 Ikonerna kan återskapas med `python tools/build_icon.py` (kräver Pillow).
 
 ## Stäng och minimera
@@ -170,3 +170,31 @@ behålls när förslagen uppdateras vid årsskifte. Ogiltigt år stoppas före s
 
 En synlig **Sök uppdatering nu**-knapp finns även direkt under huvudfönstrets
 rubrik och är tillgänglig oavsett vald flik.
+
+
+## Samma ikon i Windows och autostart
+
+Appen använder nu en gemensam gul mapp med turkos struktur i rubrik,
+fönster, dialoger, systemfält och startgenvägar. Ikonen återappliceras efter
+CustomTkinter:s fördröjda standardikon, även på inmatningsdialoger.
+
+När autostart aktiveras i Windows byggs ett litet grafiskt startprogram,
+`data/launcher/FolderForge.exe`, med FolderForge-ikonen inbäddad. Register,
+Start-mapp och eventuell Schemaläggare använder denna exe med `--tray`.
+En `FolderForge.lnk` med samma ikon skapas också bredvid appfilerna.
+Sökvägar med mellanslag hanteras som en hel sökväg.
+
+Startprogrammet byggs lokalt med Windows .NET Frameworks `csc.exe`; ingen
+kompilator laddas ned. Python och `pythonw.exe` behövs fortfarande bakom
+kulisserna. Startprogrammet är **inte ett fristående Python-fritt bygge**.
+Saknas kompilator, ikon eller pythonw visas fel när autostart aktiveras;
+appen registrerar ingen ny .pyw- eller .bat-reserv med generisk ikon.
+Vid automatisk migrering av redan aktiverad autostart loggas eventuella fel
+utan att den befintliga fungerande autostarten raderas.
+
+Launcher-filen återanvänds och byggs om vid ändrad ikon eller Python-sökväg.
+Varken rensning av cache eller releaseuppdateringar raderar denna fil.
+Använd den brandade `FolderForge.lnk` istället för att fästa `.pyw`-filen i
+aktivitetsfältet. En gammal redan fäst Python-genväg måste lossas och ersättas
+manuellt; appen ändrar inte Windows globala filassociation för `.pyw`.
+Windows-körning och den lokala kompileringen måste verifieras på Windows.

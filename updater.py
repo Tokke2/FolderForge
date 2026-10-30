@@ -6,6 +6,8 @@ före GUI-start, följt av omstart för att läsa in de nya modulerna. Användar
 from __future__ import annotations
 
 import io
+import hashlib
+import subprocess
 import json
 import logging
 import os
@@ -293,3 +295,109 @@ def apply_pending(base):
         raise
     shutil.rmtree(pending)
     return True
+
+
+# Windows-startprogram med egen ikon (delas med autostart).
+def launcher_source(interpreter: Path, script: Path):
+    def literal(value):
+        return '@"' + str(value).replace('"', '""') + '"'
+
+    return r'''
+using System;
+using System.Diagnostics;
+using System.Text;
+using System.Linq;
+using System.Windows.Forms;
+[assembly: System.Reflection.AssemblyTitle("FolderForge")]
+[assembly: System.Reflection.AssemblyProduct("FolderForge")]
+class FolderForgeLauncher {
+    static string Quote(string value) {
+        var result = new StringBuilder("\"");
+        int slashes = 0;
+        foreach (char ch in value) {
+            if (ch == '\\') { slashes++; continue; }
+            if (ch == '"') {
+                result.Append('\\', slashes * 2 + 1).Append(ch);
+            } else {
+                result.Append('\\', slashes).Append(ch);
+            }
+            slashes = 0;
+        }
+        return result.Append('\\', slashes * 2).Append('"').ToString();
+    }
+    [STAThread]
+    static int Main(string[] args) {
+        bool selftest = args.Contains("--selftest");
+        try {
+            var info = new ProcessStartInfo();
+            info.FileName = INTERPRETER;
+            info.Arguments = Quote(SCRIPT) + " " + String.Join(" ", args.Select(Quote).ToArray());
+            info.WorkingDirectory = System.IO.Path.GetDirectoryName(SCRIPT);
+            info.UseShellExecute = false;
+            info.CreateNoWindow = true;
+            info.RedirectStandardOutput = selftest;
+            info.RedirectStandardError = selftest;
+            using (var process = Process.Start(info)) {
+                if (selftest) {
+                    Console.Write(process.StandardOutput.ReadToEnd());
+                    Console.Error.Write(process.StandardError.ReadToEnd());
+                    process.WaitForExit();
+                    return process.ExitCode;
+                }
+            }
+            return 0;
+        } catch (Exception error) {
+            if (selftest) Console.Error.WriteLine(error.Message);
+            else MessageBox.Show(error.Message, "FolderForge kunde inte starta");
+            return 1;
+        }
+    }
+}
+'''.replace('INTERPRETER', literal(interpreter)).replace('SCRIPT', literal(script))
+
+
+def ensure_launcher(base: Path, interpreter: Path, icon: Path, *, runner=None, compiler=None):
+    """Compile a real .exe with our icon; never fall back to .pyw autostart."""
+    base, interpreter, icon = base.resolve(), interpreter.resolve(), icon.resolve()
+    if not interpreter.name.lower().startswith('pythonw'):
+        interpreter = interpreter.with_name('pythonw.exe')
+    if not interpreter.is_file():
+        raise OSError('pythonw.exe saknas. Installera Windows-Python med GUI-stöd.')
+    script = base / 'folder.pyw'
+    if not script.is_file() or not icon.is_file():
+        raise OSError('Appfil eller FolderForge-ikon saknas.')
+    source = launcher_source(interpreter, script)
+    fingerprint = hashlib.sha256(source.encode('utf-8') + icon.read_bytes()).hexdigest()
+    folder = base / 'data/launcher'
+    folder.mkdir(parents=True, exist_ok=True)
+    target = folder / 'FolderForge.exe'
+    manifest = folder / 'build.json'
+    try:
+        if target.is_file() and json.loads(manifest.read_text('utf-8')).get('fingerprint') == fingerprint:
+            return target
+    except (OSError, ValueError, AttributeError):
+        pass
+    if compiler is None:
+        windows = Path(os.environ.get('WINDIR', r'C:\Windows'))
+        compiler = next((windows / 'Microsoft.NET' / kind / 'v4.0.30319/csc.exe'
+                         for kind in ('Framework64', 'Framework')
+                         if (windows / 'Microsoft.NET' / kind / 'v4.0.30319/csc.exe').is_file()), None)
+    if compiler is None:
+        raise OSError('Windows .NET C#-kompilator saknas. Ingen Python-genväg registrerades som reserv.')
+    run = runner or subprocess.run
+    with tempfile.TemporaryDirectory(dir=folder) as temporary:
+        temporary = Path(temporary)
+        cs, output = temporary / 'Launcher.cs', temporary / 'FolderForge.exe'
+        cs.write_text(source, encoding='utf-8-sig')
+        result = run([str(compiler), '/nologo', '/target:winexe', '/optimize+',
+                      '/reference:System.Windows.Forms.dll', '/reference:System.Core.dll',
+                      f'/win32icon:{icon}', f'/out:{output}', str(cs)],
+                     capture_output=True, text=True, timeout=60,
+                     creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if result.returncode != 0 or not output.is_file():
+            raise OSError('Kunde inte bygga FolderForge.exe: ' + str(result.stderr or result.stdout)[:500])
+        os.replace(output, target)
+    pending = manifest.with_suffix('.tmp')
+    pending.write_text(json.dumps({'fingerprint': fingerprint}), encoding='utf-8')
+    os.replace(pending, manifest)
+    return target

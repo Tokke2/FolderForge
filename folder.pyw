@@ -228,6 +228,12 @@ def check_and_install_requirements() -> bool:
             missing, exc, ' '.join(str(m) for m in missing if m))
         return False
     root.withdraw()
+    if IS_WINDOWS and APP_ICON.exists():
+        try:
+            root.iconbitmap(default=str(APP_ICON))
+            root.iconbitmap(str(APP_ICON))
+        except Exception:
+            logger.debug("Kunde inte sätta ikon på installationsdialogen", exc_info=True)
     if not _mb.askyesno(
         "Installation krävs",
         f"Saknade paket:\n{', '.join(missing)}\n\nInstallera nu?",
@@ -374,8 +380,8 @@ def build_autostart_command(script_args: Optional[Iterable[str]] = None) -> str:
     Bygger autostart-kommandot och GARANTERAR att ingen svart konsolruta
     visas vid inloggning:
       • fryst exe (PyInstaller/Nuitka) → "exe" --tray  (ingen python alls)
-      • python.exe / python3.12.exe    → pythonw.exe i samma mapp
-      • pythonw saknas                 → pythonw.exe via 'start "" /B'
+      • Python-källkod på Windows → egen FolderForge.exe med inbäddad ikon
+      • inga .pyw-filassociationer eller Python-ikoner i autostartgenvägen
     """
     args = list(script_args) if script_args else ["--tray"]
     quoted_args = " ".join(f'"{a}"' for a in args)
@@ -384,17 +390,11 @@ def build_autostart_command(script_args: Optional[Iterable[str]] = None) -> str:
         return f'"{sys.executable}" {quoted_args}'.strip()
 
     exe = Path(sys.executable)
-    win_noconsole = exe.with_name("pythonw.exe")
-    if IS_WINDOWS and exe.name.lower().startswith("python") \
-            and not exe.name.lower().startswith("pythonw") \
-            and win_noconsole.exists():
-        return f'"{win_noconsole}" "{Path(sys.argv[0]).resolve()}" {quoted_args}'
-
     if IS_WINDOWS:
-        # Fallback: pythonw saknas eller heter något annat (python3.13.exe).
-        return (f'cmd /c start "" /B "{exe}" '
-                f'"{Path(sys.argv[0]).resolve()}" {quoted_args}')
-
+        from updater import ensure_launcher
+        # En egen winexe med inbäddad ikon, inte .pyw-filassociationen.
+        launcher = ensure_launcher(BASE_DIR, exe, APP_ICON)
+        return f'"{launcher}" {quoted_args}'.strip()
     return f'"{exe}" "{Path(sys.argv[0]).resolve()}" {quoted_args}'
 
 def is_stale_console_entry(command: str) -> bool:
@@ -2429,6 +2429,7 @@ def apply_icon_to_window(
         try:
             p = Path(icon_path)
             if p.exists():
+                win.iconbitmap(default=str(p))
                 win.iconbitmap(str(p))
                 return "iconbitmap"
         except Exception as exc:
@@ -2565,9 +2566,8 @@ def write_startup_shortcut(
     """
     Skriv en autostart-genväg i Start-menyns startup-mapp.
 
-    Två spår, eftersom .lnk kräver COM (pywin32 eller PowerShell):
-      1. .lnk via PowerShell WScript.Shell — riktig genväg med ikon
-      2. .bat-fallback — ful men fungerar utan några beroenden alls
+    .lnk via PowerShell WScript.Shell med appens ikon. Ingen generisk
+    .bat/.pyw-fallback: register eller Schemaläggaren kan starta vår exe.
 
     Returnerar (ok, detalj). Kastar aldrig: detta är en fallback-väg som körs
     NÄR registret redan nekat, och får inte självt krascha appen.
@@ -2588,8 +2588,11 @@ def write_startup_shortcut(
 
     # ── Spår 1: riktig .lnk via PowerShell ────────────────────────
     lnk = folder / f"{slug}.lnk"
-    exe, _, args = command.partition(" ")
-    exe = exe.strip('"')
+    match = re.fullmatch(r'\s*(?:"([^"]+)"|(\S+))(?:\s+(.*))?', command.strip())
+    if not match:
+        return False, "ogiltigt startkommando"
+    exe = match.group(1) or match.group(2)
+    args = match.group(3) or ""
 
     def _psq(text: Any) -> str:
         """PowerShell-citering: ' dubbleras till '' i enkelciterade strängar.
@@ -2608,7 +2611,7 @@ def write_startup_shortcut(
     )
     if icon_path is not None:
         # Genvägen får appens ikon — annars visar Explorer Pythons standard.
-        ps += f"$s.IconLocation='{_psq(icon_path)}';"
+        ps += f"$s.IconLocation='{_psq(icon_path)},0';"
     ps += "$s.Save()"
     try:
         res = run(
@@ -2617,27 +2620,20 @@ def write_startup_shortcut(
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if getattr(res, "returncode", 1) == 0 and lnk.exists():
+            legacy = folder / f"{slug}.bat"
+            if legacy.exists():
+                legacy.unlink()
             return True, f"lnk:{lnk}"
         logger.debug("PowerShell-genväg misslyckades: %s",
                      getattr(res, "stderr", "")[:200])
     except FileNotFoundError:
-        logger.debug("powershell finns inte — provar .bat-fallback.")
+        logger.debug("powershell finns inte — ingen ikonlös reservgenväg skapas.")
     except Exception as exc:
         logger.debug("PowerShell-genväg kastade: %s", exc)
 
-    # ── Spår 2: .bat-fallback ─────────────────────────────────────
-    bat = folder / f"{slug}.bat"
-    try:
-        # 'start "" /B' + pythonw ger ingen konsolruta (samma mönster som
-        # build_autostart_command redan använder).
-        bat.write_text(f"@echo off\r\nstart \"\" /B {command}\r\n",
-                       encoding="utf-8")
-        if bat.exists():
-            return True, f"bat:{bat}"
-    except OSError as exc:
-        return False, f"kunde inte skriva genväg: {exc}"
-
-    return False, "både .lnk och .bat misslyckades"
+    # Registrera aldrig en generisk .bat/.pyw som ikonmässig reserv.
+    # Register/Schemaläggaren kan fortfarande starta vår brandade exe.
+    return False, "kunde inte skapa Windows-genväg med FolderForge-ikon"
 
 
 def delete_startup_shortcut(
@@ -4403,6 +4399,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_systray)
         self.bind("<Configure>", self._on_resize)
         self.bind("<Unmap>", self._on_window_unmap, add="+")
+        self.bind_all("<Map>", self._on_window_mapped, add="+")
 
         if start_minimerad:
             self.after_idle(self._minimize_to_systray)
@@ -4572,8 +4569,11 @@ class FolderForgeApp(_DnDCTkBase):
             padx=scaled(20, s), pady=scaled(10, s),
         )
 
+        brand_image = load_app_icon(APP_ICON_PNG, 64)
+        self._brand_image = ctk.CTkImage(light_image=brand_image, dark_image=brand_image,
+                                        size=(scaled(36, s), scaled(36, s))) if brand_image else None
         ctk.CTkLabel(
-            header_inner, text="📁 FolderForge",
+            header_inner, text=" FolderForge", image=self._brand_image, compound="left",
             font=ctk.CTkFont(size=scaled_font(26, s), weight="bold"),
             text_color="white",
         ).pack(side="left")
@@ -6356,6 +6356,17 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Tray & Autostart
     # ============================================================
+    def _on_window_mapped(self, event) -> None:
+        window = event.widget
+        if window is not self and not isinstance(window, tk.Toplevel):
+            return
+        # CTk sätter sin standardikon efter 200 ms. Applicera vår efteråt,
+        # även på CTkInputDialog och fönster som återställs från systemfältet.
+        def apply():
+            if window.winfo_exists():
+                apply_icon_to_window(window, APP_ICON)
+        self.after(350, apply)
+
     def _on_window_unmap(self, event) -> None:
         # Barnwidgetar och withdraw() får också Unmap. Bara en verklig
         # minimering av huvudfönstret ska skapa/återanvända tray-ikonen.
@@ -6579,7 +6590,7 @@ class FolderForgeApp(_DnDCTkBase):
             height=scaled(60, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            body, text="📁 FolderForge",
+            body, text=" FolderForge", image=self._brand_image, compound="left",
             font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
             text_color="white",
         ).place(x=scaled(15, s), y=scaled(15, s))
@@ -6787,19 +6798,27 @@ class FolderForgeApp(_DnDCTkBase):
         1. exe = sys.executable.replace("python.exe", "pythonw.exe") träffade
            INTE python3.12.exe / python3.13.exe, så en svart konsolruta kunde
            dyka upp vid inloggning. build_autostart_command() hanterar alla
-           varianter och faller tillbaka på 'start "" /B' om pythonw saknas.
+           fryst exe eller en byggd FolderForge.exe med egen ikon.
         2. Ingen återläsning efter skrivning. write_autostart_entry() läser
            tillbaka värdet och rapporterar om registret inte accepterade det.
         """
         if not IS_WINDOWS:
             return
-        if initial:
-            # Uppstartssynk: rutan initierades redan ur faktiskt läge via
-            # _check_autostart(), så här finns inget att göra. Utan spärren
-            # SKREV __init__ om registret och startup-genvägen (en PowerShell-
-            # underprocess!) vid VARJE appstart — dessutom kunde en tillfälligt
-            # nekad skrivning slå över rutan till "av" trots fungerande genväg.
+        if initial and not enable:
             return
+        # Kontrollera och uppdatera launcher-resursen även efter ikonbyte.
+        command = None
+        if enable:
+            try:
+                command = build_autostart_command(["--tray"])
+            except Exception as exc:
+                logger.exception("Kunde inte skapa startprogram med FolderForge-ikon")
+                self.autostart_var.set(self._check_autostart())
+                if not initial:
+                    messagebox.showerror("Autostart", str(exc))
+                return
+            if initial and read_autostart_entry(APP_NAME) == command:
+                return
         # M29/v5.0 — ALLA TRE mekanismer istället för endast registret.
         #
         # På domänanslutna och företagsstyrda datorer är HKCU\...\Run ofta låst
@@ -6813,8 +6832,10 @@ class FolderForgeApp(_DnDCTkBase):
         # misslyckades istället för bara att något gjorde det.
         if enable:
             resultat = enable_autostart_all_methods(
-                APP_NAME, build_autostart_command(["--tray"]),
-                icon_path=APP_ICON)
+                APP_NAME, command, icon_path=APP_ICON)
+            if resultat.get("ok"):
+                # En synlig startgenväg bredvid källkoden använder också vår ikon.
+                write_startup_shortcut(APP_NAME, command, startup_dir=BASE_DIR, icon_path=APP_ICON)
             if not resultat.get("ok") and not initial:
                 missade = [n for n, v in resultat.get("methods", {}).items()
                            if not v.get("ok")]
@@ -6830,7 +6851,7 @@ class FolderForgeApp(_DnDCTkBase):
             disable_autostart_all_methods(APP_NAME)
         # verify-after-write: rutan visar vad som FAKTISKT står i registret
         try:
-            self.autostart_var.set(bool(read_autostart_entry(APP_NAME)))
+            self.autostart_var.set(self._check_autostart())
         except Exception:
             logger.warning("Kunde inte verifiera autostart-status", exc_info=True)
 
