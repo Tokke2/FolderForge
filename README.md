@@ -228,3 +228,26 @@ Använd `FolderForge.lnk` eller `FolderForge.exe`: en konsol som Windows redan
 har skapat för ett manuellt `python.exe`-anrop kan kort synas innan appkoden
 hinner köras. Appen gömmer eller stänger inte användarens terminal.
 Självtest behåller stdout för diagnostik, men normal start är dold.
+
+
+## Samlad fellogg för snabb felsökning
+
+**Hjälp → Öppna fellogg** öppnar `data/logs/folderforge-errors.log` i
+Anteckningar på Windows (utan konsolfönster). Den samlar WARNING, ERROR och
+CRITICAL från alla appmoduler via den gemensamma rotloggaren: GUI,
+historik, uppdaterare, autostart och cacherensning. Tid, modul/radnummer,
+trådnamn och traceback när sådant finns följer med. Vanliga INFO/DEBUG
+behålls endast i den fullständiga `folderforge.log`.
+
+Ofångade huvudtråds-, bakgrundstråds- och Tkinter-callbackfel fångas.
+Det native Windows-startprogrammet skriver även startfel direkt till samma
+fellogg om Python ännu inte hunnit starta. Första gången felloggen skapas
+importeras gamla varningar/fel inklusive flerradiga spår från befintliga
+`folderforge.log` och dess tre roterade arkiv. Importen görs inte om vid
+vanliga omstarter. Det är appens egna loggar, inte Windows eller andra
+programs loggar, som samlas.
+
+Felloggen roteras vid 512 KiB med fem arkiv (`.1`–`.5`); appens smarta
+cacherensning lämnar dem orörda. Loggar kan innehålla filnamn och sökvägar;
+granska innehållet innan du delar det vid felsökning. Öppna via menyn eller
+ange felloggens sökväg i en felrapport. Filen skapas även när inga fel finns.

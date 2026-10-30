@@ -159,7 +159,7 @@ from settings import (  # noqa: F401
     DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES,
 )
 from historik import ProjectHistory, atomic_write_json, read_json_safe  # noqa: E402
-from logg import init_logging  # noqa: E402
+from logg import ERROR_LOG_FILE, init_logging  # noqa: E402
 
 
 # ============================================================
@@ -4364,7 +4364,7 @@ class FolderForgeApp(_DnDCTkBase):
         # Tre bakgrundstrådar (keyboard.Listener, export-worker, pystray) kan
         # annars dö HELT TYST. install_crash_hooks() kedjar vidare till
         # originalkrokarna, är idempotent och kastar aldrig.
-        install_crash_hooks(logger)
+        # Globala felkrokar är redan installerade av logg.init_logging().
         super().__init__(**kwargs)
         # Dölj före update_idletasks så att inget fönster blinkar till.
         self.withdraw()  # Obligatoriskt, även om en äldre anropare skickar False.
@@ -4509,6 +4509,7 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
+        help_menu.add_command(label="Öppna fellogg", command=self._open_error_log)
         help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
         help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
         help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
@@ -6365,6 +6366,24 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Tray & Autostart
     # ============================================================
+    def report_callback_exception(self, exc_type, exc_value, tb) -> None:
+        # Tkinter skickar annars callback-fel bara till stderr, som saknas i pythonw.
+        logger.error("OFÅNGAT GUI-FEL", exc_info=(exc_type, exc_value, tb))
+
+    def _open_error_log(self) -> None:
+        if not ERROR_LOG_FILE.is_file():
+            messagebox.showinfo("Fellogg", "Ingen fellogg finns ännu. Sökväg:\n" + str(ERROR_LOG_FILE))
+            return
+        if IS_WINDOWS:
+            try:
+                subprocess.Popen(["notepad.exe", str(ERROR_LOG_FILE)],
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except OSError as exc:
+                logger.error("Kunde inte öppna felloggen", exc_info=True)
+                messagebox.showerror("Fellogg", str(exc))
+        else:
+            self._open_path(ERROR_LOG_FILE)
+
     def _on_window_mapped(self, event) -> None:
         window = event.widget
         if window is not self and not isinstance(window, tk.Toplevel):
@@ -6748,6 +6767,7 @@ class FolderForgeApp(_DnDCTkBase):
                     "history": HISTORY_FILE,
                     "templates": TEMPLATES_DIR,
                     "hotkey_config": HOTKEY_CONFIG,
+                    "error_log": ERROR_LOG_FILE,
                 },
                 providers={
                     "python_version": lambda: sys.version.split()[0],
