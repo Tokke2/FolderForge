@@ -153,8 +153,11 @@ class UpdateTests(unittest.TestCase):
         self.assertFalse(updater.apply_pending(self.base))
 
     def test_pending_revision_not_downloaded_twice(self):
-        updater.write_state(self.base, {'pending': 'v0.0.2', 'pending_revision': REVISION})
-        (self.base / 'data/update-pending').mkdir()
+        pending = self.base / 'data/update-pending'
+        pending.mkdir(parents=True)
+        updater.unpack(archive(), pending)
+        updater.write_state(self.base, {'pending': 'v0.0.2', 'pending_revision': REVISION,
+                                       'pending_hashes': updater.content_manifest(pending)})
         with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
             updater.check_once(self.base, '0.0.2', now=100000)
             self.assertEqual(fetch.call_count, 2)
@@ -212,6 +215,66 @@ class UpdateTests(unittest.TestCase):
                 updater.check_once(self.base, '0.0.2', force=True)
         self.assertTrue(updater._check_lock.acquire(blocking=False))
         updater._check_lock.release()
+
+    def install_current(self):
+        updater.unpack(archive(), self.base)
+        updater.write_state(self.base, {'installed': 'v0.0.2', 'installed_revision': REVISION,
+                                       'installed_hashes': updater.content_manifest(self.base)})
+
+    def test_same_commit_changed_file_is_repaired(self):
+        self.install_current()
+        (self.base / 'folder.pyw').write_text('# local change')
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000, force=True)
+        self.assertTrue(updater.apply_pending(self.base))
+        self.assertEqual((self.base / 'folder.pyw').read_text(), '# new release\n')
+
+    def test_same_commit_missing_file_is_repaired(self):
+        self.install_current()
+        (self.base / 'logg.py').unlink()
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000, force=True)
+        self.assertTrue(updater.apply_pending(self.base))
+        self.assertTrue((self.base / 'logg.py').is_file())
+
+    def test_unchanged_commit_and_files_do_not_download(self):
+        self.install_current()
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
+            updater.check_once(self.base, '0.0.2', now=100000, force=True)
+            self.assertEqual(fetch.call_count, 2)
+        self.assertFalse(updater.apply_pending(self.base))
+
+    def test_modified_pending_files_are_rejected(self):
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT, archive()]):
+            updater.check_once(self.base, '0.0.2', now=100000)
+        (self.base / 'data/update-pending/folder.pyw').write_text('# changed after download')
+        with self.assertRaises(ValueError):
+            updater.apply_pending(self.base)
+        self.assertFalse((self.base / 'folder.pyw').exists())
+
+    def test_manifest_cannot_reference_user_data(self):
+        self.install_current()
+        hashes = updater.content_manifest(self.base)
+        hashes['data/settings.json'] = 'a' * 64
+        self.assertFalse(updater.matches_manifest(self.base, hashes))
+
+    def test_user_data_changes_do_not_trigger_app_update(self):
+        self.install_current()
+        (self.base / 'data/settings.json').write_text('{"save_root": "my projects"}')
+        with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
+            updater.check_once(self.base, '0.0.2', now=100000, force=True)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_changed_icon_is_detected(self):
+        self.install_current()
+        icon = self.base / 'Icon/app.png'
+        icon.parent.mkdir()
+        icon.write_bytes(b'original icon')
+        state = updater.read_state(self.base)
+        state['installed_hashes'] = updater.content_manifest(self.base)
+        updater.write_state(self.base, state)
+        icon.write_bytes(b'changed icon')
+        self.assertFalse(updater.matches_manifest(self.base, state['installed_hashes']))
 
     def test_incomplete_archive_rejected(self):
         with self.assertRaises(ValueError):

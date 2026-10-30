@@ -95,6 +95,34 @@ def unpack(data, destination):
         raise ValueError("Releasen saknar obligatoriska appfiler")
 
 
+def content_manifest(root):
+    """SHA-256 för exakt de appfiler och ikoner som får installeras."""
+    return {str(file.relative_to(root).as_posix()): hashlib.sha256(file.read_bytes()).hexdigest()
+            for file in root.rglob("*") if file.is_file()
+            and (str(file.relative_to(root).as_posix()) in FILES
+                 or (len(file.relative_to(root).parts) == 2
+                     and file.relative_to(root).parts[0] == "Icon"
+                     and file.suffix.lower() in {".png", ".ico"}))}
+
+
+def matches_manifest(root, manifest):
+    if not isinstance(manifest, dict) or not FILES.issubset(manifest):
+        return False
+    try:
+        for name, digest in manifest.items():
+            relative = PurePosixPath(name)
+            if (relative.is_absolute() or ".." in relative.parts or "\\" in name
+                    or not (name in FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
+                                              and relative.suffix.lower() in {".png", ".ico"}))):
+                return False
+            file = root / name
+            if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != digest:
+                return False
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
 def _check_once(base, current_version, now=None, *, force=False):
     now = time.time() if now is None else now
     state = read_state(base)
@@ -126,12 +154,13 @@ def _check_once(base, current_version, now=None, *, force=False):
         raise ValueError("Releasen saknar ett giltigt commit-ID")
     state["latest_revision"] = revision
     if (candidate == installed and state.get("installed_revision") == revision
-            and version(state.get("installed", "")) == candidate):
+            and version(state.get("installed", "")) == candidate
+            and matches_manifest(base, state.get("installed_hashes"))):
         state["status"] = "checked"
         write_state(base, state)
         return
     if (state.get("pending") == tag and state.get("pending_revision") == revision
-            and (base / "data/update-pending").is_dir()):
+            and matches_manifest(base / "data/update-pending", state.get("pending_hashes"))):
         state["status"] = "checked"
         write_state(base, state)
         return
@@ -142,17 +171,18 @@ def _check_once(base, current_version, now=None, *, force=False):
         unpack(data, staged)
         # Äldre installationer saknar commit-ID. Jämför faktiska appfiler en
         # gång i stället för att anta att samma versionsnummer betyder samma kod.
-        same_content = all((base / file.relative_to(staged)).is_file()
-                           and (base / file.relative_to(staged)).read_bytes() == file.read_bytes()
-                           for file in staged.rglob("*") if file.is_file())
+        hashes = content_manifest(staged)
+        same_content = matches_manifest(base, hashes)
         if same_content:
             state["installed"] = tag
             state["installed_revision"] = revision
+            state["installed_hashes"] = hashes
             state["status"] = "checked"
             # En tidigare hämtad revision får inte installeras över aktuell kod.
             state.pop("pending", None)
             state.pop("pending_revision", None)
             state.pop("pending_notes", None)
+            state.pop("pending_hashes", None)
             write_state(base, state)
             return
         pending = base / "data/update-pending"
@@ -161,6 +191,7 @@ def _check_once(base, current_version, now=None, *, force=False):
         os.replace(staged, pending)
     state["pending"] = tag
     state["pending_revision"] = revision
+    state["pending_hashes"] = hashes
     state["pending_notes"] = state["release_notes"]
     state["status"] = "checked"
     write_state(base, state)
@@ -256,6 +287,9 @@ def apply_pending(base):
     pending = base / "data/update-pending"
     if not version(state.get("pending", "")) or not pending.is_dir():
         return False
+    hashes = state.get("pending_hashes")
+    if hashes is not None and not matches_manifest(pending, hashes):
+        raise ValueError("Hämtade appfiler har ändrats eller saknas; hämta uppdateringen igen")
     sources = [pending / name for name in FILES]
     if not all(path.is_file() for path in sources):
         return False
@@ -278,6 +312,8 @@ def apply_pending(base):
             shutil.copy2(source, temporary)
             os.replace(temporary, target)
             changed.append((target, saved, existed))
+        installed_hashes = state.pop("pending_hashes", None) or content_manifest(pending)
+        state["installed_hashes"] = installed_hashes
         state.pop("pending_notes", None)
         state["installed"] = state.pop("pending")
         revision = state.pop("pending_revision", None)

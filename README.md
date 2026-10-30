@@ -198,3 +198,18 @@ Använd den brandade `FolderForge.lnk` istället för att fästa `.pyw`-filen i
 aktivitetsfältet. En gammal redan fäst Python-genväg måste lossas och ersättas
 manuellt; appen ändrar inte Windows globala filassociation för `.pyw`.
 Windows-körning och den lokala kompileringen måste verifieras på Windows.
+
+
+### Kontroll av både commit och filer
+
+Uppdateringskontrollen jämför releasens commit-ID **och SHA-256 för installerade
+appfiler och ikoner**. Samma versionsnummer stoppar inte uppdateringen.
+Saknade eller lokalt ändrade appfiler hämtas på nytt även när commit-ID:t
+är oförändrat. Detta ersätter alltså egna kodändringar med releasekoden.
+Användardata, mallar, historik och inställningar ingår inte i filjämförelsen.
+
+Filmanifestet sparas efter installation. Hämtade filer verifieras också mot
+manifestet före installation. Oförändrad commit med matchande filer ger ingen
+ny arkivhämtning. Äldre tillstånd utan filmanifest jämförs mot releasearkivet
+en gång. Automatisk kontroll sker var 12:e timme och manuell kontroll kan
+startas direkt; installation sker fortfarande vid nästa appstart.
