@@ -157,6 +157,7 @@ from settings import (  # noqa: F401
     REQUIRED_PACKAGES, SETTINGS_ENUMS, SETTINGS_FILE,
     SETTINGS_META, SETTINGS_SCHEMA, TAB_ICONS, TEMPLATES_DIR,
     DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES,
+    UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY,
 )
 from historik import ProjectHistory, atomic_write_json, read_json_safe  # noqa: E402
 from logg import ERROR_LOG_FILE, init_logging  # noqa: E402
@@ -2912,16 +2913,16 @@ def disable_autostart_all_methods(
 
 MENU_THEMES: Dict[str, Dict[str, str]] = {
     "Dark": {
-        "bg": "#1e1e2e",
-        "fg": "#f0f0f5",
+        "bg": "#172233",
+        "fg": "#E7EDF6",
         "active_bg": "#4C9EF1",
         "active_fg": "#ffffff",
         "disabled_fg": "#6a6a80",
-        "border": "#2e2e42",
+        "border": "#2A3B50",
     },
     "Light": {
-        "bg": "#f5f5f7",
-        "fg": "#1a1a2e",
+        "bg": "#F3F6FA",
+        "fg": "#172638",
         "active_bg": "#30659a",
         "active_fg": "#ffffff",
         "disabled_fg": "#9a9aa8",
@@ -4411,6 +4412,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.bind("<Configure>", self._on_resize)
         self.bind("<Unmap>", self._on_window_unmap, add="+")
         self.bind_all("<Map>", self._on_window_mapped, add="+")
+        self.after(1000, self._refresh_update_controls)
 
         self.after_idle(self._minimize_to_systray)
 
@@ -4418,6 +4420,7 @@ class FolderForgeApp(_DnDCTkBase):
     # Fönster
     # ============================================================
     def _configure_window(self) -> None:
+        self.configure(fg_color=UI_BACKGROUND)
         self.title(f"{APP_NAME} v{APP_VERSION}")
         self.minsize(scaled(500, self._scale), scaled(400, self._scale))
 
@@ -4568,8 +4571,8 @@ class FolderForgeApp(_DnDCTkBase):
 
         # Header
         self._header = ctk.CTkFrame(
-            self, fg_color=(ACCENT_BLUE, "#1a1a2e"),
-            corner_radius=0, height=scaled(80, s),
+            self, fg_color=UI_SURFACE,
+            corner_radius=0, height=scaled(68, s),
         )
         self._header.pack(fill="x", side="top")
         self._header.pack_propagate(False)
@@ -4585,23 +4588,23 @@ class FolderForgeApp(_DnDCTkBase):
                                         size=(scaled(36, s), scaled(36, s))) if brand_image else None
         ctk.CTkLabel(
             header_inner, text=" FolderForge", image=self._brand_image, compound="left",
-            font=ctk.CTkFont(size=scaled_font(26, s), weight="bold"),
-            text_color="white",
+            font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
+            text_color=UI_TEXT,
         ).pack(side="left")
 
         ctk.CTkLabel(
             header_inner, text=f"v{APP_VERSION}",
             font=ctk.CTkFont(size=scaled_font(12, s)),
-            text_color=("white", "#aaaacc"),
+            text_color=UI_MUTED,
         ).pack(side="left", padx=(scaled(8, s), 0), pady=(scaled(10, s), 0))
 
         self._theme_btn = ctk.CTkButton(
             header_inner, text="🌙",
             width=scaled(40, s), height=scaled(40, s),
             corner_radius=scaled(20, s),
-            fg_color=("white", "#2a2a3e"),
+            fg_color=UI_BACKGROUND,
             text_color=(ACCENT_BLUE, "white"),
-            hover_color=("gray90", "#3a3a4e"),
+            hover_color=UI_BORDER,
             command=self._toggle_theme,
             font=ctk.CTkFont(size=scaled_font(18, s)),
         )
@@ -4612,7 +4615,8 @@ class FolderForgeApp(_DnDCTkBase):
             self, text="Sök uppdatering nu",
             command=self._check_updates_now,
             height=scaled(34, s), corner_radius=8,
-            fg_color=ACCENT_TEAL,
+            fg_color=UI_SURFACE, text_color=UI_TEXT,
+            border_width=1, border_color=UI_BORDER, hover_color=UI_BORDER,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
         self._update_check_button.pack(
@@ -4627,6 +4631,7 @@ class FolderForgeApp(_DnDCTkBase):
             fill="x", padx=scaled(15, s), pady=(scaled(8, s), 0),
         )
         self._result_banner.pack_propagate(False)
+        self._result_banner.pack_forget()
 
         self.result_label = ctk.CTkLabel(
             self._result_banner, text="",
@@ -4644,12 +4649,13 @@ class FolderForgeApp(_DnDCTkBase):
             self._undo_bar,
             text="↩ Ångra senaste skapandet",
             command=self._undo_last,
-            fg_color=ACCENT_RED, hover_color="#c0392b",
+            fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
             state="disabled", height=scaled(32, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
         self.undo_btn.pack(fill="x")
+        self._undo_bar.pack_forget()
 
         # Tabbar
         # v5.0 steg 3 — SIDEBAR aktiverad. Flikraden ersätts av en vertikal
@@ -4703,8 +4709,8 @@ class FolderForgeApp(_DnDCTkBase):
 
         # Footer
         footer = ctk.CTkFrame(
-            self, fg_color=(ACCENT_BLUE, "#1a1a2e"),
-            corner_radius=0, height=scaled(40, s),
+            self, fg_color=UI_SURFACE,
+            corner_radius=0, height=scaled(34, s),
         )
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
@@ -4712,7 +4718,7 @@ class FolderForgeApp(_DnDCTkBase):
         ctk.CTkLabel(
             footer, text=COPYRIGHT_OWNER,
             font=ctk.CTkFont(size=scaled_font(11, s)),
-            text_color=("white", "#8888aa"),
+            text_color=UI_MUTED,
         ).pack(side="left", padx=scaled(15, s), pady=scaled(5, s))
 
         dnd_status = "✅ Drag & Drop aktiv" if DND_AVAILABLE else ""
@@ -4720,15 +4726,15 @@ class FolderForgeApp(_DnDCTkBase):
             ctk.CTkLabel(
                 footer, text=dnd_status,
                 font=ctk.CTkFont(size=scaled_font(10, s)),
-                text_color=("white", ACCENT_GREEN),
+                text_color=UI_MUTED,
             ).pack(side="left", padx=scaled(10, s))
 
         ctk.CTkButton(
             footer, text="Minimera till fältet",
             command=self._minimize_to_systray,
             fg_color="transparent",
-            hover_color=("white", "#2a2a3e"),
-            text_color="white", height=scaled(28, s),
+            hover_color=UI_BORDER,
+            text_color=UI_TEXT, height=scaled(28, s),
             font=ctk.CTkFont(size=scaled_font(11, s)),
         ).pack(side="right", padx=scaled(15, s), pady=scaled(5, s))
 
@@ -4739,45 +4745,33 @@ class FolderForgeApp(_DnDCTkBase):
         s = self._scale
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True)
-
-        self._card(scroll, title="🏗️  Standardprojekt", color=ACCENT_BLUE)
-        ctk.CTkLabel(
-            scroll,
-            text=(
-                "Använder din sparade standardmall (väljs under Projektmallar).\n"
-                "Egen struktur nedan gäller endast det aktuella projektet."
-            ),
-            font=ctk.CTkFont(size=scaled_font(12, s)),
-            justify="left", wraplength=0,
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(8, s)))
-
-        ctk.CTkButton(
-            scroll, text="🏗️  Skapa Standardprojekt",
-            command=self._create_folder_dialog,
-            fg_color=ACCENT_BLUE, hover_color="#3a8ee0",
-            height=scaled(42, s), corner_radius=10,
-            font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(15, s)))
-
-        ctk.CTkFrame(scroll, height=2, fg_color=("gray80", "gray30")).pack(
-            fill="x", padx=scaled(15, s), pady=scaled(10, s),
-        )
-
-        self._card(scroll, title="📋  Klistra in struktur", color=ACCENT_PURPLE)
-        ctk.CTkLabel(
-            scroll,
-            text="Klistra in en trädstruktur (indenterad text) och skapa mappar automatiskt.",
-            font=ctk.CTkFont(size=scaled_font(12, s)),
-            justify="left", wraplength=0,
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(8, s)))
-
-        ctk.CTkButton(
-            scroll, text="📋  Klistra in Struktur",
-            command=self._create_from_structure_dialog,
-            fg_color=ACCENT_PURPLE, hover_color="#8e44ad",
-            height=scaled(42, s), corner_radius=10,
-            font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(15, s)))
+        ctk.CTkLabel(scroll, text="Skapa ett projekt", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(23, s), weight="bold")).pack(fill="x", padx=12, pady=(8, 4))
+        ctk.CTkLabel(scroll, text="En tydlig struktur. Redo på några sekunder.", anchor="w",
+                     text_color=UI_MUTED).pack(fill="x", padx=12, pady=(0, 16))
+        for title, description, action, command, primary in [
+            ("Använd din standardmall", "Skapa projekt med din sparade mappstruktur.",
+             "Skapa standardprojekt", self._create_folder_dialog, True),
+            ("Egen struktur", "Klistra in ett mappträd för ett enstaka projekt. Din standard ändras inte.",
+             "Klistra in struktur", self._create_from_structure_dialog, False),
+        ]:
+            card = ctk.CTkFrame(scroll, fg_color=UI_SURFACE, border_color=UI_BORDER,
+                               border_width=1, corner_radius=14)
+            card.pack(fill="x", padx=10, pady=(0, 14))
+            ctk.CTkLabel(card, text=title, anchor="w", text_color=UI_TEXT,
+                         font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=18, pady=(18, 6))
+            text = ctk.CTkLabel(card, text=description, anchor="w", justify="left", text_color=UI_MUTED)
+            text.pack(fill="x", padx=18, pady=(0, 12))
+            card.bind("<Configure>", lambda event, label=text: label.configure(wraplength=max(120, event.width - 40)), add="+")
+            if primary:
+                self._default_template_label = ctk.CTkLabel(card, text="Mall: " + self.settings.default_template,
+                                                            anchor="w", text_color=UI_MUTED)
+                self._default_template_label.pack(fill="x", padx=18, pady=(0, 10))
+            ctk.CTkButton(card, text=action, command=command, height=scaled(40, s), corner_radius=9,
+                          fg_color=UI_PRIMARY if primary else UI_BACKGROUND,
+                          text_color="white" if primary else UI_TEXT,
+                          hover_color="#347CCC" if primary else UI_BORDER,
+                          font=ctk.CTkFont(size=scaled_font(13, s), weight="bold")).pack(fill="x", padx=18, pady=(0, 18))
 
     # ============================================================
     # Tabb: Historik
@@ -5275,8 +5269,7 @@ class FolderForgeApp(_DnDCTkBase):
 
     def _card(self, parent: ctk.CTkFrame, title: str, color: str) -> None:
         s = self._scale
-        light_bg, _ = blend_color(color, 0.13)
-        _, dark_bg = blend_color(color, 0.20)
+        light_bg, dark_bg = UI_SURFACE
         # M13/C46 — titeln bär information, men alla 6 accentfärger låg under
         # WCAG AA 4.5:1 mot den blendade kortbakgrunden (sämst 1.53:1).
         # ensure_contrast() justerar färgen endast så mycket som krävs, och gör
@@ -5285,8 +5278,8 @@ class FolderForgeApp(_DnDCTkBase):
 
         f = ctk.CTkFrame(
             parent,
-            fg_color=(light_bg, dark_bg),
-            corner_radius=10,
+            fg_color=(light_bg, dark_bg), border_width=1, border_color=UI_BORDER,
+            corner_radius=12,
         )
         f.pack(fill="x", padx=scaled(10, s), pady=(scaled(8, s), scaled(4, s)))
 
@@ -5356,6 +5349,8 @@ class FolderForgeApp(_DnDCTkBase):
                          "(atomisk skrivning misslyckades)")
 
     def _update_ui_from_settings(self) -> None:
+        if hasattr(self, '_default_template_label'):
+            self._default_template_label.configure(text="Mall: " + self.settings.default_template)
         p = self.settings.save_root
         if hasattr(self, 'path_lbl'):
             self.path_lbl.configure(
@@ -5917,12 +5912,15 @@ class FolderForgeApp(_DnDCTkBase):
         self.undo_mgr.record(path)
         self.history.add(path)
         self.undo_btn.configure(state="normal")
+        self._undo_bar.pack(fill="x", padx=scaled(15, self._scale), pady=(0, 4), before=self._tab_view)
         self._set_result(f"✅ Skapad: {path.name}", ACCENT_GREEN)
         self._refresh_history_tab()
         if self.settings.open_after_creation:
             self._open_path(path)
 
     def _set_result(self, text: str, color: str) -> None:
+        anchor = self._undo_bar if self._undo_bar.winfo_manager() else self._tab_view
+        self._result_banner.pack(fill="x", padx=scaled(15, self._scale), pady=(6, 4), before=anchor)
         self.result_label.configure(text=text, text_color=color)
 
     def _undo_last(self) -> None:
@@ -5943,6 +5941,7 @@ class FolderForgeApp(_DnDCTkBase):
             self._refresh_history_tab()
         if not self.undo_mgr.can_undo:
             self.undo_btn.configure(state="disabled")
+            self._undo_bar.pack_forget()
 
     # ============================================================
     # LOGIK: Export
@@ -6150,6 +6149,7 @@ class FolderForgeApp(_DnDCTkBase):
                 return
             self.settings.default_template = sel
             self._save_settings_silent()
+            self._update_ui_from_settings()
             messagebox.showinfo("Standardmall", f"Nya standardprojekt använder nu '{sel}'.")
             win.destroy()
             self._template_dialog()
@@ -6534,6 +6534,13 @@ class FolderForgeApp(_DnDCTkBase):
         button.pack(pady=(0, 10))
         ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, 15))
 
+    def _refresh_update_controls(self) -> None:
+        from updater import get_update_activity
+        busy = get_update_activity(BASE_DIR)["busy"]
+        self._update_check_button.configure(state="disabled" if busy else "normal",
+                                            text="Kontrollerar uppdatering…" if busy else "Sök uppdatering nu")
+        self.after(1000, self._refresh_update_controls)
+
     def _check_updates_now(self) -> None:
         from updater import check_once
 
@@ -6559,7 +6566,7 @@ class FolderForgeApp(_DnDCTkBase):
         threading.Thread(target=worker, name="manual-release-check", daemon=True).start()
 
     def _show_update_status(self) -> None:
-        from updater import get_update_status
+        from updater import get_update_activity, get_update_status
 
         existing = getattr(self, "_update_status_window", None)
         if existing is not None and existing.winfo_exists():
@@ -6569,35 +6576,90 @@ class FolderForgeApp(_DnDCTkBase):
         s = self._scale
         win = ctk.CTkToplevel(self)
         self._update_status_window = win
-        win.title("Uppdateringsstatus")
+        win.title("Uppdateringar · FolderForge")
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
-        win.geometry(f"{scaled(560, s)}x{scaled(570, s)}")
-        body, footer = dialog_layout(win)
+        win.geometry(f"{scaled(580, s)}x{scaled(640, s)}")
         win.minsize(scaled(400, s), scaled(350, s))
-        ctk.CTkLabel(body, text="Uppdateringsstatus", font=ctk.CTkFont(
-            size=scaled_font(20, s), weight="bold")).pack(pady=scaled(15, s))
-        content = ctk.CTkScrollableFrame(body)
-        content.pack(fill="both", expand=True, padx=scaled(15, s))
+        body, footer = dialog_layout(win)
+        ctk.CTkLabel(body, text="Uppdateringar", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(24, s), weight="bold")).pack(fill="x", padx=16, pady=(16, 4))
+        ctk.CTkLabel(body, text="Samma version kan innehålla en nyare releasebyggnad.",
+                     anchor="w", text_color=UI_MUTED).pack(fill="x", padx=16, pady=(0, 14))
+        panel = ctk.CTkFrame(body, fg_color=UI_SURFACE, corner_radius=14, border_width=1, border_color=UI_BORDER)
+        panel.pack(fill="x", padx=12, pady=(0, 14))
+        headline = ctk.CTkLabel(panel, text="", anchor="w", justify="left", text_color=UI_TEXT,
+                               font=ctk.CTkFont(size=scaled_font(16, s), weight="bold"))
+        headline.pack(fill="x", padx=16, pady=(16, 8))
+        progress_bar = ctk.CTkProgressBar(panel, height=6, progress_color=ACCENT_BLUE)
+        progress_bar.pack(fill="x", padx=16, pady=(0, 10))
+        detail = ctk.CTkLabel(panel, text="", anchor="w", justify="left", text_color=UI_MUTED)
+        detail.pack(fill="x", padx=16, pady=(0, 16))
         labels = {}
         for name in get_update_status(BASE_DIR, APP_VERSION):
-            ctk.CTkLabel(content, text=name, anchor="w", font=ctk.CTkFont(
-                size=scaled_font(12, s), weight="bold")).pack(fill="x", pady=(scaled(8, s), 0))
-            value = ctk.CTkLabel(content, text="", anchor="w", justify="left",
-                                 wraplength=scaled(440, s))
+            if name in {"Status", "Ändringar i hämtad uppdatering", "Hämtning"}:
+                continue
+            row = ctk.CTkFrame(body, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=3)
+            ctk.CTkLabel(row, text=name, anchor="w", text_color=UI_MUTED).pack(fill="x")
+            value = ctk.CTkLabel(row, text="", anchor="w", justify="left", text_color=UI_TEXT)
             value.pack(fill="x")
             labels[name] = value
-        ctk.CTkLabel(body, text="Hämtade uppdateringar installeras vid nästa appstart.\n"
-                     "Ingen pågående session avbryts.", justify="left").pack(pady=scaled(8, s))
-        ctk.CTkButton(footer, text="Sök uppdatering nu", command=self._check_updates_now).pack(fill="x", pady=(0, scaled(8, s)))
-        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, scaled(12, s)))
+        ctk.CTkLabel(body, text="Det här ändras", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=16, pady=(18, 8))
+        notes = ctk.CTkTextbox(body, height=scaled(140, s), wrap="word", fg_color=UI_SURFACE)
+        notes.pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkLabel(body, text="Verifierad kod installeras vid nästa appstart. Din session avbryts inte.",
+                     justify="left", anchor="w", text_color=UI_MUTED).pack(fill="x", padx=16, pady=(0, 12))
+        check_button = ctk.CTkButton(footer, text="Sök uppdatering nu", command=self._check_updates_now,
+                                     height=scaled(38, s), corner_radius=9, fg_color=UI_PRIMARY)
+        check_button.pack(fill="x", pady=(0, 8))
+        action_row = ctk.CTkFrame(footer, fg_color="transparent")
+        action_row.pack(fill="x")
+        action_row.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkButton(action_row, text="Öppna fellogg", command=self._open_error_log,
+                      fg_color=UI_SURFACE, text_color=UI_TEXT, hover_color=UI_BORDER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_row, text="Stäng", command=win.destroy,
+                      fg_color=UI_SURFACE, text_color=UI_TEXT, hover_color=UI_BORDER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        previous = {"notes": None, "indeterminate": False}
 
         def refresh():
             if not win.winfo_exists():
                 return
-            for name, value in get_update_status(BASE_DIR, APP_VERSION).items():
-                labels[name].configure(text=value)
-            win.after(2000, refresh)
+            values = get_update_status(BASE_DIR, APP_VERSION)
+            activity = get_update_activity(BASE_DIR)
+            busy, ready = activity["busy"], activity["ready"]
+            headline.configure(text=("Kontroll misslyckades" if activity["error"] and not busy else
+                                      "Uppdatering redo för nästa start" if ready and not busy else
+                                      "Kontroll pågår" if busy else
+                                      "Appen är uppdaterad" if activity["phase"] == "checked" else
+                                      "Redo att söka uppdateringar"))
+            detail.configure(text=values["Status"] + "\n" + values["Hämtning"])
+            width = max(180, body.winfo_width() - 48)
+            headline.configure(wraplength=width)
+            detail.configure(wraplength=width)
+            check_button.configure(state="disabled" if busy else "normal",
+                                   text="Kontrollerar…" if busy else "Sök uppdatering nu")
+            if busy and activity["progress"] is None:
+                if not previous["indeterminate"]:
+                    progress_bar.configure(mode="indeterminate")
+                    progress_bar.start()
+                    previous["indeterminate"] = True
+            else:
+                progress_bar.stop()
+                previous["indeterminate"] = False
+                progress_bar.configure(mode="determinate")
+                progress_bar.set(activity["progress"] if busy and activity["progress"] is not None else (1 if ready else 0))
+            for name, label in labels.items():
+                label.configure(text=values[name], wraplength=width)
+            text = values["Ändringar i hämtad uppdatering"]
+            if text != previous["notes"]:
+                notes.configure(state="normal")
+                notes.delete("1.0", "end")
+                notes.insert("1.0", text)
+                notes.configure(state="disabled")
+                previous["notes"] = text
+            win.after(500, refresh)
 
         refresh()
 

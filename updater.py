@@ -18,7 +18,8 @@ import tempfile
 import threading
 import time
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
+from http.client import IncompleteRead
 from datetime import datetime
 import math
 import zipfile
@@ -50,18 +51,58 @@ def read_state(base):
 def write_state(base, state):
     path = base / "data/update-state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(state), encoding="utf-8")
-    os.replace(temporary, path)
+    fd, name = tempfile.mkstemp(prefix="update-state-", suffix=".tmp", dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(state, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def fetch(url, limit):
+def fetch(url, limit, progress=None):
+    """Begränsad strömhämtning; återförsök bara vid övergående nätverksfel."""
     request = Request(url, headers={"User-Agent": "FolderForge-updater", "Accept": "application/vnd.github+json"})
-    with urlopen(request, timeout=30) as response:
-        data = response.read(limit + 1)
-    if len(data) > limit:
-        raise ValueError("Uppdateringen är för stor")
-    return data
+    for attempt in range(3):
+        try:
+            with urlopen(request, timeout=30) as response:
+                try:
+                    total = int(response.headers.get("Content-Length", 0)) or None
+                except (ValueError, TypeError):
+                    total = None
+                if total and total > limit:
+                    raise ValueError("Uppdateringen är för stor")
+                chunks, received = [], 0
+                if progress:
+                    progress(0, total)
+                while True:
+                    chunk = response.read(min(64 * 1024, limit + 1 - received))
+                    if not chunk:
+                        break
+                    received += len(chunk)
+                    if received > limit:
+                        raise ValueError("Uppdateringen är för stor")
+                    chunks.append(chunk)
+                    if progress:
+                        progress(received, total)
+                if total is not None and received != total:
+                    raise URLError("Ofullständig hämtning")
+                return b"".join(chunks)
+        except (HTTPError, URLError, TimeoutError, ConnectionError, IncompleteRead) as exc:
+            transient = not isinstance(exc, HTTPError) or exc.code in {429, 500, 502, 503, 504}
+            if not transient or attempt == 2:
+                raise
+            delay = 0.5 * (2 ** attempt)
+            if isinstance(exc, HTTPError):
+                try:
+                    delay = min(5.0, max(delay, float(exc.headers.get("Retry-After", delay))))
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            logger.warning("Tillfälligt fel från GitHub; nytt försök %s/3", attempt + 2)
+            time.sleep(delay)
 
 
 def unpack(data, destination):
@@ -123,16 +164,30 @@ def matches_manifest(root, manifest):
         return False
 
 
+def recover_pending(base, state):
+    previous = base / "data/update-pending-previous"
+    pending = base / "data/update-pending"
+    hashes = state.get("pending_hashes")
+    if previous.exists() and matches_manifest(previous, hashes) and not matches_manifest(pending, hashes):
+        if pending.exists():
+            shutil.rmtree(pending)
+        os.replace(previous, pending)
+
+
 def _check_once(base, current_version, now=None, *, force=False):
     now = time.time() if now is None else now
     state = read_state(base)
+    recover_pending(base, state)
     last = state.get("last_check", 0)
-    if not force and isinstance(last, (int, float)) and 0 <= now - last < INTERVAL:
+    unfinished = state.get("status") in {"checking", "resolving", "comparing", "downloading", "verifying"}
+    if not force and not unfinished and isinstance(last, (int, float)) and 0 <= now - last < INTERVAL:
         return
     # Även nätverksfel begränsas till två försök per dygn, även efter omstart.
     state["last_check"] = now
     state["status"] = "checking"
     state.pop("error", None)
+    state.pop("downloaded", None)
+    state.pop("download_total", None)
     write_state(base, state)
     release = json.loads(fetch(f"https://api.github.com/repos/{REPOSITORY}/releases/latest", 1024 * 1024))
     tag = release.get("tag_name", "")
@@ -148,11 +203,15 @@ def _check_once(base, current_version, now=None, *, force=False):
         return
     # Lös releasens tagg till ett bestämt commit-ID, även för annoterade taggar.
     # target_commitish/updated_at säger inte säkert vilken kod taggen pekar på.
+    state["status"] = "resolving"
+    write_state(base, state)
     commit = json.loads(fetch(f"https://api.github.com/repos/{REPOSITORY}/commits/{tag}", 1024 * 1024))
     revision = commit.get("sha", "")
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
         raise ValueError("Releasen saknar ett giltigt commit-ID")
     state["latest_revision"] = revision
+    state["status"] = "comparing"
+    write_state(base, state)
     if (candidate == installed and state.get("installed_revision") == revision
             and version(state.get("installed", "")) == candidate
             and matches_manifest(base, state.get("installed_hashes"))):
@@ -165,7 +224,21 @@ def _check_once(base, current_version, now=None, *, force=False):
         write_state(base, state)
         return
     # Hämta exakt den kontrollerade revisionen även om taggen flyttas under tiden.
-    data = fetch(f"https://api.github.com/repos/{REPOSITORY}/zipball/{revision}", MAX_DOWNLOAD)
+    state["status"] = "downloading"
+    write_state(base, state)
+    last_progress = [0.0]
+
+    def progress(received, total):
+        state["downloaded"], state["download_total"] = received, total
+        clock = time.monotonic()
+        if received == 0 or received == total or clock - last_progress[0] >= 0.25:
+            write_state(base, state)
+            last_progress[0] = clock
+
+    data = fetch(f"https://api.github.com/repos/{REPOSITORY}/zipball/{revision}", MAX_DOWNLOAD, progress=progress)
+    state["status"] = "verifying"
+    state["downloaded"] = len(data)
+    write_state(base, state)
     with tempfile.TemporaryDirectory(dir=base / "data") as temporary:
         staged = Path(temporary)
         unpack(data, staged)
@@ -186,15 +259,28 @@ def _check_once(base, current_version, now=None, *, force=False):
             write_state(base, state)
             return
         pending = base / "data/update-pending"
+        previous = base / "data/update-pending-previous"
+        if previous.exists():
+            shutil.rmtree(previous)
         if pending.exists():
-            shutil.rmtree(pending)
-        os.replace(staged, pending)
+            os.replace(pending, previous)
+        try:
+            os.replace(staged, pending)
+        except OSError:
+            if previous.exists():
+                os.replace(previous, pending)
+            raise
     state["pending"] = tag
     state["pending_revision"] = revision
     state["pending_hashes"] = hashes
     state["pending_notes"] = state["release_notes"]
     state["status"] = "checked"
     write_state(base, state)
+    if previous.exists():
+        try:
+            shutil.rmtree(previous)
+        except OSError:
+            logger.warning("Kunde inte rensa tidigare uppdateringspaket", exc_info=True)
     logger.info("Release %s hämtad; installeras vid nästa start", tag)
 
 
@@ -211,7 +297,16 @@ def _checked_once(base, current_version, now=None, *, force=False):
             write_state(base, state)
             return
         state["status"] = "error"
-        state["error"] = str(exc)[:300]
+        if isinstance(exc, HTTPError):
+            if exc.code in {403, 429}:
+                detail = "GitHub nekade kontrollen eller begränsar antalet anrop. Försök igen senare."
+            else:
+                detail = f"GitHub svarade med HTTP {exc.code}. Försök igen eller öppna felloggen."
+        elif isinstance(exc, URLError):
+            detail = f"Kunde inte nå GitHub: {exc.reason}"
+        else:
+            detail = str(exc)
+        state["error"] = detail[:300]
         write_state(base, state)
         raise
 
@@ -225,6 +320,18 @@ def check_once(base, current_version, now=None, *, force=False):
         return True
     finally:
         _check_lock.release()
+
+
+def get_update_activity(base):
+    """Lättviktig UI-modell, utan nätverk eller filhashning."""
+    state = read_state(base)
+    received, total = state.get("downloaded", 0), state.get("download_total")
+    progress = None
+    if isinstance(received, (int, float)) and isinstance(total, (int, float)) and total > 0:
+        progress = max(0.0, min(1.0, received / total))
+    ready = bool(version(state.get("pending", "")) and (base / "data/update-pending").is_dir())
+    return {"busy": _check_lock.locked(), "ready": ready, "progress": progress,
+            "phase": state.get("status", "idle"), "error": state.get("error", "")}
 
 
 def get_update_status(base, current_version):
@@ -241,16 +348,28 @@ def get_update_status(base, current_version):
         except (ValueError, OverflowError, OSError):
             pass
     status = {
-        "checking": "Kontrollerar / hämtar uppdatering…",
+        "checking": "Söker senaste stabila release…",
+        "resolving": "Kontrollerar releasens commit-ID…",
+        "comparing": "Jämför appfiler och ikoner…",
+        "downloading": "Hämtar uppdatering…",
+        "verifying": "Verifierar hämtade filer…",
         "checked": "Kontroll klar – ingen ny uppdatering att installera.",
         "no_release": "Ingen stabil release är publicerad.",
         "error": "Kontrollen misslyckades. Nytt försök enligt schemat.",
     }.get(state.get("status"), "Ingen kontroll har slutförts ännu.")
     pending = state.get("pending", "")
-    if version(pending) and (base / "data/update-pending").is_dir():
+    if (state.get("status") not in {"checking", "resolving", "comparing", "downloading", "verifying", "error"}
+            and version(pending) and (base / "data/update-pending").is_dir()):
         status = f"{pending} är hämtad och väntar på nästa appstart."
+    received, total = state.get("downloaded", 0), state.get("download_total")
+    download = "Ingen hämtning"
+    if isinstance(received, (int, float)) and received > 0:
+        download = f"{received / 1024:.0f} KiB"
+        if isinstance(total, (int, float)) and total > 0:
+            download += f" / {total / 1024:.0f} KiB ({min(100, int(received * 100 / total))} %)"
     return {
         "Installerad version": installed,
+        "Hämtning": download,
         "Installerat bygg-ID": str(state.get("installed_revision") or "Okänt")[:12],
         "Senaste bygg-ID": str(state.get("latest_revision") or "Okänt")[:12],
         "Väntande bygg-ID": str(state.get("pending_revision") or "Inget")[:12],
@@ -284,6 +403,7 @@ def start_updates(base, current_version):
 def apply_pending(base):
     """Installera före GUI-start. Spara backup och återställ vid skrivfel."""
     state = read_state(base)
+    recover_pending(base, state)
     pending = base / "data/update-pending"
     if not version(state.get("pending", "")) or not pending.is_dir():
         return False

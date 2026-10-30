@@ -253,3 +253,11 @@ LOKAL_CHOICES: Final[Tuple[str, ...]] = (
     "LAXÅ",
     "ÖREBRO",
 )
+
+# Gemensamma semantiska ytor (ljust, mörkt).
+UI_BACKGROUND = ("#F3F6FA", "#0F1724")
+UI_SURFACE = ("#FFFFFF", "#172233")
+UI_BORDER = ("#DCE3EC", "#2A3B50")
+UI_TEXT = ("#172638", "#E7EDF6")
+UI_MUTED = ("#55657A", "#A3B2C7")
+UI_PRIMARY = ("#2768AF", "#2F70B6")

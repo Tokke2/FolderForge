@@ -251,3 +251,29 @@ Felloggen roteras vid 512 KiB med fem arkiv (`.1`–`.5`); appens smarta
 cacherensning lämnar dem orörda. Loggar kan innehålla filnamn och sökvägar;
 granska innehållet innan du delar det vid felsökning. Öppna via menyn eller
 ange felloggens sökväg i en felrapport. Filen skapas även när inga fel finns.
+
+
+## Förfinad layout och tydligare uppdateringsflöde
+
+Gränssnittet har gemensamma neutrala ytor för ljust/mörkt tema, tydligare
+textkontrast, kompakt rubrik och separata kort för standardmall respektive
+egen struktur. Tom resultatrad och inaktiv Ångra-knapp tar inte längre plats.
+Den aktuella standardmallen visas i skapavyn.
+
+Uppdateringsfönstret visar kontroll, commit-upplösning, filjämförelse,
+hämtning och verifiering. En förloppsindikator visar hämtade KiB och procent
+när servern anger total storlek. Ändringslistan har en egen läsbar textyta;
+knappar och fellogg ligger i den fasta knappfoten. Manuella kontrollknappar
+inaktiveras medan en kontroll redan pågår.
+
+Hämtningen strömmas med storleksgräns, upp till tre försök vid tillfälliga
+nätverks-/serverfel och kontroll av ofullständiga svar. Permanenta fel som
+404 återförsöks inte. GitHubs begränsning av anrop förklaras i statusvyn.
+Tillstånd skrivs atomiskt med fsync. Ett tidigare verifierat hämtat paket
+behålls tills dess ersättare har förberetts och registrerats; avbruten
+förberedelse kan återställas. En avbruten kontroll behöver inte vänta tolv
+timmar före nästa försök. Normalt automatiskt intervall är fortsatt tolv
+timmar och installation sker vid nästa appstart.
+
+Filhashar och commit-ID kontrolleras fortfarande även inom samma
+versionsnummer. Visuell Windows-kontroll krävs utöver de headless testerna.
