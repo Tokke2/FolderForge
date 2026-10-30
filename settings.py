@@ -179,7 +179,7 @@ SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
         "label": "Starta alltid minimerad i systemfältet",
         "beskrivning": ("Appen startar direkt i systray utan att fönstret "
                         "visas — gäller ALLA startsätt, även dubbelklick. "
-                        "Klicka på tray-ikonen (eller starta appen igen) "
+                        "Klicka på tray-ikonen eller använd snabbtangenten "
                         "för att öppna fönstret."),
     },
     "theme": {

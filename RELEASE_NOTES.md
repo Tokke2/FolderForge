@@ -1,6 +1,8 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Alltid dold start i systemfältet, även med gammalt start_minimized=false. Alternativet för synlig start är borttaget. En andra start visar inte huvudfönstret.
+- Konsolfri Windows-start är obligatorisk: koppla loss appens konsol och avbryt om fönsterfri omstart inte kan göras. Native launcher tvingar --tray.
 - Uppdateraren kontrollerar både release-commit och SHA-256 för appfiler/ikoner. Samma versionsnummer tillåts; även saknade eller ändrade filer vid oförändrad commit återställs från releasen. Hämtade filer verifieras före installation.
 - Ny gemensam gul/turkos mappstrukturikon i fönster, dialoger, systemfält, rubrik och Windows-genvägar.
 - Autostart använder lokalt byggd FolderForge.exe med egen inbäddad ikon, inte .pyw-filassociationen. Python/pythonw och Windows .NET Framework-kompilator krävs fortfarande.
@@ -32,7 +34,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-78 automatiserade tester godkända och Python-syntax kontrollerad.
+86 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

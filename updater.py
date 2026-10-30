@@ -364,6 +364,7 @@ class FolderForgeLauncher {
     [STAThread]
     static int Main(string[] args) {
         bool selftest = args.Contains("--selftest");
+        if (!selftest && !args.Contains("--tray")) args = args.Concat(new[] { "--tray" }).ToArray();
         try {
             var info = new ProcessStartInfo();
             info.FileName = INTERPRETER;

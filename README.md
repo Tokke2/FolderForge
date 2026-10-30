@@ -2,10 +2,10 @@
 
 ## Start i systemfältet
 
-Appen startar som standard minimerad i systemfältet utan att huvudfönstret
-blinkar till. Öppna via tray-ikonen, snabbtangenten eller genom att starta
-appen igen. Inställningen **Starta alltid minimerad i systemfältet** kan
-stängas av; `--tray` tvingar minimerad start.
+Appen startar alltid minimerad i systemfältet utan att huvudfönstret
+blinkar till. Öppna via tray-ikonen eller snabbtangenten. Det finns inte
+längre någon inställning för att starta med synligt huvudfönster. En andra
+start visar inte automatiskt en redan körande app.
 
 ## Automatiska release-uppdateringar
 
@@ -213,3 +213,18 @@ manifestet före installation. Oförändrad commit med matchande filer ger ingen
 ny arkivhämtning. Äldre tillstånd utan filmanifest jämförs mot releasearkivet
 en gång. Automatisk kontroll sker var 12:e timme och manuell kontroll kan
 startas direkt; installation sker fortfarande vid nästa appstart.
+
+
+## Obligatorisk konsolfri start
+
+Windows-genvägen och den brandade `FolderForge.exe` startar alltid dolt med
+`--tray`, utan konsolfönster. Även gamla `start_minimized: false` korrigeras
+till `true`. Uppdateringsomstarten följer samma regel.
+
+Om appen råkar startas via `python.exe` kopplar den loss sin konsolanslutning
+och startar om via `pythonw.exe`/`pyw.exe`. Saknas en fönsterfri tolk eller
+misslyckas omstarten avbryts starten i stället för att fortsätta i konsolläge.
+Använd `FolderForge.lnk` eller `FolderForge.exe`: en konsol som Windows redan
+har skapat för ett manuellt `python.exe`-anrop kan kort synas innan appkoden
+hinner köras. Appen gömmer eller stänger inte användarens terminal.
+Självtest behåller stdout för diagnostik, men normal start är dold.

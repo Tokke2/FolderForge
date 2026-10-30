@@ -198,6 +198,7 @@ def _install_packages(packages: List[str]) -> Tuple[bool, str]:
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", "--quiet", pkg],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.CalledProcessError:
             failed.append(pkg)
@@ -270,18 +271,24 @@ def relaunch_without_console() -> bool:
     skriptet explicit via python.exe visas en svart konsolruta under hela
     körningen. Omstarten använder tolkens granne "pythonw.exe" (annars
     py-startarens fönsterfria pyw.exe) samt flaggorna CREATE_NO_WINDOW |
-    DETACHED_PROCESS, så inte ens en konsolblänkare hinner uppstå.
+    DETACHED_PROCESS, så barnprocessen inte skapar ett konsolfönster.
 
     Ingen omstart sker när:
       • plattformen inte är Windows (där finns ingen konsol-tolk att undvika)
       • appen är en fryst exe (redan fönsterfri per definition)
       • tolken redan är pythonw.exe
       • --selftest finns i argv (rapporten ska nå förälderns stdout)
-      • ingen fönsterfri tolk hittas (konsolläge är bättre än ingen start)
+
+    Saknas fönsterfri tolk eller misslyckas omstarten avbryts starten.
     """
-    if not IS_WINDOWS or getattr(sys, "frozen", False):
+    if not IS_WINDOWS or "--selftest" in sys.argv:
         return False
-    if "--selftest" in sys.argv:
+    # Lossa bara appens anslutning till konsolen; göm inte användarens terminal.
+    try:
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        logger.debug("Kunde inte lossa konsolanslutningen", exc_info=True)
+    if getattr(sys, "frozen", False):
         return False
     exe = Path(sys.executable) if sys.executable else None
     if exe and exe.name.lower().startswith("pythonw"):
@@ -294,7 +301,8 @@ def relaunch_without_console() -> bool:
     if not tolk:
         tolk = shutil.which("pyw.exe") or shutil.which("pyw")
     if not tolk:
-        return False
+        logger.error("Ingen konsolfri Python-tolk hittades; start avbruten")
+        raise SystemExit(1)
     try:
         subprocess.Popen(
             [tolk, str(Path(__file__).resolve()), *sys.argv[1:]],
@@ -308,10 +316,10 @@ def relaunch_without_console() -> bool:
         return True
     except OSError as exc:
         logger.warning(
-            "Konsolfri omstart misslyckades — fortsätter i denna process: %s",
+            "Konsolfri omstart misslyckades — start avbruten: %s",
             exc,
         )
-        return False
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
@@ -1107,6 +1115,10 @@ def validate_settings(data: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
         cleaned_tabs[str(name)] = bool(val)
     out["visible_tabs"] = cleaned_tabs
 
+    if out.get("start_minimized") is not True:
+        out["start_minimized"] = True
+        repaired = True
+        log.append("start_minimized → True (obligatorisk start i systemfältet)")
     return out, repaired, log
 
 
@@ -4347,7 +4359,7 @@ def focus_project_name(entry) -> None:
 # Huvudapplikation
 # ============================================================
 class FolderForgeApp(_DnDCTkBase):
-    def __init__(self, start_minimerad: bool = False, **kwargs) -> None:
+    def __init__(self, start_minimerad: bool = True, **kwargs) -> None:
         # M5/C40 — globala felkrokar ALLRA FÖRST, innan någon tråd startas.
         # Tre bakgrundstrådar (keyboard.Listener, export-worker, pystray) kan
         # annars dö HELT TYST. install_crash_hooks() kedjar vidare till
@@ -4355,8 +4367,7 @@ class FolderForgeApp(_DnDCTkBase):
         install_crash_hooks(logger)
         super().__init__(**kwargs)
         # Dölj före update_idletasks så att inget fönster blinkar till.
-        if start_minimerad:
-            self.withdraw()
+        self.withdraw()  # Obligatoriskt, även om en äldre anropare skickar False.
 
         # M19/C44 — självläkning: reparera ett autostartvärde som pekar på
         # konsol-python (svart ruta vid inloggning) INNAN något annat körs.
@@ -4401,8 +4412,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.bind("<Unmap>", self._on_window_unmap, add="+")
         self.bind_all("<Map>", self._on_window_mapped, add="+")
 
-        if start_minimerad:
-            self.after_idle(self._minimize_to_systray)
+        self.after_idle(self._minimize_to_systray)
 
     # ============================================================
     # Fönster
@@ -5107,11 +5117,11 @@ class FolderForgeApp(_DnDCTkBase):
         self._settings_option(scroll, "plate_mode",
                               self.plate_mode_var, self._save_settings_silent)
 
-        # Startläge: alltid minimerad i systray (default PÅ — användarens
-        # beslut), texten hämtas ur SETTINGS_META som allt annat här.
-        self.start_minimized_var = ctk.BooleanVar(value=self.settings.start_minimized)
-        self._settings_option(scroll, "start_minimized",
-                              self.start_minimized_var, self._save_settings_silent)
+        ctk.CTkLabel(
+            scroll, text="Startar alltid minimerad i systemfältet, utan konsolfönster.\n"
+                         "Öppna appen via tray-ikonen eller snabbtangenten.",
+            justify="left", anchor="w", wraplength=scaled(350, s),
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         # Drag & Drop info
         self._card(scroll, title="📥  Drag & Drop", color=ACCENT_TEAL)
@@ -5334,8 +5344,7 @@ class FolderForgeApp(_DnDCTkBase):
             self.settings.open_after_creation = self.open_var.get()
         if hasattr(self, 'plate_mode_var'):
             self.settings.plate_mode = self.plate_mode_var.get()
-        if hasattr(self, 'start_minimized_var'):
-            self.settings.start_minimized = self.start_minimized_var.get()
+        self.settings.start_minimized = True
         if hasattr(self, 'theme_var'):
             self.settings.theme = self.theme_var.get()
         # M1/F1 — atomisk skrivning: mkstemp → fdopen → fsync → os.replace, med
@@ -6919,23 +6928,18 @@ if __name__ == "__main__":
     # instanserna skrev till settings.json/history.json med varsin kopia av
     # datat i minnet (sista skrivning vann → tyst dataförlust).
     #
-    # En andra start begär fokus på det befintliga fönstret via en triggerfil
-    # och avslutar sig själv. Låset frigörs i finally OCH via atexit, och
+    # En andra start avslutar sig själv utan att visa ett dolt huvudfönster. Låset frigörs i finally OCH via atexit, och
     # release() är idempotent — en krasch lämnar alltså aldrig ett zombielås.
     _instance_lock = SingleInstanceLock(APP_NAME)
     if not _instance_lock.acquire():
-        _instance_lock.request_focus()
-        logger.info("FolderForge körs redan — fokus begärt på befintligt fönster.")
+        logger.info("FolderForge körs redan — ingen ny instans eller fönstervisning.")
         sys.exit(0)
-    # Startläge (användarens beslut): "start_minimized" i settings.json styr
-    # — default PÅ = starta alltid minimerad, oavsett startsätt. --tray
-    # (autostart/CLI) tvingar minimerat även om inställningen vore avstängd.
+    # All start, även efter uppdatering, ska vara dold i systemfältet.
     _raw_start = read_json_safe(SETTINGS_FILE, {}) or {}
     _start_clean, _start_rep, _start_log = validate_settings(_raw_start)
     for _rad in _start_log:
         logger.warning("Inställning reparerad: %s", _rad)
-    _start_minimerad = (bool(_start_clean.get("start_minimized", True))
-                        or "--tray" in sys.argv)
+    _start_minimerad = True
 
     try:
         from updater import apply_pending, start_updates
