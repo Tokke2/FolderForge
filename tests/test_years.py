@@ -62,12 +62,13 @@ class YearTests(unittest.TestCase):
         self.assertNotIn('year_var.set', ast.unparse(refresh))
 
     def test_vehicle_types_are_available(self):
-        self.assertEqual(settings.VEHICLE_CHOICES, ('PERSONBIL', 'HUSBIL', 'LASTBIL'))
+        self.assertEqual(settings.VEHICLE_CHOICES, ('HUSBIL', 'LASTBIL'))
+        self.assertNotIn('PERSONBIL', settings.VEHICLE_CHOICES)
 
     def test_vehicle_buttons_are_exclusive_and_can_be_cleared(self):
         toggle = self.ns['toggle_vehicle_type']
-        self.assertEqual(toggle('', 'PERSONBIL'), 'PERSONBIL')
-        self.assertEqual(toggle('PERSONBIL', 'HUSBIL'), 'HUSBIL')
+        self.assertEqual(toggle('', 'LASTBIL'), 'LASTBIL')
+        self.assertEqual(toggle('LASTBIL', 'HUSBIL'), 'HUSBIL')
         self.assertEqual(toggle('HUSBIL', 'HUSBIL'), '')
         with self.assertRaises(ValueError):
             toggle('', 'BÅT')
@@ -81,7 +82,7 @@ class YearTests(unittest.TestCase):
 
     def test_selected_vehicle_replaces_typed_vehicle_without_duplicate(self):
         build = self.ns['_bygg_projektnamn']
-        self.assertEqual(build('ABC123 personbil', 'LAXÅ', '2026', 'HUSBIL'),
+        self.assertEqual(build('ABC123 lastbil', 'LAXÅ', '2026', 'HUSBIL'),
                          'ABC123 HUSBIL LAXÅ 2026')
         self.assertEqual(build('ABC123 HUSBIL', '—', '', 'HUSBIL'), 'ABC123 HUSBIL')
 

@@ -281,8 +281,8 @@ versionsnummer. Visuell Windows-kontroll krävs utöver de headless testerna.
 
 ## Fordonsslag när projektmapp skapas
 
-Under projektnamnet finns snabbknapparna **Personbil**, **Husbil** och
-**Lastbil**. Ett fordonsslag åt gången kan väljas; klicka på samma knapp igen
+Under projektnamnet finns snabbknapparna **Husbil** och **Lastbil**.
+Utan något val läggs inget fordonsslag till i mappnamnet. Ett fordonsslag åt gången kan väljas; klicka på samma knapp igen
 för att avmarkera. Valet är frivilligt och gäller bara projektet som skapas.
 Det syns direkt i förhandsvisningen och placeras före lokal och år, exempelvis
 `ABC123 VINDRUTA HUSBIL LAXÅ 2026`. En annan vald fordonstyp ersätter eventuella
