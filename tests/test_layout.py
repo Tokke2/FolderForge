@@ -88,6 +88,16 @@ class LayoutTests(unittest.TestCase):
         for index in (0, 1):
             self.assertGreaterEqual(contrast(settings.UI_MUTED[index], settings.UI_SURFACE[index]), 4.5)
 
+    def test_vehicle_buttons_update_preview_and_creation_name(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(method)
+        self.assertIn('enumerate(VEHICLE_CHOICES)', code)
+        self.assertIn("vehicle_var.trace_add('write', _förnya_utseende)", code)
+        self.assertIn('year, vehicle_var.get())', code)
+        self.assertIn('year_var.get(), vehicle_var.get())', code)
+        self.assertIn('width=scaled(70, s)', code)
+
     def test_dialogs_use_pinned_footer_layout(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         for name in ['_create_folder_dialog', '_create_from_structure_dialog', '_template_dialog',

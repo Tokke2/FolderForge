@@ -10,12 +10,12 @@ class YearTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
-        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {'project_year_choices', 'validate_project_year'}]
+        nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {'project_year_choices', 'validate_project_year', 'toggle_vehicle_type'}]
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_bygg_projektnamn')
         method.decorator_list = []
         nodes.append(method)
-        cls.ns = {'datetime': datetime, 're': re, 'LOKAL_CHOICES': settings.LOKAL_CHOICES}
+        cls.ns = {'datetime': datetime, 're': re, 'LOKAL_CHOICES': settings.LOKAL_CHOICES, 'VEHICLE_CHOICES': settings.VEHICLE_CHOICES}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'years', 'exec'), cls.ns)
 
     def test_current_year_and_three_previous(self):
@@ -60,3 +60,34 @@ class YearTests(unittest.TestCase):
         tree = ast.parse(source)
         refresh = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'refresh_year_choices')
         self.assertNotIn('year_var.set', ast.unparse(refresh))
+
+    def test_vehicle_types_are_available(self):
+        self.assertEqual(settings.VEHICLE_CHOICES, ('PERSONBIL', 'HUSBIL', 'LASTBIL'))
+
+    def test_vehicle_buttons_are_exclusive_and_can_be_cleared(self):
+        toggle = self.ns['toggle_vehicle_type']
+        self.assertEqual(toggle('', 'PERSONBIL'), 'PERSONBIL')
+        self.assertEqual(toggle('PERSONBIL', 'HUSBIL'), 'HUSBIL')
+        self.assertEqual(toggle('HUSBIL', 'HUSBIL'), '')
+        with self.assertRaises(ValueError):
+            toggle('', 'BÅT')
+
+    def test_vehicle_before_location_and_year(self):
+        build = self.ns['_bygg_projektnamn']
+        for choice in settings.VEHICLE_CHOICES:
+            with self.subTest(choice=choice):
+                self.assertEqual(build('ABC123 VINDRUTA', 'LAXÅ', '2026', choice),
+                                 f'ABC123 VINDRUTA {choice} LAXÅ 2026')
+
+    def test_selected_vehicle_replaces_typed_vehicle_without_duplicate(self):
+        build = self.ns['_bygg_projektnamn']
+        self.assertEqual(build('ABC123 personbil', 'LAXÅ', '2026', 'HUSBIL'),
+                         'ABC123 HUSBIL LAXÅ 2026')
+        self.assertEqual(build('ABC123 HUSBIL', '—', '', 'HUSBIL'), 'ABC123 HUSBIL')
+
+    def test_vehicle_selection_optional(self):
+        self.assertEqual(self.ns['_bygg_projektnamn']('ABC123', '—', '', ''), 'ABC123')
+
+    def test_vehicle_choice_does_not_split_registration_number(self):
+        self.assertEqual(self.ns['_bygg_projektnamn']('abc 123', '—', '2026', 'LASTBIL'),
+                         'abc 123 LASTBIL 2026')

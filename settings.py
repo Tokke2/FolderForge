@@ -232,6 +232,8 @@ DEFAULT_HOTKEY: frozenset[str] = frozenset({"ctrl", "shift", "m"})
 # till / tar bort ordet i namnet — t.ex. "DSS817" + STENSKOTT. Redigera
 # listan fritt: chip-raden byggs direkt ur listan, och namnet genomgår
 # alltid samma normalisering/sanering som handskriven text.
+VEHICLE_CHOICES: Final[Tuple[str, ...]] = ("PERSONBIL", "HUSBIL", "LASTBIL")
+
 DAMAGE_TYPE_CHIPS: Final[Tuple[str, ...]] = (
     "STENSKOTT",
     "VINDRUTA",

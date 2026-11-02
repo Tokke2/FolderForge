@@ -156,7 +156,7 @@ from settings import (  # noqa: F401
     ICON_DIR, INVALID_NAME_CHARS, INVALID_NAMES, IS_WINDOWS, KNOWN_FILES,
     REQUIRED_PACKAGES, SETTINGS_ENUMS, SETTINGS_FILE,
     SETTINGS_META, SETTINGS_SCHEMA, TAB_ICONS, TEMPLATES_DIR,
-    DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES,
+    DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES, VEHICLE_CHOICES,
     UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY,
 )
 from historik import ProjectHistory, atomic_write_json, read_json_safe  # noqa: E402
@@ -4332,6 +4332,13 @@ def dialog_layout(win):
     return body, footer
 
 
+def toggle_vehicle_type(current, clicked):
+    """Ett fordonsslag åt gången. Klick på valt alternativ avmarkerar det."""
+    if clicked not in VEHICLE_CHOICES:
+        raise ValueError("Okänt fordonsslag")
+    return "" if current == clicked else clicked
+
+
 def validate_project_year(value):
     """År kan väljas eller skrivas; tomt/streck betyder inget år."""
     year = str(value).strip()
@@ -5477,7 +5484,7 @@ class FolderForgeApp(_DnDCTkBase):
     # LOGIK: Skapa mappar
     # ============================================================
     @staticmethod
-    def _bygg_projektnamn(namn_text: str, lokal: str, year: str = "—") -> str:
+    def _bygg_projektnamn(namn_text: str, lokal: str, year: str = "—", vehicle_type: str = "") -> str:
         """Sätter ihop slutnamnet för standardprojekt.
 
         Lokalen läggs efter projektnamnet, och valt år efter lokalen —
@@ -5491,6 +5498,12 @@ class FolderForgeApp(_DnDCTkBase):
         # Undvik dubbelt valt år utan att radera andra år i fri text.
         if year and year != "—":
             ord_lista = [o for o in ord_lista if o != year]
+        vehicle = str(vehicle_type or "").strip().upper()
+        if vehicle:
+            if vehicle not in VEHICLE_CHOICES:
+                raise ValueError("Okänt fordonsslag")
+            ord_lista = [word for word in ord_lista if word.upper() not in VEHICLE_CHOICES]
+            ord_lista.append(vehicle)
         if lokal and lokal != "—":
             ord_lista.append(lokal)
         if year and year != "—":
@@ -5544,6 +5557,7 @@ class FolderForgeApp(_DnDCTkBase):
         namn_var = ctk.StringVar()
         lokal_var = ctk.StringVar(value="—")
         year_var = ctk.StringVar(value="—")
+        vehicle_var = ctk.StringVar(value="")
 
         def _rubrik(text: str) -> None:
             ctk.CTkLabel(
@@ -5570,6 +5584,26 @@ class FolderForgeApp(_DnDCTkBase):
                 entry.icursor("end")
             except Exception:
                 pass
+
+        _rubrik("FORDONSSLAG  ·  välj ett, valfritt")
+        vehicle_row = ctk.CTkFrame(body, fg_color="transparent")
+        vehicle_row.pack(fill="x", padx=scaled(15, s), pady=(0, scaled(4, s)))
+        vehicle_buttons = {}
+
+        def toggle_vehicle(choice):
+            vehicle_var.set(toggle_vehicle_type(vehicle_var.get(), choice))
+            _avsluta_redigering()
+
+        for column, choice in enumerate(VEHICLE_CHOICES):
+            vehicle_row.grid_columnconfigure(column, weight=1, uniform="vehicles")
+            button = ctk.CTkButton(
+                vehicle_row, text=choice.title(), width=scaled(70, s), height=scaled(32, s),
+                command=lambda value=choice: toggle_vehicle(value),
+                fg_color=UI_BACKGROUND, text_color=UI_TEXT, hover_color=UI_BORDER,
+                corner_radius=8, font=ctk.CTkFont(size=scaled_font(12, s)),
+            )
+            button.grid(row=0, column=column, sticky="ew", padx=3, pady=3)
+            vehicle_buttons[choice] = button
 
         # ── Skadetyp-chips med visuellt markeringsläge ─────────────
         _rubrik("SKADETYP  ·  SIDORUTA/BAKRUTA utesluter varandra")
@@ -5659,7 +5693,7 @@ class FolderForgeApp(_DnDCTkBase):
                 year_menu.focus_set()
                 return
             resultat["namn"] = self._bygg_projektnamn(
-                namn_var.get(), lokal_var.get(), year)
+                namn_var.get(), lokal_var.get(), year, vehicle_var.get())
             win.destroy()
 
         skapa_knapp = ctk.CTkButton(
@@ -5678,6 +5712,11 @@ class FolderForgeApp(_DnDCTkBase):
             """Synkar chips-lägen, förhandsvisning och Skapa-knappens
             status mot textfältet — körs via trace vid VARJE ändring,
             så vyn aldrig ljuger om vad som kommer skapas."""
+            for choice, button in vehicle_buttons.items():
+                selected = vehicle_var.get() == choice
+                button.configure(text=("✓ " if selected else "") + choice.title(),
+                                 fg_color=UI_PRIMARY if selected else UI_BACKGROUND,
+                                 text_color="white" if selected else UI_TEXT)
             ord_set = {o.upper() for o in namn_var.get().split()}
             for i, chip in enumerate(DAMAGE_TYPE_CHIPS):
                 aktiv = chip.upper() in ord_set
@@ -5689,11 +5728,12 @@ class FolderForgeApp(_DnDCTkBase):
             eget_namn = namn_var.get().strip()
             # Viktigt: "tomt namn" mäts på textfältet — ENBART en vald
             # lokal (utan eget namn) är aldrig ett giltigt projektnamn.
-            namn = self._bygg_projektnamn(eget_namn, lokal_var.get(), year_var.get()).strip()
+            namn = self._bygg_projektnamn(eget_namn, lokal_var.get(), year_var.get(), vehicle_var.get()).strip()
             preview_var.set(f"📁 {namn}" if eget_namn
                             else "📁 (ange ett projektnamn)")
             skapa_knapp.configure(state=("normal" if eget_namn else "disabled"))
 
+        vehicle_var.trace_add("write", _förnya_utseende)
         year_var.trace_add("write", _förnya_utseende)
         namn_var.trace_add("write", _förnya_utseende)
         _förnya_utseende()                  # startläge: chips släckta, Skapa av
