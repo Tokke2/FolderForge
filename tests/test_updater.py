@@ -41,7 +41,7 @@ class UpdateTests(unittest.TestCase):
         (self.base / 'data/update-pending').mkdir()
         status = updater.get_update_status(self.base, '5.0')
         self.assertEqual(status['Installerad version'], 'v5.1')
-        self.assertIn('nästa appstart', status['Status'])
+        self.assertIn('startar om automatiskt', status['Status'])
         self.assertNotEqual(status['Senaste kontrollförsök'], 'Aldrig')
 
     def test_failed_check_visible_in_status(self):

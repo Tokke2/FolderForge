@@ -1,6 +1,7 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Automatisk minimerad omstart direkt efter verifierad uppdatering. Öppna dialoger/export får avslutas först; installationsfel spärrar omstartsloopar och kan prövas igen via Sök uppdatering nu.
 - Snabbknappar för Husbil och Lastbil (Personbil borttagen) i projektdialogen. Ett frivilligt val åt gången; visas i mappnamnet före lokal och år.
 - Förfinad layout: neutrala ljusa/mörka ytor, kompakt rubrik, tydliga projektkort och färre tomma statusytor. Läsbar text och primärknappar med kontrastkontroll.
 - Ny uppdateringsvy med arbetssteg, förloppsindikator, hämtade KiB/procent när storleken är känd, separat ändringslista och snabbåtkomst till felloggen.
@@ -28,7 +29,7 @@
 ## Uppdatering och installation
 Installerad v0.0.1 hämtar v0.0.2 vid nästa schemalagda kontroll (var 12:e
 timme). Den nya uppdateraren hittar därefter även ändringar inom samma
-v0.0.2 via releasens commit-ID. Hämtad kod installeras vid nästa appstart.
+v0.0.2 via releasens commit-ID. Hämtad kod installeras genom automatisk minimerad omstart.
 Äldre v0.0.2-exemplar med enbart versionsjämförelse behöver installera den
 här uppdateraren manuellt en gång; därefter fungerar ändringar inom samma
 version automatiskt.
@@ -39,7 +40,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-121 automatiserade tester godkända och Python-syntax kontrollerad.
+135 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

@@ -185,6 +185,9 @@ def _check_once(base, current_version, now=None, *, force=False):
     # Även nätverksfel begränsas till två försök per dygn, även efter omstart.
     state["last_check"] = now
     state["status"] = "checking"
+    if force:
+        state.pop("restart_blocked", None)
+        state.pop("installation_error", None)
     state.pop("error", None)
     state.pop("downloaded", None)
     state.pop("download_total", None)
@@ -270,6 +273,8 @@ def _check_once(base, current_version, now=None, *, force=False):
             if previous.exists():
                 os.replace(previous, pending)
             raise
+    state.pop("restart_blocked", None)
+    state.pop("installation_error", None)
     state["pending"] = tag
     state["pending_revision"] = revision
     state["pending_hashes"] = hashes
@@ -322,6 +327,20 @@ def check_once(base, current_version, now=None, *, force=False):
         _check_lock.release()
 
 
+def pending_ready_for_restart(base):
+    state = read_state(base)
+    return bool(not _check_lock.locked() and not state.get("restart_blocked")
+                and version(state.get("pending", ""))
+                and matches_manifest(base / "data/update-pending", state.get("pending_hashes")))
+
+
+def mark_installation_failed(base, error):
+    state = read_state(base)
+    state.update(status="error", error=f"Installation misslyckades: {error}"[:300],
+                 installation_error=str(error)[:300], restart_blocked=True)
+    write_state(base, state)
+
+
 def get_update_activity(base):
     """Lättviktig UI-modell, utan nätverk eller filhashning."""
     state = read_state(base)
@@ -331,7 +350,7 @@ def get_update_activity(base):
         progress = max(0.0, min(1.0, received / total))
     ready = bool(version(state.get("pending", "")) and (base / "data/update-pending").is_dir())
     return {"busy": _check_lock.locked(), "ready": ready, "progress": progress,
-            "phase": state.get("status", "idle"), "error": state.get("error", "")}
+            "phase": state.get("status", "idle"), "error": state.get("error") or (state.get("installation_error", "") if state.get("restart_blocked") else ""), "restart_blocked": bool(state.get("restart_blocked"))}
 
 
 def get_update_status(base, current_version):
@@ -360,7 +379,9 @@ def get_update_status(base, current_version):
     pending = state.get("pending", "")
     if (state.get("status") not in {"checking", "resolving", "comparing", "downloading", "verifying", "error"}
             and version(pending) and (base / "data/update-pending").is_dir()):
-        status = f"{pending} är hämtad och väntar på nästa appstart."
+        status = f"{pending} är hämtad. Appen startar om automatiskt när öppna dialoger är stängda."
+    if state.get("restart_blocked"):
+        status = "Automatisk omstart pausad efter installationsfel. Sök uppdatering nu för att försöka igen."
     received, total = state.get("downloaded", 0), state.get("download_total")
     download = "Ingen hämtning"
     if isinstance(received, (int, float)) and received > 0:
@@ -378,7 +399,7 @@ def get_update_status(base, current_version):
         "Status": status,
         "Ändringar i hämtad uppdatering": (state.get("pending_notes") or "Ingen ändringslista publicerad.")
             if version(pending) and (base / "data/update-pending").is_dir() else "Ingen hämtad uppdatering väntar.",
-        "Senaste fel": state.get("error") or "Inget registrerat",
+        "Senaste fel": state.get("error") or state.get("installation_error") or "Inget registrerat",
         "Kontrollintervall": "Var 12:e timme när appen körs",
         "Källa": f"GitHub Releases: {REPOSITORY} (endast stabila)",
     }
@@ -434,6 +455,10 @@ def apply_pending(base):
             changed.append((target, saved, existed))
         installed_hashes = state.pop("pending_hashes", None) or content_manifest(pending)
         state["installed_hashes"] = installed_hashes
+        state.pop("restart_blocked", None)
+        state.pop("installation_error", None)
+        state.pop("error", None)
+        state["status"] = "checked"
         state.pop("pending_notes", None)
         state["installed"] = state.pop("pending")
         revision = state.pop("pending_revision", None)

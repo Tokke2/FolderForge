@@ -4984,6 +4984,7 @@ class FolderForgeApp(_DnDCTkBase):
         self._set_result("🗑  Historiken rensad", "gray")
 
     def _export_specific(self, path: Path) -> None:
+        self._active_exports = getattr(self, "_active_exports", 0) + 1
         s = self._scale
         prog = ctk.CTkProgressBar(self._tab_exportera, mode="indeterminate")
         prog.pack(fill="x", padx=scaled(15, s), pady=scaled(5, s))
@@ -5007,6 +5008,7 @@ class FolderForgeApp(_DnDCTkBase):
                 ui_call(self, _done, result)
 
         def _done(result: str):
+            self._active_exports = max(0, self._active_exports - 1)
             prog.stop()
             prog.destroy()
             self._show_export_result(result)
@@ -6512,18 +6514,48 @@ class FolderForgeApp(_DnDCTkBase):
         self.lift()
         self.focus_force()
 
-    def _quit_app(self, *_) -> None:
+    def _shutdown_background_services(self) -> None:
         if hasattr(self, "_cleanup_stop"):
             self._cleanup_stop.set()
         if hasattr(self, "_update_stop"):
             self._update_stop.set()
         self._stop_tray_icon()
-        if self.global_hotkey:
-            self.global_hotkey.stop()
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
+        for listener in (self.global_hotkey, self.hotkey_listener):
+            if listener:
+                try:
+                    listener.stop()
+                except Exception:
+                    logger.warning("Kunde inte stoppa tangentbordslyssnare", exc_info=True)
         self.quit()
+
+    def _quit_app(self, *_) -> None:
+        self._shutdown_background_services()
         sys.exit(0)
+
+    def _restart_after_update(self) -> bool:
+        from updater import pending_ready_for_restart
+        if getattr(self, "_restart_requested", False):
+            return True
+        if not pending_ready_for_restart(BASE_DIR):
+            return False
+        # Förlora inte osparad strukturtext eller avbryt pågående export.
+        try:
+            if (self.grab_current() is not None or getattr(self, "_active_exports", 0)
+                    or getattr(self, "recording_hotkey", False)):
+                return False
+            status_window = getattr(self, "_update_status_window", None)
+            for child in self.winfo_children():
+                if isinstance(child, tk.Toplevel) and child is not status_window and child.winfo_exists():
+                    return False
+        except Exception:
+            # Native fil-/meddelandedialoger har inte alltid en Python-widget.
+            logger.debug("Omstart väntar tills dialogläget kan avläsas", exc_info=True)
+            return False
+        self._save_settings_silent()
+        self._restart_requested = True
+        logger.info("Verifierad uppdatering redo — startar om minimerat")
+        self._shutdown_background_services()
+        return True
 
     def _show_cache_cleanup(self) -> None:
         from cache_cleanup import clean_cache, status_text
@@ -6579,6 +6611,8 @@ class FolderForgeApp(_DnDCTkBase):
         busy = get_update_activity(BASE_DIR)["busy"]
         self._update_check_button.configure(state="disabled" if busy else "normal",
                                             text="Kontrollerar uppdatering…" if busy else "Sök uppdatering nu")
+        if not busy and self._restart_after_update():
+            return
         self.after(1000, self._refresh_update_controls)
 
     def _check_updates_now(self) -> None:
@@ -6649,7 +6683,7 @@ class FolderForgeApp(_DnDCTkBase):
                      font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=16, pady=(18, 8))
         notes = ctk.CTkTextbox(body, height=scaled(140, s), wrap="word", fg_color=UI_SURFACE)
         notes.pack(fill="x", padx=12, pady=(0, 12))
-        ctk.CTkLabel(body, text="Verifierad kod installeras vid nästa appstart. Din session avbryts inte.",
+        ctk.CTkLabel(body, text="Appen startar om minimerat automatiskt. Öppna dialoger får först avslutas.",
                      justify="left", anchor="w", text_color=UI_MUTED).pack(fill="x", padx=16, pady=(0, 12))
         check_button = ctk.CTkButton(footer, text="Sök uppdatering nu", command=self._check_updates_now,
                                      height=scaled(38, s), corner_radius=9, fg_color=UI_PRIMARY)
@@ -6670,7 +6704,7 @@ class FolderForgeApp(_DnDCTkBase):
             activity = get_update_activity(BASE_DIR)
             busy, ready = activity["busy"], activity["ready"]
             headline.configure(text=("Kontroll misslyckades" if activity["error"] and not busy else
-                                      "Uppdatering redo för nästa start" if ready and not busy else
+                                      "Uppdatering redo för omstart" if ready and not busy else
                                       "Kontroll pågår" if busy else
                                       "Appen är uppdaterad" if activity["phase"] == "checked" else
                                       "Redo att söka uppdateringar"))
@@ -7067,8 +7101,10 @@ if __name__ == "__main__":
         from updater import apply_pending, start_updates
         try:
             _updated = apply_pending(BASE_DIR)
-        except Exception:
+        except Exception as exc:
             logger.exception("Kunde inte installera release; befintlig version används")
+            from updater import mark_installation_failed
+            mark_installation_failed(BASE_DIR, exc)
             _updated = False
         if _updated:
             # Läs in alla nya moduler i en ren process, med samma startläge.
@@ -7085,3 +7121,11 @@ if __name__ == "__main__":
         app.mainloop()
     finally:
         _instance_lock.release()
+
+    # Kör först när Tk-loopen är avslutad och finally har släppt instanslåset.
+    if getattr(app, "_restart_requested", False):
+        try:
+            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "folder.pyw"), "--tray"])
+        except OSError:
+            logger.exception("Automatisk omstart misslyckades; starta FolderForge manuellt")
+            sys.exit(1)

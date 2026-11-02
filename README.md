@@ -162,7 +162,7 @@ Tray-valet öppnar appens uppdateringsstatus. Samma statusfönster återanvänds
 Releasens ändringslista visas i Uppdateringsstatus när en uppdatering har
 hämtats. Texten hör till den väntande hämtningen och ligger kvar tills den
 installerats. Saknas releasebeskrivning visas ett tydligt besked om detta.
-Ingen pågående session avbryts och ingen automatisk omstart görs.
+Automatisk omstart väntar tills öppna dialoger och pågående export är avslutade.
 
 Årsväljaren är redigerbar: välj ett förslag eller skriv valfritt fyrsiffrigt
 år, exempelvis `2010`. Tomt fält eller `—` betyder inget år. Eget årtal
@@ -287,3 +287,23 @@ för att avmarkera. Valet är frivilligt och gäller bara projektet som skapas.
 Det syns direkt i förhandsvisningen och placeras före lokal och år, exempelvis
 `ABC123 VINDRUTA HUSBIL LAXÅ 2026`. En annan vald fordonstyp ersätter eventuella
 handskrivna fordonsslag i namnfältet, så att mappnamnet inte får dubbla typer.
+
+
+## Automatisk omstart efter uppdatering
+
+När ett nytt paket är hämtat och SHA-256-verifierat startar appen om
+**automatiskt**, utan att du behöver avsluta den manuellt. Kontroll görs varje
+sekund när appen körs. Inställningarna sparas, bakgrundstjänster stoppas,
+Tk-loopen avslutas och instanslåset släpps innan processen startas om med
+`--tray`. Uppdateringen installeras före GUI-start och de nya modulerna läses
+in i en ren process. Appen kommer tillbaka minimerad utan konsolfönster.
+
+Om en projekt-/mall-/exportdialog är öppen, en native dialog är aktiv eller
+export pågår väntar omstarten tills arbetet är avslutat. Uppdateringsstatus
+hindrar däremot inte omstart. Ingen omstart sker bara för att en kontroll
+hittar oförändrad kod. Ändrade hämtade filer får inte utlösa omstart.
+
+Om installationen misslyckas används den återställda befintliga versionen.
+Automatisk omstart blockeras då för att undvika en omstartsloop. Felet syns
+i uppdateringsstatus/felloggen; välj **Sök uppdatering nu** för ett nytt
+installationsförsök. Windows-omstarten behöver verifieras på Windows.
