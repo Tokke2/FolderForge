@@ -1,6 +1,8 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Hälsokontroll via färskt svar från Tk-loopen vid extra start. Windows kan efter strikt processidentifiering och uttrycklig varning/bekräftelse återstarta en instans som inte svarar; andra Python-program lämnas orörda. Ny instans måste ta det riktiga instanslåset och startar minimerad.
+- Sökning och nivå-/modulfilter i fellistan, tydlig markering och automatisk uppdatering varannan sekund med bevarat val/rulläge. Uppdatering pausas under åtgärdsbekräftelse och stoppas när fönstret stängs.
 - Fellista i Hjälp: grupperade fel med antal, första/senaste förekomst och traceback; markera ett enskilt fel åtgärdat med skydd mot nytillkomna fel. Återkommande fel visas på nytt.
 - Mindre Pillow-brus, tillfällig detaljloggning i 15 minuter och lokal ZIP-export av utvalda loggar/diagnostik efter integritetsvarning. Inga inställnings- eller projektfiler exporteras.
 - Rättad pynput-formatering bakom <m>-varningen. Backendvalidering före sparning, bevarad tidigare kombination vid skrivfel, Ctrl-bokstavsnormalisering och synlig status för snabbkommandot.
@@ -46,7 +48,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-187 automatiserade tester godkända och Python-syntax kontrollerad.
+212 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

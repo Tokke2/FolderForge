@@ -809,9 +809,17 @@ class SingleInstanceLock:
             return False
 
         self.check_trigger()               # sätt baslinje direkt
+        from updater import service_instance_health
+        try:
+            service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
+        except Exception:
+            logger.warning("Hälsosignalen kunde inte startas", exc_info=True)
 
         def _loop() -> None:
+            if not self._is_primary:
+                return
             try:
+                service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
                 if self.check_trigger():
                     logger.info("Trigger mottagen — fokuserar fönster.")
                     on_trigger()
@@ -838,6 +846,12 @@ class SingleInstanceLock:
     # ------------------------------------------------------------------
     def release(self) -> None:
         """Frigör låset. Idempotent — kan anropas flera gånger säkert."""
+        if self._is_primary:
+            try:
+                from updater import clear_instance_health
+                clear_instance_health(self.lock_dir)
+            except Exception:
+                pass  # Hälsostädning får aldrig hindra att instanslåset släpps.
         self._is_primary = False
 
         if self._fd is not None:
@@ -6483,64 +6497,145 @@ class FolderForgeApp(_DnDCTkBase):
             messagebox.showerror("Felsökningspaket", str(exc), parent=self)
 
     def _show_error_issues(self):
-        from logg import get_error_issues, resolve_error_issue, detailed_logging_remaining
+        from logg import get_error_issues, resolve_error_issue, detailed_logging_remaining, filter_error_issues
         win = ctk.CTkToplevel(self)
         win.title("Fellista och felsökning")
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
-        win.geometry("760x620")
+        win.geometry("760x660")
         body, footer = dialog_layout(win)
         summary = ctk.CTkLabel(body, text="", wraplength=650)
         summary.pack(fill="x", padx=15, pady=10)
+        query = ctk.StringVar(value="")
+        level = ctk.StringVar(value="Alla nivåer")
+        module = ctk.StringVar(value="Alla moduler")
+        ctk.CTkLabel(body, text="Sök i felmeddelande eller traceback", anchor="w").pack(fill="x", padx=15)
+        ctk.CTkEntry(body, textvariable=query, placeholder_text="Sök felmeddelande eller traceback…").pack(fill="x", padx=15, pady=(0, 8))
+        filters = ctk.CTkFrame(body, fg_color="transparent")
+        filters.pack(fill="x", padx=15, pady=(0, 8))
+        ctk.CTkOptionMenu(filters, variable=level, values=["Alla nivåer", "Varningar", "Fel", "Kritiska"]).pack(side="left", padx=(0, 8))
+        module_menu = ctk.CTkOptionMenu(filters, variable=module, values=["Alla moduler"])
+        module_menu.pack(side="left")
         listing = ctk.CTkScrollableFrame(body, height=190)
         listing.pack(fill="both", expand=True, padx=15)
         details = ctk.CTkTextbox(body, height=160)
         details.pack(fill="x", padx=15, pady=10)
-        selected = {"id": None, "snapshot": None}
+        selected = {"id": None, "snapshot": None, "detail_key": None}
+        state = {"paused": False, "rendering": False, "closed": False, "job": None, "view_key": None}
+        buttons = {}
 
         def choose(issue):
             selected["id"] = issue["id"]
-            details.configure(state="normal")
-            details.delete("1.0", "end")
-            details.insert("1.0", f"Första: {issue['first']}\nSenaste: {issue['last']}\nAntal: {issue['count']}\n\n{issue['text']}")
-            details.configure(state="disabled")
+            detail_key = (issue['id'], issue['count'], issue['text'])
+            if selected["detail_key"] != detail_key:
+                details.configure(state="normal")
+                details.delete("1.0", "end")
+                details.insert("1.0", f"Valt fel: {issue['module']} · {issue['level']}\nFörsta: {issue['first']}\nSenaste: {issue['last']}\nAntal: {issue['count']}\n\n{issue['text']}")
+                details.configure(state="disabled")
+                selected["detail_key"] = detail_key
+            for identity, button in buttons.items():
+                button.configure(fg_color=UI_PRIMARY if identity == issue['id'] else UI_BACKGROUND,
+                                 text_color="white" if identity == issue['id'] else UI_TEXT,
+                                 hover_color=UI_PRIMARY if identity == issue['id'] else UI_BORDER,
+                                 border_width=2 if identity == issue['id'] else 0)
             resolve_button.configure(state="normal")
 
-        def refresh():
+        def refresh(automatic=False):
+            if state['closed'] or state['paused'] or state['rendering']:
+                return
+            state['rendering'] = True
             try:
                 issues, snapshot = get_error_issues()
+                values = ["Alla moduler", *sorted({issue['module'] for issue in issues})]
+                module_menu.configure(values=values)
+                if module.get() not in values:
+                    module.set("Alla moduler")
+                visible = filter_error_issues(issues, query.get(), level.get(), module.get())
+                seconds = detailed_logging_remaining()
+                summary.configure(text=f"{len(visible)} av {len(issues)} aktiva feltyper · uppdateras automatiskt varannan sekund. " +
+                                  (f"Detaljerad loggning: {seconds // 60 + 1} min kvar." if seconds else "Normalt loggläge."))
+                view_key = (snapshot, query.get(), level.get(), module.get())
+                if view_key == state['view_key']:
+                    return
+                state['view_key'] = view_key
+                canvas = getattr(listing, "_parent_canvas", None)
+                position = canvas.yview()[0] if canvas is not None else 0
+                for child in listing.winfo_children():
+                    child.destroy()
+                buttons.clear()
+                selected['snapshot'] = snapshot
+                for issue in sorted(visible, key=lambda item: item['last'], reverse=True):
+                    text = f"{issue['level']} · {issue['count']} gånger · {issue['module']}\n{issue['message'][:120]}"
+                    button = ctk.CTkButton(listing, text=text, anchor="w", fg_color=UI_BACKGROUND, text_color=UI_TEXT,
+                                           hover_color=UI_BORDER, command=lambda value=issue: choose(value))
+                    button.pack(fill="x", pady=3)
+                    buttons[issue['id']] = button
+                retained = next((issue for issue in visible if issue['id'] == selected['id']), None)
+                if retained:
+                    choose(retained)
+                else:
+                    selected.update(id=None, detail_key=None)
+                    resolve_button.configure(state="disabled")
+                    details.configure(state="normal")
+                    details.delete("1.0", "end")
+                    details.configure(state="disabled")
+                if canvas is not None:
+                    listing.update_idletasks()
+                    canvas.yview_moveto(position)
             except Exception as exc:
-                messagebox.showerror("Fellista", str(exc), parent=win)
-                return
-            for child in listing.winfo_children():
-                child.destroy()
-            selected.update(id=None, snapshot=snapshot)
-            resolve_button.configure(state="disabled")
-            details.configure(state="normal")
-            details.delete("1.0", "end")
-            details.configure(state="disabled")
-            seconds = detailed_logging_remaining()
-            summary.configure(text=f"{len(issues)} aktiva feltyper. Välj en post för detaljer. " +
-                              (f"Detaljerad loggning: {seconds // 60 + 1} min kvar." if seconds else "Normalt loggläge."))
-            for issue in sorted(issues, key=lambda item: item['last'], reverse=True):
-                text = f"{issue['level']} · {issue['count']} gånger · {issue['module']}\n{issue['message'][:120]}"
-                ctk.CTkButton(listing, text=text, anchor="w", command=lambda value=issue: choose(value)).pack(fill="x", pady=3)
+                state['view_key'] = None
+                if automatic:
+                    summary.configure(text="Kunde inte läsa fellistan. Nytt försök om två sekunder.")
+                else:
+                    messagebox.showerror("Fellista", str(exc), parent=win)
+            finally:
+                state['rendering'] = False
 
         def resolve():
-            if not selected['id'] or not messagebox.askyesno("Bekräfta åtgärdat fel", "Är orsaken till just detta fel åtgärdad? Alla förekomster av vald feltyp arkiveras. Detta reparerar inte appen. Återkommer felet visas det igen.", parent=win):
+            identity, snapshot = selected['id'], selected['snapshot']
+            if not identity:
                 return
+            state['paused'] = True
             try:
-                resolve_error_issue(selected['id'], selected['snapshot'])
+                if messagebox.askyesno("Bekräfta åtgärdat fel", "Är orsaken till just detta fel åtgärdad? Alla förekomster av vald feltyp arkiveras. Detta reparerar inte appen. Återkommer felet visas det igen.", parent=win):
+                    resolve_error_issue(identity, snapshot)
             except Exception as exc:
                 messagebox.showerror("Fellista", str(exc), parent=win)
-            refresh()
+            finally:
+                state['paused'] = False
+                refresh()
+
+        def close(event=None):
+            if event is not None and event.widget is not win:
+                return
+            state['closed'] = True
+            if state['job'] is not None:
+                try:
+                    win.after_cancel(state['job'])
+                except Exception:
+                    pass
+                state['job'] = None
+            if event is None:
+                win.destroy()
+
+        def tick():
+            if state['closed']:
+                return
+            refresh(automatic=True)
+            if not state['closed']:
+                state['job'] = win.after(2000, tick)
 
         resolve_button = ctk.CTkButton(footer, text="Markera valt fel åtgärdat", command=resolve, state="disabled")
         resolve_button.pack(fill="x", padx=15, pady=5)
         ctk.CTkButton(footer, text="Uppdatera listan", command=refresh).pack(side="left", padx=10, pady=10)
         ctk.CTkButton(footer, text="Exportera felsökningspaket…", command=self._export_diagnostics).pack(side="left", padx=5)
-        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(side="right", padx=10)
+        ctk.CTkButton(footer, text="Stäng", command=close).pack(side="right", padx=10)
+        for variable in (query, level, module):
+            variable.trace_add("write", lambda *_: refresh())
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<Destroy>", close, add="+")
         refresh()
+        state['job'] = win.after(2000, tick)
 
     def _open_error_log(self) -> None:
         if not ERROR_LOG_FILE.is_file():
@@ -7247,8 +7342,10 @@ if __name__ == "__main__":
     # release() är idempotent — en krasch lämnar alltså aldrig ett zombielås.
     _instance_lock = SingleInstanceLock(APP_NAME)
     if not _instance_lock.acquire():
-        logger.info("FolderForge körs redan — ingen ny instans eller fönstervisning.")
-        sys.exit(0)
+        from updater import recover_unresponsive_instance
+        if not recover_unresponsive_instance(_instance_lock, BASE_DIR / "folder.pyw"):
+            logger.info("FolderForge körs redan — ingen ny instans eller fönstervisning.")
+            sys.exit(0)
     # All start, även efter uppdatering, ska vara dold i systemfältet.
     _raw_start = read_json_safe(SETTINGS_FILE, {}) or {}
     _start_clean, _start_rep, _start_log = validate_settings(_raw_start)

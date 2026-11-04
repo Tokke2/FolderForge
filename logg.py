@@ -526,3 +526,14 @@ def export_diagnostic_package(destination):
         if os.path.exists(temporary):
             os.unlink(temporary)
     return destination
+
+
+def filter_error_issues(issues, query='', level='Alla nivåer', module='Alla moduler'):
+    query = query.strip().casefold()
+    levels = {'Varningar': {'WARNING'}, 'Fel': {'ERROR', 'CRITICAL'}, 'Kritiska': {'CRITICAL'}}
+    selected_levels = levels.get(level, {level} if level in {'WARNING', 'ERROR', 'CRITICAL'} else None)
+    return [issue for issue in issues
+            if (selected_levels is None or issue['level'] in selected_levels)
+            and (module == 'Alla moduler' or issue['module'] == module)
+            and (not query or query in '\n'.join(str(issue.get(key, '')) for key in
+                                                 ('message', 'module', 'level', 'text')).casefold())]

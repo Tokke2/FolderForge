@@ -589,3 +589,216 @@ def ensure_launcher(base: Path, interpreter: Path, icon: Path, *, runner=None, c
     pending.write_text(json.dumps({'fingerprint': fingerprint}), encoding='utf-8')
     os.replace(pending, manifest)
     return target
+
+# Hälsokontrollen måste köras från Tk-loopen, aldrig från en fristående tråd.
+def _health_write(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.health-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def service_instance_health(lock_dir, script):
+    folder = Path(lock_dir)
+    pid = os.getpid()
+    _health_write(folder / 'folderforge-health.json',
+                  dict(pid=pid, script=str(Path(script).resolve()), updated=time.time()))
+    for request in list(folder.glob('folderforge-probe-*.request'))[:32]:
+        try:
+            age = time.time() - request.stat().st_mtime
+            if age > 60 or request.is_symlink() or request.stat().st_size > 2048:
+                request.unlink(missing_ok=True)
+                request.with_suffix('.reply').unlink(missing_ok=True)
+                continue
+            data = json.loads(request.read_text(encoding='utf-8'))
+            if data.get('pid') == pid and data.get('nonce') == request.stem.removeprefix('folderforge-probe-'):
+                _health_write(request.with_suffix('.reply'), dict(pid=pid, nonce=data['nonce']))
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
+            continue
+    for reply in list(folder.glob('folderforge-probe-*.reply'))[:32]:
+        try:
+            if time.time() - reply.stat().st_mtime > 60:
+                reply.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def probe_instance(lock_dir, pid, timeout=8):
+    """Ett färskt, unikt eko krävs. Gammal heartbeat räknas inte som ett svar."""
+    import uuid
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    nonce = uuid.uuid4().hex
+    request = Path(lock_dir) / ('folderforge-probe-' + nonce + '.request')
+    reply = request.with_suffix('.reply')
+    try:
+        _health_write(request, dict(pid=pid, nonce=nonce))
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                result = json.loads(reply.read_text(encoding='utf-8'))
+                if result.get('pid') == pid and result.get('nonce') == nonce:
+                    return True
+            except (OSError, ValueError, AttributeError):
+                pass
+            time.sleep(0.1)
+        return False
+    finally:
+        request.unlink(missing_ok=True)
+        reply.unlink(missing_ok=True)
+
+
+def clear_instance_health(lock_dir):
+    path = Path(lock_dir) / 'folderforge-health.json'
+    try:
+        if json.loads(path.read_text(encoding='utf-8')).get('pid') == os.getpid():
+            path.unlink(missing_ok=True)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def _verified_process_identity(info, argv, script, created, image):
+    """Konservativ kontroll: exakt skript, riktig Python-process och samma starttid."""
+    import ntpath
+    def canonical(value):
+        return ntpath.normcase(ntpath.normpath(str(value)))
+    if not isinstance(info, dict) or len(argv) < 2:
+        return False
+    if not re.fullmatch(r'pythonw?(?:\d+(?:\.\d+)*)?\.exe', ntpath.basename(image), re.I):
+        return False
+    if canonical(argv[1]) != canonical(script):
+        return False
+    if canonical(info.get('ExecutablePath', '')) != canonical(image):
+        return False
+    try:
+        return int(info['Created']) // 10 == created // 10
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+class VerifiedFolderForgeProcess:
+    """Windows-handtaget binder kontroll och avslut till samma process, inte bara PID."""
+    def __init__(self, pid, script):
+        if os.name != 'nt' or not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+            raise ValueError('Säker processidentifiering saknas; ingen process avslutas.')
+        import ctypes
+        from ctypes import wintypes
+        self.api = ctypes.WinDLL('kernel32', use_last_error=True)
+        self.api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self.api.OpenProcess.restype = wintypes.HANDLE
+        self.api.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.api.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        self.api.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        self.api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.api.WaitForSingleObject.restype = wintypes.DWORD
+        self.api.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        self.handle = self.api.OpenProcess(0x1000 | 0x100000 | 0x0001, False, pid)
+        if not self.handle:
+            raise OSError('Kunde inte öppna just denna process för säker identifiering.')
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            if not self.api.GetProcessTimes(self.handle, *[ctypes.byref(t) for t in times]):
+                raise OSError('Kunde inte verifiera processens starttid.')
+            created = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+            size = wintypes.DWORD(32768)
+            image = ctypes.create_unicode_buffer(size.value)
+            if not self.api.QueryFullProcessImageNameW(self.handle, 0, image, ctypes.byref(size)):
+                raise OSError('Kunde inte verifiera processens programfil.')
+            command = ("[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
+                       f"Get-CimInstance Win32_Process -Filter 'ProcessId = {pid}' | "
+                       "Select-Object ProcessId,CommandLine,ExecutablePath,@{n='Created';e={$_.CreationDate.ToUniversalTime().ToFileTimeUtc().ToString()}} | ConvertTo-Json -Compress")
+            result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', command],
+                                    capture_output=True, text=True, encoding='utf-8-sig', timeout=6,
+                                    creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), check=True)
+            info = json.loads(result.stdout)
+            shell = ctypes.WinDLL('shell32', use_last_error=True)
+            shell.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+            shell.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+            count = ctypes.c_int()
+            pointer = shell.CommandLineToArgvW(info.get('CommandLine') or '', ctypes.byref(count))
+            if not pointer:
+                raise ValueError('Kommandoraden kunde inte identifieras.')
+            self.api.LocalFree.argtypes = [ctypes.c_void_p]
+            try:
+                argv = [pointer[index] for index in range(count.value)]
+            finally:
+                self.api.LocalFree(ctypes.cast(pointer, ctypes.c_void_p))
+            if info.get('ProcessId') != pid or not _verified_process_identity(info, argv, script, created, image.value):
+                raise ValueError('Processen kunde inte säkert identifieras som just denna FolderForge-installation.')
+            if self.api.WaitForSingleObject(self.handle, 0) != 0x102:
+                raise ValueError('Processen har redan avslutats eller kunde inte kontrolleras.')
+        except Exception:
+            self.close()
+            raise
+
+    def terminate_and_wait(self):
+        state = self.api.WaitForSingleObject(self.handle, 0)
+        if state == 0:
+            return
+        if state != 0x102 or not self.api.TerminateProcess(self.handle, 1):
+            raise OSError('Processen avslutades inte. Ingen ny instans startas.')
+        if self.api.WaitForSingleObject(self.handle, 5000) != 0:
+            raise TimeoutError('Processen har ännu inte avslutats. Ingen ny instans startas.')
+
+    def close(self):
+        if self.handle:
+            self.api.CloseHandle(self.handle)
+            self.handle = None
+
+
+def recover_unresponsive_instance(lock, script):
+    """Andra starter förblir dolda om Tk svarar. Aldrig automatiskt tvångsavslut."""
+    try:
+        pid = lock.read_owner_pid()
+        deadline = time.monotonic() + 2
+        while not pid and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pid = lock.read_owner_pid()
+        responding = probe_instance(lock.lock_dir, pid)
+        current_owner = lock.read_owner_pid()
+        if not responding and current_owner and current_owner != pid:
+            pid = current_owner
+            responding = probe_instance(lock.lock_dir, pid, timeout=2)
+        if responding:
+            logger.info('Befintlig FolderForge-instans svarar (pid=%s); ny start avslutas dold', pid)
+            return False
+        logger.warning('Hälsokontrollen fick inget svar (pid=%s); kan vara upptagen eller ha hängt sig', pid)
+        if os.name != 'nt':
+            return False
+        import ctypes
+        dialog = ctypes.WinDLL('user32', use_last_error=True).MessageBoxW
+        dialog.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint]
+        process = None
+        try:
+            process = VerifiedFolderForgeProcess(pid, script)
+            text = (f'FolderForge (PID {pid}) svarar inte på hälsokontrollen. Den kan vara tillfälligt upptagen eller vara en äldre version utan hälsokontroll.\n\n'
+                    'Vill du tvinga just denna verifierade instans att avslutas och starta om minimerat? '
+                    'Osparad inmatning kan gå förlorad och pågående arbete kan avbrytas. Andra Python-program avslutas inte.')
+            if dialog(None, text, 'FolderForge — återställning', 0x134) != 6:
+                return False
+            if probe_instance(lock.lock_dir, pid, timeout=2):
+                dialog(None, 'Appen svarar igen. Ingen process avslutades.', 'FolderForge', 0x40)
+                return False
+            process.terminate_and_wait()
+        except Exception as exc:
+            logger.exception('Säker återstart av befintlig instans avbröts')
+            dialog(None, str(exc) + '\nIngen annan process avslutas. Använd Avsluta i FolderForges tray-meny om möjligt.',
+                   'FolderForge — återstart avbruten', 0x30)
+            return False
+        finally:
+            if process:
+                process.close()
+        # OS-låset måste fortfarande vinnas; ta aldrig bort ett aktivt lås manuellt.
+        if not lock.acquire() or not lock.is_primary:
+            dialog(None, 'En annan instans hann starta. Ingen extra instans startas.', 'FolderForge', 0x40)
+            return False
+        logger.info('Verifierad instans avslutad efter användarens godkännande; startar om minimerat')
+        return True
+    except Exception:
+        logger.exception('Kunde inte utföra hälsokontroll; ingen process avslutas')
+        return False

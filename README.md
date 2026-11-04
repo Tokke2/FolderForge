@@ -359,7 +359,7 @@ skrivs endast i `logs/`. Loggmappen ingår inte i Git eller appuppdateringar.
 **Hjälp → Fellista och felsökning** visar aktiva varningar/fel grupperade
 på modul, nivå, meddelande och eventuell exception-detalj. Varje grupp visar
 antal förekomster samt första/senaste tid. Välj en post för senaste traceback.
-Använd **Uppdatera listan** för att läsa in nya poster.
+Listan uppdateras automatiskt varannan sekund; **Uppdatera listan** kan också användas manuellt.
 
 **Markera valt fel åtgärdat** kräver bekräftelse och flyttar endast den valda
 gruppens förekomster till `logs/resolved-errors/`. Övriga fel ligger kvar.
@@ -392,3 +392,44 @@ sparning lämnar tidigare kombination kvar. Inställningarna visar om
 snabbkommandot registrerats eller stoppats, med möjlighet att spela in ett
 nytt via befintlig knapp. Ogiltig sparad konfiguration använder standard
 med synlig förklaring. Gamla varningar ligger kvar tills du kvitterar dem.
+
+
+## Hälsokontroll av bakgrundsappen och säker återstart
+
+En extra start skickar en unik hälsoförfrågan till den befintliga instansen.
+Svaret hanteras i Tk-huvudtrådens poll-loop, även när appen är minimerad.
+En gammal heartbeat eller enbart ett levande PID räknas inte som ett svar.
+En svarande instans lämnas orörd och den extra starten avslutas dold, utan
+att visa eller fokusera huvudfönstret.
+
+Om svar saknas (normalt efter åtta sekunder) kan Windows erbjuda återstart.
+Det bevisar inte att appen har hängt sig: långvarigt arbete eller en äldre
+version utan hälsokontroll kan ge samma resultat. Innan ett avslut erbjuds
+verifieras PID, Python-programfil, exakt skriptsökväg och processens starttid
+med Windows-processhandtag och CIM via konsolfri PowerShell. Annan
+installation/annat Python-program, okänd identitet eller saknade rättigheter
+innebär att inget avslut görs. Inga nya Python-paket krävs.
+
+**Tvångsavslut sker bara efter uttrycklig bekräftelse, med Nej som standard.**
+Osparad inmatning kan gå förlorad och pågående arbete avbrytas. Om appen
+börjar svara efter bekräftelsen lämnas den ändå orörd. Samma verifierade
+processhandtag används för avslut; processnamn eller PID ensamt används
+aldrig för att avsluta program. Ersättaren startar minimerad först när den
+gamla processen avslutats och det riktiga instanslåset åter tagits. Om en
+annan start hunnit ta låset skapas ingen extra instans. Windows-flödet
+behöver verifieras på en Windows-dator.
+
+## Filtrering och automatisk uppdatering av fellistan
+
+I **Hjälp → Fellista och felsökning** finns sökning i meddelande och
+traceback samt filter för modul och **Varningar / Fel / Kritiska**.
+Fel-filtret inkluderar ERROR och CRITICAL. Vald post markeras tydligt.
+Listan uppdateras varannan sekund, behåller markerad feltyp och rulläge när
+posten fortfarande är synlig, och skriver inte om oförändrad detaljtext.
+Om posten filtreras bort eller inte längre är aktiv rensas markeringen.
+
+Automatisk uppdatering pausas under bekräftelse av åtgärdat fel. Den
+snapshot som du faktiskt granskade används för arkiveringen; nya fel under
+bekräftelsen kan alltså inte kvitteras av misstag. Pollningen stoppas när
+fönstret stängs. Tillfälliga läsfel ger ett diskret besked och nytt försök,
+inte upprepade dialogrutor.
