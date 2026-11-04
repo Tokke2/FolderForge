@@ -62,7 +62,7 @@ class YearTests(unittest.TestCase):
         self.assertNotIn('year_var.set', ast.unparse(refresh))
 
     def test_vehicle_types_are_available(self):
-        self.assertEqual(settings.VEHICLE_CHOICES, ('HUSBIL', 'LASTBIL'))
+        self.assertEqual(settings.VEHICLE_CHOICES, ('HUSBIL', 'LASTBIL', 'MASKIN'))
         self.assertNotIn('PERSONBIL', settings.VEHICLE_CHOICES)
 
     def test_vehicle_buttons_are_exclusive_and_can_be_cleared(self):
