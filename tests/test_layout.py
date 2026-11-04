@@ -107,10 +107,6 @@ class LayoutTests(unittest.TestCase):
                 self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                                     and n.func.id == 'dialog_layout' for n in ast.walk(method)))
 
-
-if __name__ == '__main__':
-    unittest.main()
-
     def test_copyright_owner_is_visible_in_footer_and_about(self):
         import settings
         self.assertIn('© Rickard Längkvist', settings.COPYRIGHT_OWNER)
@@ -119,3 +115,7 @@ if __name__ == '__main__':
         self.assertIn("('Copyright', COPYRIGHT_OWNER)", ast.unparse(about))
         self.assertIn('text=COPYRIGHT_OWNER', ast.unparse(app))
         self.assertIn('Rickard Längkvist', Path('README.md').read_text(encoding='utf-8'))
+
+
+if __name__ == '__main__':
+    unittest.main()
