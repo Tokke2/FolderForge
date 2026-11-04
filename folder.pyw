@@ -4520,6 +4520,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
         help_menu.add_command(label="Öppna fellogg", command=self._open_error_log)
+        help_menu.add_command(label="Markera alla loggade fel som åtgärdade…", command=self._resolve_logged_errors)
         help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
         help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
         help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
@@ -6426,6 +6427,33 @@ class FolderForgeApp(_DnDCTkBase):
         else:
             self._open_path(ERROR_LOG_FILE)
 
+    def _resolve_logged_errors(self) -> None:
+        from logg import archive_resolved_errors, error_log_snapshot
+        try:
+            snapshot = error_log_snapshot()
+        except OSError as exc:
+            messagebox.showerror("Fellogg", str(exc), parent=self)
+            return
+        if not messagebox.askyesno(
+            "Bekräfta åtgärdade fel",
+            "Är samtliga varningar och fel i felloggen åtgärdade?\n\n"
+            "Detta reparerar inte appen. Posterna flyttas till ett permanent arkiv "
+            "för åtgärdade fel. Nya eller återkommande fel hamnar i felloggen igen.",
+            parent=self,
+        ):
+            return
+        try:
+            target = archive_resolved_errors(expected_digest=snapshot)
+        except Exception as exc:
+            logger.exception("Kunde inte arkivera åtgärdade fel")
+            messagebox.showerror("Fellogg", str(exc), parent=self)
+            return
+        if target is None:
+            messagebox.showinfo("Fellogg", "Det finns inga loggade fel att markera.", parent=self)
+        else:
+            logger.info("Användaren markerade felloggens poster som åtgärdade: %s", target)
+            messagebox.showinfo("Fellogg", "Åtgärdade poster sparades i:\n" + str(target), parent=self)
+
     def _on_window_mapped(self, event) -> None:
         window = event.widget
         if window is not self and not isinstance(window, tk.Toplevel):
@@ -6515,6 +6543,8 @@ class FolderForgeApp(_DnDCTkBase):
         self.focus_force()
 
     def _shutdown_background_services(self) -> None:
+        if hasattr(self, "_log_archive_stop"):
+            self._log_archive_stop.set()
         if hasattr(self, "_cleanup_stop"):
             self._cleanup_stop.set()
         if hasattr(self, "_update_stop"):
@@ -7114,6 +7144,8 @@ if __name__ == "__main__":
         app._update_stop = start_updates(BASE_DIR, APP_VERSION)
         from cache_cleanup import start_cleanup
         app._cleanup_stop = start_cleanup(BASE_DIR)
+        from logg import start_log_archiver
+        app._log_archive_stop = start_log_archiver()
         app._instance_lock = _instance_lock  # visar lås-backend i Om-dialogen
         # Polla triggerfilen i Tk-huvudtråden (~1 s) och återställ fönstret.
         # root.after() är den trådsäkra vägen in i Tk (C43).

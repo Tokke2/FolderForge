@@ -98,13 +98,13 @@ class ErrorLogTests(unittest.TestCase):
         logging.getLogger('historik').error('still captured')
         self.assertIn('still captured', self.read_errors())
 
-    def test_rotating_error_log_keeps_archives(self):
-        with patch.object(logg, '_FEL_STORLEK', 180):
-            logg.init_logging()
-        for index in range(15):
-            logging.getLogger('rotation').error('failure %s %s', index, 'x' * 100)
-        self.assertTrue((self.folder / 'folderforge-errors.log.1').exists())
-        self.assertIn('failure 14', self.read_errors())
+    def test_unresolved_errors_are_never_rotated_away(self):
+        logg.init_logging()
+        for index in range(150):
+            logging.getLogger('retention').error('failure %s %s', index, 'x' * 100)
+        self.assertFalse((self.folder / 'folderforge-errors.log.1').exists())
+        for index in range(150):
+            self.assertIn('failure ' + str(index) + ' ', self.read_errors())
 
     def test_unhandled_background_thread_exception_is_logged(self):
         logg.init_logging()
@@ -149,3 +149,223 @@ class ErrorLogTests(unittest.TestCase):
         namespace['_open_error_log'](None)
         namespace['subprocess'].Popen.assert_called_once_with(
             ['notepad.exe', str(self.folder / 'folderforge-errors.log')], creationflags=0x8000000)
+
+    def archive_contents(self):
+        return ''.join(p.read_text(encoding='utf-8') for p in (self.folder / 'archive').rglob('*.log'))
+
+    def test_prior_dates_archived_and_today_kept_with_traceback(self):
+        from datetime import date
+        path = self.folder / 'folderforge.log'
+        path.write_text('2026-11-02 09:00:00 INFO    older\n'
+                        '2026-11-03 23:59:59 ERROR   prior failure\nTraceback details\nValueError: detail\n'
+                        '2026-11-04 00:00:00 INFO    current\n'
+                        '2026-11-05 00:00:00 INFO    future clock record\n', encoding='utf-8')
+        with patch.object(logg, 'local_today', return_value=date(2026, 11, 4)):
+            handler = logg.DailyArchiveHandler(path)
+            self.addCleanup(handler.close)
+        self.assertNotIn('older', path.read_text())
+        self.assertNotIn('prior failure', path.read_text())
+        self.assertIn('current', path.read_text())
+        self.assertIn('future clock record', path.read_text())
+        yesterday = ''.join(p.read_text() for p in (self.folder / 'archive/2026-11-03').glob('*.log'))
+        self.assertIn('prior failure\nTraceback details\nValueError: detail\n', yesterday)
+        self.assertTrue((self.folder / 'archive/2026-11-02').is_dir())
+
+    def test_midnight_rollover_without_restart(self):
+        from datetime import date, datetime
+        path = self.folder / 'folderforge.log'
+        with patch.object(logg, 'local_today', return_value=date(2026, 11, 3)):
+            handler = logg.DailyArchiveHandler(path)
+            self.addCleanup(handler.close)
+            handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s'))
+            record = logging.LogRecord('day', logging.INFO, '', 0, 'before midnight', (), None)
+            record.created = datetime(2026, 11, 3, 23, 59, 59).timestamp()
+            handler.handle(record)
+        with patch.object(logg, 'local_today', return_value=date(2026, 11, 4)):
+            record = logging.LogRecord('day', logging.INFO, '', 0, 'after midnight', (), None)
+            record.created = datetime(2026, 11, 4, 0, 0, 1).timestamp()
+            handler.handle(record)
+        self.assertIn('before midnight', self.archive_contents())
+        self.assertNotIn('before midnight', path.read_text())
+        self.assertIn('after midnight', path.read_text())
+
+    def test_errors_imported_before_old_general_log_is_archived(self):
+        (self.folder / 'folderforge.log').write_text('2020-01-01 10:00:00 ERROR   unresolved old issue\n')
+        logg.init_logging()
+        self.assertIn('unresolved old issue', self.read_errors())
+        self.assertIn('unresolved old issue', self.archive_contents())
+        self.assertNotIn('unresolved old issue', (self.folder / 'folderforge.log').read_text())
+
+    def test_old_rotated_errors_merge_into_active_error_log(self):
+        (self.folder / 'folderforge-errors.log.5').write_text('oldest unresolved\n')
+        (self.folder / 'folderforge-errors.log.1').write_text('newer unresolved\n')
+        (self.folder / 'folderforge-errors.log').write_text('active unresolved\n')
+        logg.init_logging()
+        for text in ['oldest unresolved', 'newer unresolved', 'active unresolved']:
+            self.assertEqual(self.read_errors().count(text), 1)
+        self.assertFalse((self.folder / 'folderforge-errors.log.1').exists())
+
+    def test_resolved_errors_archived_only_after_explicit_action_and_recurrence_kept(self):
+        logg.init_logging()
+        logging.getLogger('fixed').error('failure to resolve')
+        snapshot = logg.error_log_snapshot()
+        target = logg.archive_resolved_errors(expected_digest=snapshot)
+        self.assertIn('failure to resolve', target.read_text())
+        self.assertEqual(self.read_errors(), '')
+        self.assertIn('resolved-errors', str(target))
+        logging.getLogger('fixed').error('failure to resolve')
+        self.assertEqual(self.read_errors().count('failure to resolve'), 1)
+
+    def test_new_error_during_confirmation_prevents_bulk_resolution(self):
+        logg.init_logging()
+        logging.getLogger('race').error('known error')
+        snapshot = logg.error_log_snapshot()
+        logging.getLogger('race').error('brand new error')
+        with self.assertRaises(ValueError):
+            logg.archive_resolved_errors(expected_digest=snapshot)
+        self.assertIn('known error', self.read_errors())
+        self.assertIn('brand new error', self.read_errors())
+
+    def test_resolved_errors_not_reimported_on_restart(self):
+        logg.init_logging()
+        logging.getLogger('fixed').error('resolved issue')
+        logg.archive_resolved_errors()
+        for handler in self.root.handlers:
+            handler.close()
+        self.root.handlers = []
+        logg._initierad = False
+        logg.init_logging()
+        self.assertNotIn('resolved issue', self.read_errors())
+
+    def test_failed_archive_write_keeps_active_log_intact(self):
+        from datetime import date
+        path = self.folder / 'folderforge.log'
+        original = '2020-01-01 10:00:00 ERROR   retain on failure\ntraceback\n'
+        path.write_text(original)
+        with patch.object(logg, '_atomic_text', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                logg.DailyArchiveHandler(path)
+        self.assertEqual(path.read_text(), original)
+
+    def test_repeated_archive_is_idempotent(self):
+        path = self.folder / 'folderforge.log'
+        path.write_text('2020-01-01 10:00:00 INFO   archived once\n')
+        handler = logg.DailyArchiveHandler(path)
+        self.addCleanup(handler.close)
+        first = list((self.folder / 'archive').rglob('*.log'))
+        handler.archive()
+        self.assertEqual(list((self.folder / 'archive').rglob('*.log')), first)
+        self.assertEqual(self.archive_contents().count('archived once'), 1)
+
+    def test_empty_error_log_resolution_is_noop(self):
+        logg.init_logging()
+        self.assertIsNone(logg.archive_resolved_errors())
+
+    def test_cleanup_preserves_daily_archives_and_resolved_errors(self):
+        import cache_cleanup
+        for relative in ['archive/2020-01-01/old.log', 'resolved-errors/2020-01-01/fixed.log']:
+            path = self.folder / 'data/logs' / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('history')
+        candidates = [path for path, _ in cache_cleanup.candidates(self.folder, 9999999999)]
+        self.assertEqual(candidates, [])
+
+    def test_resolution_ui_requires_confirmation(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_resolve_logged_errors')
+        namespace = dict(messagebox=Mock(), logger=logging.getLogger('test'))
+        namespace['messagebox'].askyesno.return_value = False
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'resolve', 'exec'), namespace)
+        with patch.object(logg, 'archive_resolved_errors') as resolve:
+            namespace['_resolve_logged_errors'](object())
+        resolve.assert_not_called()
+
+    def test_periodic_archive_handles_idle_midnight(self):
+        from datetime import date
+        path = self.folder / 'folderforge.log'
+        path.write_text('2026-11-03 12:00:00 INFO    idle day\n')
+        with patch.object(logg, 'local_today', return_value=date(2026, 11, 3)):
+            handler = logg.DailyArchiveHandler(path)
+            self.root.addHandler(handler)
+            self.addCleanup(handler.close)
+        with patch.object(logg, 'local_today', return_value=date(2026, 11, 4)):
+            logg.archive_old_logs()
+        self.assertNotIn('idle day', path.read_text())
+        self.assertIn('idle day', self.archive_contents())
+
+    def test_failed_resolution_move_retains_unresolved_log(self):
+        logg.init_logging()
+        logging.getLogger('permission').error('must remain unresolved')
+        original = self.read_errors()
+        with patch.object(logg.os, 'replace', side_effect=PermissionError('locked')):
+            with self.assertRaises(PermissionError):
+                logg.archive_resolved_errors()
+        self.assertEqual(self.read_errors(), original)
+
+    def test_windows_shared_lock_is_acquired_and_released(self):
+        fake = SimpleNamespace(LK_LOCK=1, LK_UNLCK=0, locking=Mock())
+        with patch.dict(sys.modules, {'msvcrt': fake}), patch.object(logg.os, 'name', 'nt'):
+            with logg._locked_logs(self.folder):
+                pass
+        self.assertEqual([call.args[1:] for call in fake.locking.call_args_list], [(1, 1), (0, 1)])
+
+    def test_multiple_processes_preserve_all_error_records(self):
+        import subprocess
+        script = """
+import logging, sys
+from pathlib import Path
+import logg
+logg.LOG_DIR = Path(sys.argv[1])
+logg.LOG_FILE = logg.LOG_DIR / 'folderforge.log'
+logg.ERROR_LOG_FILE = logg.LOG_DIR / 'folderforge-errors.log'
+sys.stderr = None
+logg.init_logging()
+for n in range(30):
+    logging.getLogger('multi').error('MULTI-%s-%02d-END', sys.argv[2], n)
+"""
+        children = [subprocess.Popen([sys.executable, '-c', script, str(self.folder), str(index)],
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE) for index in range(3)]
+        try:
+            for child in children:
+                out, err = child.communicate(timeout=20)
+                self.assertEqual(child.returncode, 0, err.decode())
+            content = self.read_errors()
+            for index in range(3):
+                for number in range(30):
+                    self.assertEqual(content.count(f'MULTI-{index}-{number:02d}-END'), 1)
+        finally:
+            for child in children:
+                if child.poll() is None:
+                    child.kill()
+                    child.communicate()
+
+    def test_old_unresolved_errors_survive_daily_archive(self):
+        original = '2020-01-01 12:00:00 ERROR   unresolved across dates\n'
+        (self.folder / 'folderforge-errors.log').write_text(original)
+        logg.init_logging()
+        logg.archive_old_logs()
+        self.assertEqual(self.read_errors(), original)
+
+    def test_background_archiver_is_stoppable_and_checks_each_minute(self):
+        stop = Mock()
+        stop.wait.side_effect = [False, True]
+        with patch.object(logg.threading, 'Event', return_value=stop), \
+             patch.object(logg.threading, 'Thread') as thread, \
+             patch.object(logg, 'archive_old_logs') as archive:
+            self.assertIs(logg.start_log_archiver(), stop)
+            thread.call_args.kwargs['target']()
+        archive.assert_called_once()
+        self.assertEqual([call.args for call in stop.wait.call_args_list], [(60,), (60,)])
+
+    def test_shutdown_stops_background_archiving(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_shutdown_background_services')
+        ns = dict(logger=logging.getLogger('shutdown-test'))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'shutdown', 'exec'), ns)
+        dummy = SimpleNamespace(_log_archive_stop=Mock(), _cleanup_stop=Mock(), _update_stop=Mock(),
+                                _stop_tray_icon=Mock(), global_hotkey=None, hotkey_listener=None, quit=Mock())
+        ns['_shutdown_background_services'](dummy)
+        dummy._log_archive_stop.set.assert_called_once()
+        dummy.quit.assert_called_once()

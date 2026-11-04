@@ -247,10 +247,20 @@ importeras gamla varningar/fel inklusive flerradiga spår från befintliga
 vanliga omstarter. Det är appens egna loggar, inte Windows eller andra
 programs loggar, som samlas.
 
-Felloggen roteras vid 512 KiB med fem arkiv (`.1`–`.5`); appens smarta
-cacherensning lämnar dem orörda. Loggar kan innehålla filnamn och sökvägar;
-granska innehållet innan du delar det vid felsökning. Öppna via menyn eller
-ange felloggens sökväg i en felrapport. Filen skapas även när inga fel finns.
+Felloggen är **beständig**: den storleksroteras inte och rensas inte vid
+midnatt, omstart, uppdatering eller cacherensning. Även äldre roterade
+felloggar (`.1`–`.5`) förs tillbaka till den aktiva felloggen, så att olösta
+fel inte försvinner på grund av ålder eller filstorlek.
+
+När **samtliga** listade varningar/fel faktiskt är åtgärdade kan du välja
+**Hjälp → Markera alla loggade fel som åtgärdade…** och bekräfta. Detta
+reparerar inte orsaken automatiskt. Posterna flyttas till
+`data/logs/resolved-errors/ÅÅÅÅ-MM-DD/` i stället för att raderas. Om nya
+fel tillkommer medan bekräftelsen visas avbryts åtgärden och du får granska
+dem först. Återkommande fel loggas som olösta på nytt.
+
+Du kan fortfarande ange felloggens sökväg i en felrapport. Filen skapas
+även när inga fel finns.
 
 
 ## Förfinad layout och tydligare uppdateringsflöde
@@ -307,3 +317,23 @@ Om installationen misslyckas används den återställda befintliga versionen.
 Automatisk omstart blockeras då för att undvika en omstartsloop. Felet syns
 i uppdateringsstatus/felloggen; välj **Sök uppdatering nu** för ett nytt
 installationsförsök. Windows-omstarten behöver verifieras på Windows.
+
+
+## Datumarkiv för den vanliga loggen
+
+`data/logs/folderforge.log` behåller dagens poster. Alla poster med äldre
+lokalt kalenderdatum flyttas till `data/logs/archive/ÅÅÅÅ-MM-DD/`, även om
+flera datum blandats i en äldre logg. För den 4 november 2026 arkiveras
+alltså den 3 november och tidigare datum. Traceback och fortsättningsrader
+följer med respektive post. Framtidsdaterade poster raderas inte vid felställd
+klocka.
+
+Arkivering sker vid start, vid första loggrad efter datumbyte och inom en
+minut efter midnatt även när appen inte skriver nya loggrader. Äldre
+storleksroterade vanliga loggar tas också om hand. Filerna i datumarkivet
+har innehållsbaserade namn så att ett avbrutet försök kan upprepas utan
+att skapa dubbla arkiv. Atomisk skrivning och ett gemensamt fillås skyddar
+mot avbrutna skrivningar och samtidiga appstarter. Datumarkiv och arkiv
+för åtgärdade fel rensas inte av den smarta cacherensningen.
+
+**Felloggen är separat och påverkas inte av datumarkiveringen.**
