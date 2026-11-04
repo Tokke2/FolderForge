@@ -7024,6 +7024,7 @@ class FolderForgeApp(_DnDCTkBase):
         for label, value in [
             ("Version", APP_VERSION),
             ("Upphovsman", "Rickard Längkvist"),
+            ("Copyright", COPYRIGHT_OWNER),
             ("År", str(datetime.now().year)),
             ("Snabbtangent", " + ".join(
                 k.capitalize() for k in sorted(self.current_hotkey)

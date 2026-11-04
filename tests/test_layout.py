@@ -110,3 +110,12 @@ class LayoutTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+    def test_copyright_owner_is_visible_in_footer_and_about(self):
+        import settings
+        self.assertIn('© Rickard Längkvist', settings.COPYRIGHT_OWNER)
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        about = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_show_info')
+        self.assertIn("('Copyright', COPYRIGHT_OWNER)", ast.unparse(about))
+        self.assertIn('text=COPYRIGHT_OWNER', ast.unparse(app))
+        self.assertIn('Rickard Längkvist', Path('README.md').read_text(encoding='utf-8'))

@@ -1,5 +1,7 @@
 # FolderForge
 
+© 2026 Rickard Längkvist
+
 ## Start i systemfältet
 
 Appen startar alltid minimerad i systemfältet utan att huvudfönstret
