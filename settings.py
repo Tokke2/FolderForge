@@ -53,7 +53,7 @@ SETTINGS_FILE: Final[Path] = DATA_DIR / "settings.json"      # användarens val
 HISTORY_FILE: Final[Path] = DATA_DIR / "history.json"        # projekthistorik
 HOTKEY_CONFIG: Final[Path] = DATA_DIR / "hotkey_config.json" # snabbtangent
 TEMPLATES_DIR: Final[Path] = DATA_DIR / "templates"          # egna mallar
-LOG_DIR: Final[Path] = DATA_DIR / "logs"                     # roterande loggfiler
+LOG_DIR: Final[Path] = BASE_DIR / "logs"                     # appens loggar och arkiv
 
 # Icon/ — appens ikon i tre format (fönster/tray/bygge)
 ICON_DIR: Final[Path] = BASE_DIR / "Icon"

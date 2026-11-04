@@ -5,7 +5,6 @@ from datetime import datetime
 import logging
 import math
 from pathlib import Path
-import re
 import threading
 import time
 
@@ -50,7 +49,7 @@ def candidates(base, now):
     if unsafe(data):
         return
     protected = protected_paths(base)
-    for folder, age in [('cache', DAY), ('tmp', DAY), ('logs', 14 * DAY)]:
+    for folder, age in [('cache', DAY), ('tmp', DAY)]:
         root = data / folder
         if unsafe(root) or not root.is_dir():
             continue
@@ -68,11 +67,8 @@ def candidates(base, now):
                     if any(path.resolve().is_relative_to(saved) for saved in protected):
                         continue
                     if path.is_dir():
-                        if folder != 'logs':
-                            stack.append(path)
+                        stack.append(path)
                     elif path.is_file():
-                        if folder == 'logs' and not re.fullmatch(r'folderforge\.log\.[1-3]', path.name):
-                            continue
                         stat = path.stat()
                         if now - stat.st_mtime >= age:
                             yield path, stat.st_size

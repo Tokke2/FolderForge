@@ -87,7 +87,7 @@ rensning vid nästa start, inte genom någon separat Windows-tjänst.
 Smartfiltret tar endast bort:
 
 - Filer som är minst 24 timmar gamla i appens `data/cache/` och `data/tmp/`.
-- Roterade loggarkiv `folderforge.log.1`–`.3` som är minst 14 dagar gamla.
+- Loggar och loggarkiv undantas från automatisk cacherensning.
 
 Den aktiva loggen, färska filer, länkar/junctions, okända filer utanför
 cacheområdena, mallar, historik, inställningar och uppdateringsfiler lämnas
@@ -232,7 +232,7 @@ Självtest behåller stdout för diagnostik, men normal start är dold.
 
 ## Samlad fellogg för snabb felsökning
 
-**Hjälp → Öppna fellogg** öppnar `data/logs/folderforge-errors.log` i
+**Hjälp → Öppna fellogg** öppnar `logs/folderforge-errors.log` i
 Anteckningar på Windows (utan konsolfönster). Den samlar WARNING, ERROR och
 CRITICAL från alla appmoduler via den gemensamma rotloggaren: GUI,
 historik, uppdaterare, autostart och cacherensning. Tid, modul/radnummer,
@@ -255,7 +255,7 @@ fel inte försvinner på grund av ålder eller filstorlek.
 När **samtliga** listade varningar/fel faktiskt är åtgärdade kan du välja
 **Hjälp → Markera alla loggade fel som åtgärdade…** och bekräfta. Detta
 reparerar inte orsaken automatiskt. Posterna flyttas till
-`data/logs/resolved-errors/ÅÅÅÅ-MM-DD/` i stället för att raderas. Om nya
+`logs/resolved-errors/ÅÅÅÅ-MM-DD/` i stället för att raderas. Om nya
 fel tillkommer medan bekräftelsen visas avbryts åtgärden och du får granska
 dem först. Återkommande fel loggas som olösta på nytt.
 
@@ -321,8 +321,8 @@ installationsförsök. Windows-omstarten behöver verifieras på Windows.
 
 ## Datumarkiv för den vanliga loggen
 
-`data/logs/folderforge.log` behåller dagens poster. Alla poster med äldre
-lokalt kalenderdatum flyttas till `data/logs/archive/ÅÅÅÅ-MM-DD/`, även om
+`logs/folderforge.log` behåller dagens poster. Alla poster med äldre
+lokalt kalenderdatum flyttas till `logs/archive/ÅÅÅÅ-MM-DD/`, även om
 flera datum blandats i en äldre logg. För den 4 november 2026 arkiveras
 alltså den 3 november och tidigare datum. Traceback och fortsättningsrader
 följer med respektive post. Framtidsdaterade poster raderas inte vid felställd
@@ -337,3 +337,18 @@ mot avbrutna skrivningar och samtidiga appstarter. Datumarkiv och arkiv
 för åtgärdade fel rensas inte av den smarta cacherensningen.
 
 **Felloggen är separat och påverkas inte av datumarkiveringen.**
+
+
+## Loggmapp direkt under appmappen
+
+All app-loggning samlas i **`<appmapp>/logs/`**, exempelvis
+`D:\Program\FolderForge\logs\`. Vanlig logg, beständig fellogg,
+datumarkiv och arkiv för åtgärdade fel finns under denna mapp.
+Även det native Windows-startprogrammets fel använder samma mapp.
+
+Vid nästa start flyttas tidigare `data/logs/` automatiskt hit. Inga befintliga
+målarkiv skrivs över; olika innehåll sparas separat, och befintliga aktiva
+loggar slås samman. Original tas bort först efter en lyckad atomisk kopiering.
+Om flytten misslyckas behålls originalet och appen gör ett nytt försök vid
+nästa start. En tom äldre mapp med låsfil kan finnas kvar, men nya loggar
+skrivs endast i `logs/`. Loggmappen ingår inte i Git eller appuppdateringar.

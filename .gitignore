@@ -5,3 +5,5 @@ data/
 release-assets/
 
 *.lnk
+
+/logs/

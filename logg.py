@@ -39,6 +39,7 @@ from settings import APP_NAME, APP_VERSION, LOG_DIR
 # Loggfilens sökväg — härledd ur LOG_DIR i settings.py (sektion 2).
 LOG_FILE: Final[Path] = LOG_DIR / "folderforge.log"
 ERROR_LOG_FILE: Final[Path] = LOG_DIR / "folderforge-errors.log"
+LEGACY_LOG_DIR: Final[Path] = LOG_DIR.parent / "data" / "logs"
 
 # Vanliga loggar arkiveras per lokalt kalenderdatum. Olösta fel roteras aldrig bort.
 _file_lock = threading.RLock()
@@ -74,18 +75,57 @@ def _locked_logs(folder):
                     fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
-def _atomic_text(path, text):
+def _atomic_bytes(path, content):
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".log-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
-            stream.write(text)
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def _atomic_text(path, text):
+    _atomic_bytes(path, text.encode("utf-8"))
+
+
+def migrate_legacy_logs():
+    """Flytta tidigare data/logs utan att skriva över nyare loggar eller arkiv."""
+    legacy = LEGACY_LOG_DIR
+    if not legacy.is_dir() or legacy.resolve() == LOG_DIR.resolve():
+        return
+    if legacy.is_symlink() or getattr(legacy.lstat(), "st_file_attributes", 0) & 0x400:
+        raise OSError("Den gamla loggmappen är en länk; flytta loggarna manuellt")
+    with _locked_logs(legacy), _locked_logs(LOG_DIR):
+        for source in sorted(legacy.rglob("*")):
+            if not source.is_file() or source.is_symlink() or source.name == ".folderforge-log.lock":
+                continue
+            relative = source.relative_to(legacy)
+            target = LOG_DIR / relative
+            content = source.read_bytes()
+            is_log = len(relative.parts) == 1 and re.fullmatch(r"folderforge(?:-errors)?\.log(?:\.\d+)?", source.name)
+            digest = hashlib.sha256(content).hexdigest()
+            marker = ("\n[Flyttad äldre logg " + source.name + " sha256=" + digest + "]\n").encode("utf-8")
+            if target.exists():
+                existing = target.read_bytes()
+                if existing == content:
+                    source.unlink()
+                    continue
+                if is_log:
+                    # Om processen avbröts efter kopiering men före borttagning: kopiera inte igen.
+                    if marker not in existing:
+                        _atomic_bytes(target, content + marker + existing)
+                else:
+                    target = target.with_name(target.name + ".migrated-" + digest)
+                    _atomic_bytes(target, content)
+            else:
+                _atomic_bytes(target, content + marker if is_log else content)
+            # Originalet tas bort först när hela målfilen säkrats atomiskt.
+            source.unlink()
 
 
 def _archive_general(source, today):
@@ -250,6 +290,12 @@ def init_logging() -> None:
                         "(handlare fanns redan)")
         return
 
+    migration_error = None
+    try:
+        migrate_legacy_logs()
+    except Exception as exc:
+        migration_error = (type(exc), exc, exc.__traceback__)
+
     rot = logging.getLogger()           # rot — allt propagerar hit
     fmt = logging.Formatter("%(asctime)s %(levelname)-7s [%(name)s:%(lineno)d] [%(threadName)s] %(message)s",
                             datefmt="%Y-%m-%d %H:%M:%S")
@@ -283,6 +329,9 @@ def init_logging() -> None:
 
     rot.setLevel(logging.DEBUG)
     _initierad = True
+    if migration_error:
+        _logger.error("Kunde inte flytta äldre loggar till appens logs-mapp; originalen sparas för nytt försök",
+                      exc_info=migration_error)
     koppla_kraschloggning()
     _logger.info("──── %s %s startar — pid=%d argv=%s — loggfil: %s ────",
                  APP_NAME, APP_VERSION, os.getpid(), sys.argv, LOG_FILE)

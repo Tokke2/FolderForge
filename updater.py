@@ -530,7 +530,7 @@ class FolderForgeLauncher {
             return 0;
         } catch (Exception error) {
             try {
-                string logDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "data", "logs");
+                string logDir = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "logs");
                 System.IO.Directory.CreateDirectory(logDir);
                 System.IO.File.AppendAllText(System.IO.Path.Combine(logDir, "folderforge-errors.log"),
                     DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " ERROR [launcher] " + error.ToString() + Environment.NewLine);

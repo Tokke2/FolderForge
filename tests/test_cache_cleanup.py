@@ -24,17 +24,18 @@ class CleanupTests(unittest.TestCase):
 
     def test_smart_filters(self):
         old = [self.file('data/cache/nested/old.bin', 2 * cache.DAY),
-               self.file('data/tmp/temp.tmp', 2 * cache.DAY),
-               self.file('data/logs/folderforge.log.1', 15 * cache.DAY)]
+               self.file('data/tmp/temp.tmp', 2 * cache.DAY)]
         protected = [self.file(name, 30 * cache.DAY) for name in [
             'data/history.json', 'data/settings.json', 'data/templates/mall.json',
             'data/update-backup/settings.py', 'data/update-pending/folder.pyw',
-            'data/logs/folderforge.log', 'data/logs/unknown.log', 'project/test.tmp',
+            'data/logs/folderforge.log', 'data/logs/folderforge.log.1',
+            'logs/folderforge.log', 'logs/folderforge-errors.log', 'logs/archive/2020-01-01/old.log',
+            'data/logs/unknown.log', 'project/test.tmp',
             '.git/keep', 'unknown.tmp']]
         protected += [self.file('data/cache/new.bin', 60),
                       self.file('data/logs/folderforge.log.2', cache.DAY)]
         result = cache.clean_cache(self.base, now=self.now)
-        self.assertEqual(result['removed'], 3)
+        self.assertEqual(result['removed'], 2)
         self.assertTrue(all(not p.exists() for p in old))
         self.assertTrue(all(p.exists() for p in protected))
 

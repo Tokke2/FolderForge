@@ -21,6 +21,7 @@ class ErrorLogTests(unittest.TestCase):
         self.root.handlers = []
         self.addCleanup(self.restore_logging)
         for obj, name, value in [(logg, 'LOG_DIR', self.folder),
+                                 (logg, 'LEGACY_LOG_DIR', self.folder / 'old-logs'),
                                  (logg, 'LOG_FILE', self.folder / 'folderforge.log'),
                                  (logg, 'ERROR_LOG_FILE', self.folder / 'folderforge-errors.log'),
                                  (logg, '_initierad', False),
@@ -131,7 +132,7 @@ class ErrorLogTests(unittest.TestCase):
     def test_smart_cleanup_preserves_central_error_log(self):
         import cache_cleanup
         base = self.folder
-        errors = base / 'data/logs/folderforge-errors.log'
+        errors = base / 'logs/folderforge-errors.log'
         errors.parent.mkdir(parents=True)
         errors.write_text('critical history')
         self.assertNotIn(errors, [path for path, _ in cache_cleanup.candidates(base, 9999999999)])
@@ -264,7 +265,7 @@ class ErrorLogTests(unittest.TestCase):
     def test_cleanup_preserves_daily_archives_and_resolved_errors(self):
         import cache_cleanup
         for relative in ['archive/2020-01-01/old.log', 'resolved-errors/2020-01-01/fixed.log']:
-            path = self.folder / 'data/logs' / relative
+            path = self.folder / 'logs' / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('history')
         candidates = [path for path, _ in cache_cleanup.candidates(self.folder, 9999999999)]
@@ -317,6 +318,7 @@ import logging, sys
 from pathlib import Path
 import logg
 logg.LOG_DIR = Path(sys.argv[1])
+logg.LEGACY_LOG_DIR = logg.LOG_DIR / 'unused-old-logs'
 logg.LOG_FILE = logg.LOG_DIR / 'folderforge.log'
 logg.ERROR_LOG_FILE = logg.LOG_DIR / 'folderforge-errors.log'
 sys.stderr = None
@@ -369,3 +371,70 @@ for n in range(30):
         ns['_shutdown_background_services'](dummy)
         dummy._log_archive_stop.set.assert_called_once()
         dummy.quit.assert_called_once()
+
+    def legacy_file(self, name, text):
+        path = logg.LEGACY_LOG_DIR / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding='utf-8')
+        return path
+
+    def test_logs_live_directly_beneath_application_folder(self):
+        import settings
+        self.assertEqual(settings.LOG_DIR, settings.BASE_DIR / 'logs')
+
+    def test_migration_preserves_errors_and_nested_archives(self):
+        old_error = self.legacy_file('folderforge-errors.log', 'unresolved old error\n')
+        self.legacy_file('archive/2020-01-01/old.log', 'older archive')
+        self.legacy_file('resolved-errors/2020-01-01/fixed.log', 'resolved history')
+        logg.migrate_legacy_logs()
+        self.assertIn('unresolved old error', self.read_errors())
+        self.assertFalse(old_error.exists())
+        self.assertEqual((self.folder / 'archive/2020-01-01/old.log').read_text(), 'older archive')
+        self.assertEqual((self.folder / 'resolved-errors/2020-01-01/fixed.log').read_text(), 'resolved history')
+
+    def test_migration_merges_existing_native_error_log_without_overwriting(self):
+        self.legacy_file('folderforge-errors.log', 'old issue\n')
+        (self.folder / 'folderforge-errors.log').write_text('new native issue\n')
+        logg.migrate_legacy_logs()
+        self.assertEqual(self.read_errors().count('old issue'), 1)
+        self.assertEqual(self.read_errors().count('new native issue'), 1)
+
+    def test_migration_conflicting_archive_keeps_both_versions(self):
+        self.legacy_file('archive/old.log', 'source archive')
+        dest = self.folder / 'archive/old.log'
+        dest.parent.mkdir(parents=True)
+        dest.write_text('existing archive')
+        logg.migrate_legacy_logs()
+        self.assertEqual(dest.read_text(), 'existing archive')
+        self.assertEqual(next(dest.parent.glob('old.log.migrated-*')).read_text(), 'source archive')
+
+    def test_migration_copy_failure_keeps_original(self):
+        source = self.legacy_file('folderforge-errors.log', 'do not lose this')
+        with patch.object(logg, '_atomic_bytes', side_effect=OSError('disk full')):
+            with self.assertRaises(OSError):
+                logg.migrate_legacy_logs()
+        self.assertEqual(source.read_text(), 'do not lose this')
+
+    def test_migration_retry_after_source_removal_failure_is_idempotent(self):
+        source = self.legacy_file('folderforge-errors.log', 'old unresolved\n')
+        real_unlink = Path.unlink
+        def unlink(path, *args, **kwargs):
+            if path == source:
+                raise PermissionError('source temporarily locked')
+            return real_unlink(path, *args, **kwargs)
+        with patch.object(Path, 'unlink', unlink):
+            with self.assertRaises(PermissionError):
+                logg.migrate_legacy_logs()
+        with (self.folder / 'folderforge-errors.log').open('a') as stream:
+            stream.write('new unresolved\n')
+        logg.migrate_legacy_logs()
+        self.assertEqual(self.read_errors().count('old unresolved'), 1)
+        self.assertEqual(self.read_errors().count('new unresolved'), 1)
+        self.assertFalse(source.exists())
+
+    def test_native_launcher_uses_same_app_log_folder(self):
+        import updater
+        source = updater.launcher_source(Path('pythonw.exe'), Path('folder.pyw'))
+        self.assertIn('Path.Combine(System.IO.Path.GetDirectoryName(', source)
+        self.assertNotIn('"data", "logs"', source)
+        self.assertIn('"logs"', source)
