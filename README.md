@@ -352,3 +352,43 @@ loggar slås samman. Original tas bort först efter en lyckad atomisk kopiering.
 Om flytten misslyckas behålls originalet och appen gör ett nytt försök vid
 nästa start. En tom äldre mapp med låsfil kan finnas kvar, men nya loggar
 skrivs endast i `logs/`. Loggmappen ingår inte i Git eller appuppdateringar.
+
+
+## Fellista, tillfällig detaljloggning och felsökningspaket
+
+**Hjälp → Fellista och felsökning** visar aktiva varningar/fel grupperade
+på modul, nivå, meddelande och eventuell exception-detalj. Varje grupp visar
+antal förekomster samt första/senaste tid. Välj en post för senaste traceback.
+Använd **Uppdatera listan** för att läsa in nya poster.
+
+**Markera valt fel åtgärdat** kräver bekräftelse och flyttar endast den valda
+gruppens förekomster till `logs/resolved-errors/`. Övriga fel ligger kvar.
+Om felloggen ändrats efter att du läste listan måste du granska den igen.
+Återkommer felet hamnar det automatiskt i den aktiva listan på nytt.
+Detta är en manuell kvittens, inte en automatisk reparation. Alternativet
+för att bekräfta samtliga fel finns också kvar i Hjälp-menyn.
+
+Pillows DEBUG/INFO-brus döljs i normalt loggläge, men WARNING och högre
+loggas alltid. **Hjälp → Detaljerad loggning i 15 minuter** gör att även
+biblioteksdetaljer sparas under en begränsad tid. Läget stängs automatiskt
+av efter 15 minuter eller omstart; **Återgå till normal loggning** stänger
+av det tidigare. Appens egen diagnostik behålls även i normalt läge.
+
+**Hjälp → Exportera felsökningspaket…** skapar en ZIP efter integritetsvarning
+och val av målfil. Den innehåller aktuell vanlig logg/fellogg, upp till tre
+senaste datumarkiv och `diagnostic.json` med app-/Python-/OS-version och
+uppdateringsstatus. Varje logg begränsas till de sista 2 MiB; begränsningar
+redovisas i JSON-filen. Inställningsfiler, projekt, historik och miljövariabler
+exporteras inte. **Loggtexten kan ändå innehålla personliga sökvägar och
+felmeddelanden: granska paketet före delning.** Ingen automatisk uppladdning.
+
+## Snabbkommandots registrering
+
+Bokstavstangenter skickas utan vinkelparenteser till pynput, exempelvis
+`<ctrl>+<alt>+m`, vilket rättar felet `Ogiltig hotkey-kombination: <m>`.
+Ctrl-kodade bokstäver från inspelning normaliseras och kombinationen
+valideras både lokalt och med pynputs parser innan den sparas. Misslyckad
+sparning lämnar tidigare kombination kvar. Inställningarna visar om
+snabbkommandot registrerats eller stoppats, med möjlighet att spela in ett
+nytt via befintlig knapp. Ogiltig sparad konfiguration använder standard
+med synlig förklaring. Gamla varningar ligger kvar tills du kvitterar dem.

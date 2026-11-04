@@ -1,6 +1,9 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Fellista i Hjälp: grupperade fel med antal, första/senaste förekomst och traceback; markera ett enskilt fel åtgärdat med skydd mot nytillkomna fel. Återkommande fel visas på nytt.
+- Mindre Pillow-brus, tillfällig detaljloggning i 15 minuter och lokal ZIP-export av utvalda loggar/diagnostik efter integritetsvarning. Inga inställnings- eller projektfiler exporteras.
+- Rättad pynput-formatering bakom <m>-varningen. Backendvalidering före sparning, bevarad tidigare kombination vid skrivfel, Ctrl-bokstavsnormalisering och synlig status för snabbkommandot.
 - All loggning ligger nu i logs/ direkt under appmappen, även native startfel. Befintlig data/logs-historik flyttas säkert vid start, utan att skriva över befintliga arkiv eller tappa olösta fel. Loggar undantas helt från cacherensning.
 - Datumarkiv för vanliga loggar från tidigare dagar, inklusive äldre blandade/roterade filer. Arkivering vid start och över midnatt, även utan nya loggrader.
 - Separat beständig fellogg utan automatisk rensning eller storleksrotation. Alla loggade fel kan efter uttrycklig bekräftelse markeras åtgärdade via Hjälp och sparas då i permanent arkiv; nya fel under bekräftelsen stoppar arkiveringen.
@@ -43,7 +46,7 @@ upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-161 automatiserade tester godkända och Python-syntax kontrollerad.
+187 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

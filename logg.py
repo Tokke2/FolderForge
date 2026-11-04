@@ -12,8 +12,8 @@ Bröts ut ur folder.pyw (modularisering). Innehåller:
 Designregler (oförändrade sedan utbrottet):
   * Handlare kopplas på ROT-loggaren — då når de även historik.py och
     framtida moduler via propagation, inte bara huvudfilen.
-  * Filen får DEBUG-nivå (allt), konsollen samma — pythonw har ingen
-    konsoll, så filen är den som räknas.
+  * Appens DEBUG-diagnostik sparas. Pillow-brus kräver tillfälligt detaljläge.
+    pythonw har ingen konsoll, så filen är den som räknas.
   * Loggningen kastar aldrig — den får aldrig stoppa appen den övervakar.
 
 Beroenderiktning: settings.py → logg.py → historik.py → folder.pyw.
@@ -318,6 +318,7 @@ def init_logging() -> None:
     try:
         fil = DailyArchiveHandler(LOG_FILE)
         fil.setFormatter(fmt)
+        fil.addFilter(LibraryNoiseFilter())
         rot.addHandler(fil)
     except Exception:
         _logger.error("Kunde inte öppna eller arkivera den vanliga loggen", exc_info=True)
@@ -325,6 +326,7 @@ def init_logging() -> None:
     if sys.stderr is not None:          # pythonw har ingen konsoll
         kons = logging.StreamHandler()
         kons.setFormatter(fmt)
+        kons.addFilter(LibraryNoiseFilter())
         rot.addHandler(kons)
 
     rot.setLevel(logging.DEBUG)
@@ -383,3 +385,144 @@ def koppla_kraschloggning() -> None:
     # hamnar annars heller ingenstans — fånga dem via samma väg.
     threading.excepthook = (lambda a: _log_ofangat(a.exc_type, a.exc_value,
                                                    a.exc_traceback))
+
+# Detaljerad biblioteksloggning är tillfällig och återställs även vid omstart.
+_debug_until = 0.0
+
+
+def enable_detailed_logging(minutes=15):
+    import time
+    global _debug_until
+    _debug_until = time.monotonic() + max(0, min(float(minutes), 60)) * 60
+
+
+def detailed_logging_remaining():
+    import time
+    return max(0, int(_debug_until - time.monotonic()))
+
+
+class LibraryNoiseFilter(logging.Filter):
+    def filter(self, record):
+        return not ((record.name == 'PIL' or record.name.startswith('PIL.')) and record.levelno < logging.WARNING
+                    and not detailed_logging_remaining())
+
+
+_ERROR_HEADER = re.compile(
+    r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:[,.]\d+)?\s+'
+    r'(WARNING|ERROR|CRITICAL)\s+(?:\[([^\]]+)\]\s+\[[^\]]+\]\s+)?(.*)')
+
+
+def _error_entries(text):
+    entries, current = [], None
+    for line in text.splitlines(keepends=True):
+        match = _ERROR_HEADER.match(line)
+        if match:
+            # Äldre importomslag är metadata; själva originalposten grupperas nedan.
+            if current:
+                entries.append(current)
+            if (match[3] or '').startswith('tidigare_logg:'):
+                current = None
+                continue
+            module = (match[3] or 'äldre_logg').rsplit(':', 1)[0]
+            message = match[4]
+            if module == 'äldre_logg' and message.startswith('[launcher] '):
+                module, message = 'launcher', message[len('[launcher] '):]
+            identity = '\0'.join((module, match[2], message))
+            current = dict(id=hashlib.sha256(identity.encode()).hexdigest(),
+                           first=match[1], level=match[2], module=module,
+                           message=message, text=line)
+        elif current:
+            current['text'] += line
+        elif line.strip() and not line.startswith('[Flyttad äldre logg '):
+            # Även oformaterade/native poster måste kunna granskas, aldrig tappas bort.
+            identity = hashlib.sha256(line.encode()).hexdigest()
+            entries.append(dict(id=identity, first='Okänd tid', level='ERROR',
+                                module='övrigt', message=line.strip(), text=line))
+    if current:
+        entries.append(current)
+    for entry in entries:
+        if 'Traceback (most recent call last)' in entry['text']:
+            last_line = next(line for line in reversed(entry['text'].rstrip().splitlines())
+                             if line.strip() and not line.startswith('[Flyttad äldre logg '))
+            entry['id'] = hashlib.sha256((entry['id'] + '\0' + last_line).encode()).hexdigest()
+    return entries
+
+
+def get_error_issues():
+    with _locked_logs(ERROR_LOG_FILE.parent):
+        raw = ERROR_LOG_FILE.read_bytes() if ERROR_LOG_FILE.exists() else b''
+        text = raw.decode('utf-8', errors='replace')
+        snapshot = hashlib.sha256(raw).hexdigest()
+        groups = {}
+        for entry in _error_entries(text):
+            if entry['id'] not in groups:
+                groups[entry['id']] = dict(entry, last=entry['first'], count=0)
+            group = groups[entry['id']]
+            group['count'] += 1
+            group['first'] = min(group['first'], entry['first'])
+            if entry['first'] >= group['last']:
+                group['text'] = entry['text']
+            group['last'] = max(group['last'], entry['first'])
+            # Senaste traceback finns i detaljvyn.
+        return list(groups.values()), snapshot
+
+
+def resolve_error_issue(issue_id, expected_digest):
+    with _locked_logs(ERROR_LOG_FILE.parent):
+        raw = ERROR_LOG_FILE.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != expected_digest:
+            raise ValueError('Felloggen har ändrats. Uppdatera listan och granska felet igen.')
+        entries = _error_entries(raw.decode('utf-8', errors='replace'))
+        selected = [entry['text'] for entry in entries if entry['id'] == issue_id]
+        if not selected:
+            raise ValueError('Felet finns inte längre i den aktiva listan.')
+        target = (ERROR_LOG_FILE.parent / 'resolved-errors' / local_today().isoformat()
+                  / (uuid.uuid4().hex + '.log'))
+        # Arkiv först: ett avbrott kan lämna felet aktivt, men aldrig tappa det.
+        (ERROR_LOG_FILE.parent / '.errors-history-imported').touch(exist_ok=True)
+        _atomic_text(target, ''.join(selected))
+        _atomic_text(ERROR_LOG_FILE, ''.join(entry['text'] for entry in entries if entry['id'] != issue_id))
+        return target
+
+
+def export_diagnostic_package(destination):
+    """Endast utvalda loggar/status, inga inställningar, projekt eller miljövariabler."""
+    import json
+    import platform
+    import zipfile
+    from settings import BASE_DIR
+    from updater import get_update_status
+    destination = Path(destination)
+    if destination.suffix.lower() != '.zip':
+        raise ValueError('Felsökningspaketet måste sparas som .zip, inte över en logg eller appfil.')
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.diagnostic-', dir=destination.parent)
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as output:
+            report = dict(app=APP_NAME, version=APP_VERSION, python=platform.python_version(),
+                          system=platform.system(), update=get_update_status(BASE_DIR, APP_VERSION), files=[])
+            with _locked_logs(LOG_DIR):
+                def safe_log(path):
+                    return (path.is_file() and not path.is_symlink()
+                            and path.resolve().is_relative_to(LOG_DIR.resolve()))
+                archives = sorted((p for p in (LOG_DIR / 'archive').rglob('*.log') if safe_log(p)),
+                                  key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+                for path in [LOG_FILE, ERROR_LOG_FILE, *archives]:
+                    if not safe_log(path):
+                        continue
+                    size = path.stat().st_size
+                    with path.open('rb') as stream:
+                        stream.seek(max(0, size - 2 * 1024 * 1024))
+                        content = stream.read(2 * 1024 * 1024)
+                    name = 'logs/' + path.relative_to(LOG_DIR).as_posix()
+                    output.writestr(name, content)
+                    report['files'].append(dict(name=name, original_bytes=size, truncated=size > len(content)))
+            output.writestr('diagnostic.json', json.dumps(report, ensure_ascii=False, indent=2))
+            output.writestr('LAS-MIG.txt', 'Kan innehålla personliga sökvägar och felmeddelanden. Granska innan delning.\n'
+                            'Varje logg begränsas till de sista 2 MiB. Se diagnostic.json för begränsningar.\n')
+        os.replace(temporary, destination)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+    return destination

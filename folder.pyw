@@ -1377,11 +1377,7 @@ def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
       • inga mellanslag i namn
     Returnerar (ok?, normaliserad_lista, felmeddelande).
     """
-    norm: List[str] = []
-    for k in keys or []:
-        s = str(k).strip().lower().replace("key.", "").replace("_l", "").replace("_r", "")
-        if s and s not in norm:
-            norm.append(s)
+    norm = normalize_hotkey_keys(keys)
 
     if not norm:
         return False, [], "Inga tangenter registrerade."
@@ -1399,6 +1395,11 @@ def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
         )
     if not base:
         return False, norm, "Kombinationen saknar en vanlig tangent."
+    for key in base:
+        if not ((len(key) == 1 and key.isprintable() and key not in "+<> ")
+                or key in {"space", "enter", "tab", "esc", "backspace", "delete", "insert", "home", "end", "page_up", "page_down", "up", "down", "left", "right"}
+                or re.fullmatch(r"f(?:[1-9]|1[0-9]|2[0-4])", key)):
+            return False, norm, "Okänd tangent: " + key
     return True, norm, ""
 
 
@@ -1576,16 +1577,25 @@ def normalize_hotkey_keys(keys: Iterable[str]) -> List[str]:
     for k in keys or []:
         if k is None:
             continue
-        s = str(k).strip().lower()
+        raw = str(k)
+        if len(raw) == 1 and 1 <= ord(raw) <= 26:
+            raw = chr(ord(raw) + 96)  # pynput kan ge Ctrl+M som \r
+        s = raw.strip().lower()
         if not s:
             continue
         if s.startswith('key.'):
             s = s[4:]
         s = s.replace('_l', '').replace('_r', '')
+        s = {'win': 'cmd', 'super': 'cmd', 'command': 'cmd', 'option': 'alt', 'control': 'ctrl'}.get(s, s)
         if s and s not in norm:
             norm.append(s)
     norm.sort(key=lambda x: (HOTKEY_KEY_ORDER.get(x, 99), x))
     return norm
+
+
+def hotkey_expression(keys):
+    """pynput: <ctrl>+<alt>+m, aldrig <m>."""
+    return "+".join(k if len(k) == 1 else "<" + k + ">" for k in normalize_hotkey_keys(keys))
 
 
 def hotkey_label(keys: Iterable[str]) -> str:
@@ -4519,6 +4529,10 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
+        help_menu.add_command(label="Fellista och felsökning", command=self._show_error_issues)
+        help_menu.add_command(label="Detaljerad loggning i 15 minuter", command=self._enable_detailed_logs)
+        help_menu.add_command(label="Återgå till normal loggning", command=lambda: self._enable_detailed_logs(0))
+        help_menu.add_command(label="Exportera felsökningspaket…", command=self._export_diagnostics)
         help_menu.add_command(label="Öppna fellogg", command=self._open_error_log)
         help_menu.add_command(label="Markera alla loggade fel som åtgärdade…", command=self._resolve_logged_errors)
         help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
@@ -5210,6 +5224,9 @@ class FolderForgeApp(_DnDCTkBase):
             text_color="white",
         )
         self.hk_lbl.pack(pady=scaled(12, s))
+        self.hk_status_label = ctk.CTkLabel(parent, text="Snabbtangenten registreras…", wraplength=350,
+                                          font=ctk.CTkFont(size=scaled_font(12, s)))
+        self.hk_status_label.pack(fill="x", padx=15, pady=(0, 8))
 
         ctk.CTkButton(
             parent, text="✏️  Ändra Snabbtangent",
@@ -6300,6 +6317,7 @@ class FolderForgeApp(_DnDCTkBase):
     # Hotkeys
     # ============================================================
     def _load_hotkey(self) -> Set[str]:
+        self._hotkey_fallback_reason = ""
         # M2/C41.3 — read_json_safe() med .bak/.bak2-fallback.
         data = read_json_safe(HOTKEY_CONFIG, None)
         if isinstance(data, dict):
@@ -6309,8 +6327,10 @@ class FolderForgeApp(_DnDCTkBase):
             ok, norm, err = validate_hotkey_combo(data.get("hotkey") or [])
             if ok:
                 return set(norm)
+            self._hotkey_fallback_reason = err
             logger.warning("Sparad snabbtangent ogiltig (%s) — standard används", err)
         elif data is not None:
+            self._hotkey_fallback_reason = "Felaktigt konfigurationsformat"
             logger.warning("Hotkey-config hade oväntat format — standard används")
         return set(DEFAULT_HOTKEY)
 
@@ -6365,15 +6385,24 @@ class FolderForgeApp(_DnDCTkBase):
             messagebox.showwarning("Ogiltig snabbtangent", err)
             self._cancel_hotkey_rec()
             return
+        try:
+            keyboard.HotKey.parse(hotkey_expression(norm))
+        except Exception as exc:
+            messagebox.showwarning("Ogiltig snabbtangent", str(exc), parent=self)
+            self._cancel_hotkey_rec()
+            return
+        if not atomic_write_json(HOTKEY_CONFIG, {"hotkey": list(norm)}):
+            logger.error("Kunde inte spara snabbtangent")
+            messagebox.showerror("Snabbtangent", "Kunde inte spara. Din tidigare kombination behålls.", parent=self)
+            self._cancel_hotkey_rec()
+            return
         self.current_hotkey = set(norm)
-        # M1/F1 — atomisk skrivning med backup.
-        if not atomic_write_json(HOTKEY_CONFIG, {"hotkey": list(self.current_hotkey)}):
-            logger.error("Kunde inte spara snabbtangent "
-                         "(atomisk skrivning misslyckades)")
+        self._hotkey_fallback_reason = ""
         self._setup_global_hotkey()
         self._cancel_hotkey_rec()
 
     def _cancel_hotkey_rec(self) -> None:
+        self.recording_hotkey = False
         if self.hotkey_listener:
             self.hotkey_listener.stop()
         self.hk_rec_frame.pack_forget()
@@ -6384,27 +6413,44 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self._update_ui_from_settings()
 
+    def _set_hotkey_status(self, text, active=False):
+        self._hotkey_status = text
+        if hasattr(self, "hk_status_label"):
+            self.hk_status_label.configure(text=text, text_color=UI_MUTED if active else "#c0392b")
+
     def _setup_global_hotkey(self) -> None:
         if self.global_hotkey:
             self.global_hotkey.stop()
-        # M11/C42 — samma validering som vid sparning: registrera aldrig en
-        # kombination som kan stjäla vanlig skrivning i hela systemet.
+        self.global_hotkey = None
         ok, norm, err = validate_hotkey_combo(self.current_hotkey)
         if not ok:
+            self._set_hotkey_status("Fungerar inte: " + err + " Spela in en ny kombination.")
             logger.warning("Global snabbtangent ej registrerad: %s", err)
             return
-        # M10 — normalize_hotkey_keys() ger stabil ordning (modifierare först)
-        # istället för alfabetisk, så strängen blir deterministisk och läsbar.
-        hk_str = "+".join(f"<{k}>" for k in normalize_hotkey_keys(norm))
         try:
+            expression = hotkey_expression(norm)
+            keyboard.HotKey.parse(expression)
             self.global_hotkey = keyboard.GlobalHotKeys({
-                # M10/C43 — återanrop via ui_call: GlobalHotKeys avfyras i
-                # pynput-tråden, så self.after() därifrån är inte trådsäkert.
-                hk_str: lambda: ui_call(self, self._restore_from_tray),
+                expression: lambda: ui_call(self, self._restore_from_tray),
             })
             self.global_hotkey.start()
-        except ValueError as e:
-            logger.warning("Ogiltig hotkey-kombination: %s", e)
+        except Exception as exc:
+            self._set_hotkey_status("Fungerar inte: " + str(exc) + " Spela in en ny kombination.")
+            logger.exception("Kunde inte registrera global snabbtangent")
+            return
+        reason = getattr(self, "_hotkey_fallback_reason", "")
+        self._set_hotkey_status("Aktiv: " + hotkey_label(norm) +
+                               (". Standard används: " + reason + " Spela in en ny kombination." if reason else ""), active=True)
+        listener = self.global_hotkey
+        def verify():
+            if self.global_hotkey is not listener:
+                return
+            if not listener.is_alive():
+                self._set_hotkey_status("Snabbtangenten har stoppats. Spela in en ny kombination.")
+                logger.error("Snabbtangentens bakgrundslyssnare har stoppats")
+                return
+            self.after(5000, verify)
+        self.after(2000, verify)
 
     # ============================================================
     # Tray & Autostart
@@ -6412,6 +6458,89 @@ class FolderForgeApp(_DnDCTkBase):
     def report_callback_exception(self, exc_type, exc_value, tb) -> None:
         # Tkinter skickar annars callback-fel bara till stderr, som saknas i pythonw.
         logger.error("OFÅNGAT GUI-FEL", exc_info=(exc_type, exc_value, tb))
+
+    def _enable_detailed_logs(self, minutes=15):
+        from logg import enable_detailed_logging
+        enable_detailed_logging(minutes)
+        text = ("Detaljerad loggning är aktiv i 15 minuter och stängs sedan av automatiskt."
+                if minutes else "Normalt loggläge är återställt.")
+        logger.info(text)
+        messagebox.showinfo("Loggning", text, parent=self)
+
+    def _export_diagnostics(self):
+        from logg import export_diagnostic_package
+        if not messagebox.askyesno("Granska innan delning", "Paketet innehåller loggar och uppdateringsstatus. Loggar kan innehålla personliga sökvägar och felmeddelanden. Inställningsfiler och projekt tas inte med.\n\nVill du skapa ett ZIP-paket? Granska innehållet innan du delar det.", parent=self):
+            return
+        target = filedialog.asksaveasfilename(parent=self, title="Spara felsökningspaket", defaultextension=".zip",
+                                            filetypes=[("ZIP-paket", "*.zip")], initialfile="FolderForge-felsokning.zip")
+        if not target:
+            return
+        try:
+            export_diagnostic_package(target)
+            messagebox.showinfo("Felsökningspaket", "Paketet sparades. Granska innan delning:\n" + target, parent=self)
+        except Exception as exc:
+            logger.exception("Kunde inte exportera felsökningspaket")
+            messagebox.showerror("Felsökningspaket", str(exc), parent=self)
+
+    def _show_error_issues(self):
+        from logg import get_error_issues, resolve_error_issue, detailed_logging_remaining
+        win = ctk.CTkToplevel(self)
+        win.title("Fellista och felsökning")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry("760x620")
+        body, footer = dialog_layout(win)
+        summary = ctk.CTkLabel(body, text="", wraplength=650)
+        summary.pack(fill="x", padx=15, pady=10)
+        listing = ctk.CTkScrollableFrame(body, height=190)
+        listing.pack(fill="both", expand=True, padx=15)
+        details = ctk.CTkTextbox(body, height=160)
+        details.pack(fill="x", padx=15, pady=10)
+        selected = {"id": None, "snapshot": None}
+
+        def choose(issue):
+            selected["id"] = issue["id"]
+            details.configure(state="normal")
+            details.delete("1.0", "end")
+            details.insert("1.0", f"Första: {issue['first']}\nSenaste: {issue['last']}\nAntal: {issue['count']}\n\n{issue['text']}")
+            details.configure(state="disabled")
+            resolve_button.configure(state="normal")
+
+        def refresh():
+            try:
+                issues, snapshot = get_error_issues()
+            except Exception as exc:
+                messagebox.showerror("Fellista", str(exc), parent=win)
+                return
+            for child in listing.winfo_children():
+                child.destroy()
+            selected.update(id=None, snapshot=snapshot)
+            resolve_button.configure(state="disabled")
+            details.configure(state="normal")
+            details.delete("1.0", "end")
+            details.configure(state="disabled")
+            seconds = detailed_logging_remaining()
+            summary.configure(text=f"{len(issues)} aktiva feltyper. Välj en post för detaljer. " +
+                              (f"Detaljerad loggning: {seconds // 60 + 1} min kvar." if seconds else "Normalt loggläge."))
+            for issue in sorted(issues, key=lambda item: item['last'], reverse=True):
+                text = f"{issue['level']} · {issue['count']} gånger · {issue['module']}\n{issue['message'][:120]}"
+                ctk.CTkButton(listing, text=text, anchor="w", command=lambda value=issue: choose(value)).pack(fill="x", pady=3)
+
+        def resolve():
+            if not selected['id'] or not messagebox.askyesno("Bekräfta åtgärdat fel", "Är orsaken till just detta fel åtgärdad? Alla förekomster av vald feltyp arkiveras. Detta reparerar inte appen. Återkommer felet visas det igen.", parent=win):
+                return
+            try:
+                resolve_error_issue(selected['id'], selected['snapshot'])
+            except Exception as exc:
+                messagebox.showerror("Fellista", str(exc), parent=win)
+            refresh()
+
+        resolve_button = ctk.CTkButton(footer, text="Markera valt fel åtgärdat", command=resolve, state="disabled")
+        resolve_button.pack(fill="x", padx=15, pady=5)
+        ctk.CTkButton(footer, text="Uppdatera listan", command=refresh).pack(side="left", padx=10, pady=10)
+        ctk.CTkButton(footer, text="Exportera felsökningspaket…", command=self._export_diagnostics).pack(side="left", padx=5)
+        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(side="right", padx=10)
+        refresh()
 
     def _open_error_log(self) -> None:
         if not ERROR_LOG_FILE.is_file():
