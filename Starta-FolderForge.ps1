@@ -1,4 +1,4 @@
-﻿param([string]$PreferredPython = '', [string]$Arguments64 = '')
+﻿param([string]$PreferredPython = '', [string]$Arguments64 = '', [switch]$MaintenanceOnly)
 $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $Logs = Join-Path $Root 'logs'
@@ -9,7 +9,7 @@ try {
     [IO.Directory]::CreateDirectory($Data) | Out-Null
 } catch {
     Add-Type -AssemblyName System.Windows.Forms
-    [Windows.Forms.MessageBox]::Show('FolderForge needs a writable app folder. ' + $_.Exception.Message, 'FolderForge') | Out-Null
+    if (-not $MaintenanceOnly) { [Windows.Forms.MessageBox]::Show('FolderForge needs a writable app folder. ' + $_.Exception.Message, 'FolderForge') | Out-Null }
     exit 1
 }
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -39,6 +39,8 @@ function Invoke-Hidden([string]$File, [string[]]$Arguments) {
     $Info.WorkingDirectory = $Root
     $Info.UseShellExecute = $false
     $Info.CreateNoWindow = $true
+    $Info.EnvironmentVariables.Remove('PYTHONHOME')
+    $Info.EnvironmentVariables.Remove('PYTHONPATH')
     $Info.RedirectStandardOutput = $true
     $Info.RedirectStandardError = $true
     $Info.StandardOutputEncoding = [Text.Encoding]::UTF8
@@ -93,11 +95,14 @@ function Save-RuntimeState($State) {
 }
 function Test-Environment([string]$Console) {
     $Code = 'import tkinter,customtkinter,PIL,pystray,pynput,win32api,tkinterdnd2; import importlib.metadata; print("OK")'
-    $Check = Invoke-Hidden $Console @('-I','-c',$Code)
+    $Check = Invoke-Hidden $Console @('-c',$Code)
     if ($Check.Code -ne 0) { Write-CommandFailure 'Environment imports' $Check; return $false }
-    $Check = Invoke-Hidden $Console @('-I','-m','pip','--isolated','check','--disable-pip-version-check')
-    if ($Check.Code -ne 0) { Write-CommandFailure 'Environment pip check' $Check }
-    return $Check.Code -eq 0
+    $Check = Invoke-Hidden $Console @('-m','pip','--isolated','check','--disable-pip-version-check')
+    if ($Check.Code -ne 0) {
+        Write-CommandFailure 'Shared environment dependency conflicts' $Check
+        $script:RuntimeDependencyConflicts = $true
+    }
+    return $true # Unrelated shared-package conflicts must not block valid app imports.
 }
 function Get-LatestStableSeries {
     # Discover current stable CPython from the public winget manifests; no hard-coded release.
@@ -114,6 +119,37 @@ function Get-LatestStableSeries {
     }
     throw 'No stable Python release could be verified. No installation was attempted.'
 }
+function Get-WeeklyBoundary([datetime]$Now) {
+    # Local clock, Monday 08:00; before that time belongs to the preceding week.
+    $Days = (([int]$Now.DayOfWeek + 6) % 7)
+    $Boundary = $Now.Date.AddDays(-$Days).AddHours(8)
+    if ($Now -lt $Boundary) { $Boundary = $Boundary.AddDays(-7) }
+    return $Boundary
+}
+function Test-PythonBusy {
+    try { return @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%.exe'").Count -gt 0 }
+    catch { Write-RuntimeLog WARNING 'Could not verify that shared Python is idle; maintenance deferred.'; return $true }
+}
+function Ensure-WeeklyTask($State) {
+    try {
+        $Digest = [Security.Cryptography.SHA256]::Create()
+        try { $RootId = ([BitConverter]::ToString($Digest.ComputeHash([Text.Encoding]::UTF8.GetBytes($Root.ToLowerInvariant())))).Replace('-','').Substring(0,12) }
+        finally { $Digest.Dispose() }
+        $Name = 'FolderForge Python weekly ' + $RootId
+        $Hash = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash
+        $Existing = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+        if ($Existing -and $State.WeeklyTaskHash -eq $Hash) { return }
+        $WindowlessHost = Join-Path ([Environment]::GetFolderPath('System')) 'wscript.exe'
+        $Arguments = (Quote-Argument (Join-Path $Root 'Starta-FolderForge.vbs')) + ' --maintenance'
+        $Action = New-ScheduledTaskAction -Execute $WindowlessHost -Argument $Arguments -WorkingDirectory $Root
+        $Trigger = New-ScheduledTaskTrigger -Weekly -WeeksInterval 1 -DaysOfWeek Monday -At '08:00'
+        $Principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
+        $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 12 -RestartInterval (New-TimeSpan -Minutes 15)
+        Register-ScheduledTask -TaskName $Name -Action $Action -Trigger $Trigger -Principal $Principal -Settings $Settings -Force | Out-Null
+        $State.WeeklyTaskHash = $Hash
+        Write-RuntimeLog INFO 'Shared Python/package maintenance scheduled Mondays at 08:00 local time; missed runs start when available.'
+    } catch { Write-RuntimeLog WARNING ('Could not register weekly task; overdue checks run at next app start. ' + $_.Exception.Message) }
+}
 $Maintenance = New-Object Threading.Mutex($false, 'Local\FolderForge_RuntimeMaintenance')
 $Held = $false
 $ExitCode = 0
@@ -121,8 +157,21 @@ try {
     try { $Held = $Maintenance.WaitOne(300000) } catch [Threading.AbandonedMutexException] { $Held = $true }
     if (-not $Held) { throw 'Another runtime check is still active. Try starting again later.' }
     Push-Location $Root
-    Write-RuntimeLog INFO 'Startup Python and app-package check started.'
-    $State = Read-RuntimeState
+    $Loaded = Read-RuntimeState
+    $State = @{}
+    if ($Loaded) { foreach ($Property in $Loaded.PSObject.Properties) { $State[$Property.Name] = $Property.Value } }
+    $Now = Get-Date
+    if (-not $State.WeeklyEnabledAt) { $State.WeeklyEnabledAt = $Now.ToString('o') }
+    Ensure-WeeklyTask $State
+    Save-RuntimeState $State
+    $Boundary = Get-WeeklyBoundary $Now
+    $Due = $Boundary -ge ([datetime]$State.WeeklyEnabledAt) -and
+        (-not $State.LastAttemptPeriod -or ([datetime]$State.LastAttemptPeriod) -lt $Boundary)
+    $LegacyConsole = [string]$State.Console
+    if ($MaintenanceOnly -and -not $Due) {
+        Write-RuntimeLog INFO 'Weekly maintenance already handled or not yet due; scheduled run skipped.'
+        exit 0
+    }
     $Candidates = New-Object 'Collections.Generic.List[string]'
     $Registry = @()
     if ($State -and $State.Console) { $Candidates.Add([string]$State.Console) }
@@ -175,6 +224,13 @@ try {
         if ($Registry.Count -gt 0 -or $ExistingCandidates.Count -gt 0) { throw 'Python is registered but cannot be used. Repair that installation; no second Python was installed.' }
         if ($Running) { throw 'FolderForge is already running; runtime changes were deferred.' }
         if (-not $Winget) { throw 'Python is missing and Windows App Installer (winget) is unavailable. Install App Installer, then retry.' }
+        if (Test-PythonBusy) { throw 'A Python process exists but its installation could not be identified safely. No additional Python was installed.' }
+        if ($MaintenanceOnly -and $Due) {
+            $State.LastAttemptPeriod = $Boundary.ToString('o')
+            $State.LastAttemptAt = (Get-Date).ToString('o')
+            $State.LastResult = 'running'
+            Save-RuntimeState $State
+        }
         $Series = Get-LatestStableSeries
         Write-RuntimeLog INFO "Python is missing. Installing stable Python $Series once."
         $Installed = Invoke-Hidden $Winget.Source @('install','--id',"Python.Python.$Series",'--exact','--source','winget','--scope','user','--silent','--disable-interactivity','--accept-source-agreements','--accept-package-agreements')
@@ -187,113 +243,134 @@ try {
     if (-not $Info.stable) { throw 'Only a prerelease Python was found. No additional Python was installed. Select a stable existing installation.' }
     $Series = "$($Info.version[0]).$($Info.version[1])"
     if ([version]$Series -lt [version]'3.11') { throw "Existing Python $Series is too old. No parallel Python was installed. Upgrade it explicitly to Python 3.11+ first." }
-    Write-RuntimeLog INFO "Python $($Info.version -join '.') detected; existing series $Series is retained."
-    if (-not $Running -and -not $InstalledNow) {
-        $Official = @($Registry | Where-Object { $_.Home -eq ([string]$Info.base).TrimEnd('\') })
-        if ($Winget -and $Official.Count -gt 0) {
-            # Never update a base interpreter while another program is using it.
-            $Busy = $true
-            try {
-                $Busy = @(Get-CimInstance Win32_Process -Filter "Name LIKE 'python%.exe'").Count -gt 0
-            } catch { Write-RuntimeLog WARNING 'Could not verify that Python is idle; binary upgrade deferred.' }
-            if (-not $Busy) {
-                $Upgrade = Invoke-Hidden $Winget.Source @('upgrade','--id',"Python.Python.$Series",'--exact','--source','winget','--scope',$Official[0].Scope,'--silent','--disable-interactivity','--accept-source-agreements','--accept-package-agreements')
-                $ExitHex = '{0:X8}' -f ([long]$Upgrade.Code -band 4294967295)
-                if ($Upgrade.Code -eq 0) { Write-RuntimeLog INFO 'Existing Python installation updated.' }
-                elseif ($ExitHex -in @('8A15002B','8A15004F')) { Write-RuntimeLog INFO 'Python is already at the latest available patch in its existing series.' }
-                else { Write-CommandFailure 'Python upgrade' $Upgrade; Write-RuntimeLog WARNING "No Python upgrade completed (winget code $ExitHex); existing installation retained. No install fallback." }
-                $Refreshed = Get-PythonInfo $Info.executable
-                if ($Refreshed) { $Info = $Refreshed }
-            } else { Write-RuntimeLog INFO 'Python is in use; binary upgrade deferred without stopping other programs.' }
-        } else { Write-RuntimeLog WARNING 'Existing Python cannot be safely upgraded with winget; retained without installing another Python.' }
-    }
-    $Console = if ($State) { [string]$State.Console } else { '' }
-    if ($Running) {
-        Write-RuntimeLog INFO 'FolderForge is already running. Package changes deferred to avoid changing loaded files.'
-        if (-not $Console -or -not (Test-Path -LiteralPath $Console)) { $Console = [string]$Info.Console }
-    } else {
-        $Code = 'import sys,json; sys.path.insert(0,sys.argv[1]); import settings; print(json.dumps(sorted(set(p for p in settings.REQUIRED_PACKAGES.values() if p))))'
-        $Requirements = Invoke-Hidden $Info.executable @('-I','-c',$Code,$Root)
-        if ($Requirements.Code -ne 0) { throw 'App package requirements could not be read.' }
-        $Packages = @($Requirements.Out | ConvertFrom-Json)
-        if ($Packages.Count -eq 0 -or @($Packages | Where-Object { $_ -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$' }).Count -gt 0) { throw 'Invalid app package requirements.' }
-        $Cache = Join-Path $Data 'python-pip-cache'
-        $PipOptions = @('-I','-m','pip','--isolated','--cache-dir',$Cache)
-        $NetworkOptions = @('--disable-pip-version-check','--index-url','https://pypi.org/simple','--timeout','15','--retries','1')
-        $Valid = $Console -and (Test-Path -LiteralPath $Console) -and (Test-Environment $Console)
-        $NeedsUpdate = -not $Valid
-        if ($Valid) {
-            $Plan = Join-Path $Data ('runtime-plan-' + [guid]::NewGuid().ToString('N') + '.json')
-            try {
-                # Resolve compatible upgrades without changing the active environment.
-                $Check = Invoke-Hidden $Console ($PipOptions + @('install','--dry-run','--report',$Plan,'--upgrade','--upgrade-strategy','eager') + $NetworkOptions + @('pip') + $Packages)
-                if ($Check.Code -eq 0 -and (Test-Path -LiteralPath $Plan)) {
-                    $Report = Get-Content -Raw -LiteralPath $Plan | ConvertFrom-Json
-                    $NeedsUpdate = @($Report.install).Count -gt 0
-                } else { Write-CommandFailure 'Package update plan' $Check; Write-RuntimeLog WARNING 'Package update check failed or is offline; verified environment retained.' }
-            } catch { Write-RuntimeLog WARNING 'Could not read package update plan; verified environment retained.' }
-            finally { if (Test-Path -LiteralPath $Plan) { Remove-Item -LiteralPath $Plan } }
-        }
-        if ($NeedsUpdate) {
-            # Stage at its permanent path. Do not move a venv: its scripts contain absolute paths.
-            $Environment = Join-Path $Data ('python-envs\' + [guid]::NewGuid().ToString('N'))
-            $CandidateConsole = Join-Path $Environment 'Scripts\python.exe'
-            $CandidateWindowless = Join-Path $Environment 'Scripts\pythonw.exe'
-            $Success = $false
-            try {
-                $Created = Invoke-Hidden $Info.executable @('-I','-m','venv',$Environment)
-                if ($Created.Code -eq 0) {
-                    $Pip = Invoke-Hidden $CandidateConsole ($PipOptions + @('install','--upgrade','--upgrade-strategy','eager') + $NetworkOptions + @('pip') + $Packages)
-                    if ($Pip.Code -ne 0) { Write-CommandFailure 'Candidate package installation' $Pip }
-                    $Success = $Pip.Code -eq 0 -and (Test-Environment $CandidateConsole) -and (Test-Path $CandidateWindowless)
-                } else { Write-CommandFailure 'Candidate environment creation' $Created }
-            } catch { Write-RuntimeLog WARNING 'Candidate environment could not be prepared; previous state was not changed.' }
-            if (-not $Success -and (Test-Path -LiteralPath $Environment)) {
-                try {
-                    $CleanCode = 'import shutil,sys; shutil.rmtree(sys.argv[1])'
-                    $Clean = Invoke-Hidden $Info.executable @('-I','-c',$CleanCode,$Environment)
-                    if ($Clean.Code -ne 0) { Write-RuntimeLog WARNING 'Failed candidate cleanup was deferred.' }
-                } catch { Write-RuntimeLog WARNING 'Failed candidate cleanup was deferred.' }
-            }
-            if ($Success) {
-                $NewState = @{ Console = $CandidateConsole; Base = $Info.base; Version = ($Info.version -join '.'); Checked = (Get-Date).ToString('o') }
-                Save-RuntimeState $NewState
-                $Console = $CandidateConsole
-                Write-RuntimeLog INFO 'App packages verified and updated in an isolated environment. Previous environment retained.'
-            } elseif ($Valid) { Write-RuntimeLog WARNING 'Candidate package update failed; previous verified environment retained.' }
-            else { throw 'Required Python packages or Tk could not be installed/verified. Check network/access and retry; no existing Python was replaced.' }
-        } else { Write-RuntimeLog INFO 'App package check completed; existing verified environment reused.' }
-    }
-    $Windowless = Join-Path (Split-Path $Console) 'pythonw.exe'
-    if (-not (Test-Path -LiteralPath $Windowless -PathType Leaf)) { throw 'pythonw.exe is unavailable. Start aborted instead of opening a console.' }
+    # Use the actual shared base interpreter, never the old app virtual environment.
+    $Console = [string]$Info.executable
     if (-not $Running) {
-        # Refresh cached launchers too, so a later missing-Python start can bootstrap itself.
-        $BrandCode = 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from updater import ensure_launcher; ensure_launcher(Path(sys.argv[1]),Path(sys.argv[2]),Path(sys.argv[1])/"Icon"/"projektmapp.ico")'
-        try {
-            $Brand = Invoke-Hidden $Console @('-I','-c',$BrandCode,$Root,$Windowless)
-            if ($Brand.Code -ne 0) { Write-RuntimeLog WARNING 'Native launcher refresh failed; use Starta-FolderForge.vbs if needed.' }
-        } catch { Write-RuntimeLog WARNING 'Native launcher refresh failed; use Starta-FolderForge.vbs if needed.' }
+        $State.Console = $Console
+        $State.Base = [string]$Info.base
+        $State.Version = ($Info.version -join '.')
+        Save-RuntimeState $State
     }
-    $AppArgs = @('--tray')
-    if ($Arguments64) { $AppArgs = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Arguments64)).Split(@([char]0), [StringSplitOptions]::RemoveEmptyEntries)) }
-    $env:FOLDERFORGE_RUNTIME_READY = '1'
-    $Start = New-Object Diagnostics.ProcessStartInfo
-    $Start.FileName = $Windowless
-    $Start.Arguments = (Quote-Argument (Join-Path $Root 'folder.pyw')) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
-    $Start.WorkingDirectory = $Root
-    $Start.UseShellExecute = $false
-    $Start.CreateNoWindow = $true
-    $Start.EnvironmentVariables.Remove('PYTHONHOME')
-    $Start.EnvironmentVariables.Remove('PYTHONPATH')
-    $Child = [Diagnostics.Process]::Start($Start)
-    # Keep maintenance serialized until the app owns its lock, even on slow startup.
-    try {
-        while (-not $Child.HasExited -and -not (Test-AppRunning)) { Start-Sleep -Milliseconds 100 }
-    } finally { $Child.Dispose() }
+    if ($Running) {
+        Write-RuntimeLog INFO 'FolderForge is running. Package changes deferred; no maintenance attempt recorded.'
+        if ($MaintenanceOnly) { $ExitCode = 2 }
+        else {
+            # A secondary start may use the still-running legacy environment only to
+            # reach the existing instance's health/recovery flow during migration.
+            if ($LegacyConsole -and (Test-Path -LiteralPath $LegacyConsole)) { $Console = $LegacyConsole }
+        }
+    } else {
+        if ($Due) {
+            if (Test-PythonBusy) {
+                Write-RuntimeLog INFO 'Shared Python is in use. Weekly maintenance deferred without stopping programs.'
+                if ($MaintenanceOnly) { $ExitCode = 2 }
+            } else {
+                # Record before network/mutation: repeated starts or offline failures
+                # must not perform repeated update rounds during the same week.
+                $State.LastAttemptPeriod = $Boundary.ToString('o')
+                $State.LastAttemptAt = (Get-Date).ToString('o')
+                $State.LastResult = 'running'
+                Save-RuntimeState $State
+                Write-RuntimeLog INFO 'Weekly shared Python/package maintenance started.'
+                if (-not $InstalledNow) {
+                    $Official = @($Registry | Where-Object { $_.Home -eq ([string]$Info.base).TrimEnd('\') })
+                    if ($Winget -and $Official.Count -gt 0) {
+                        $Upgrade = Invoke-Hidden $Winget.Source @('upgrade','--id',"Python.Python.$Series",'--exact','--source','winget','--scope',$Official[0].Scope,'--silent','--disable-interactivity','--accept-source-agreements','--accept-package-agreements')
+                        $ExitHex = '{0:X8}' -f ([long]$Upgrade.Code -band 4294967295)
+                        if ($Upgrade.Code -eq 0) { Write-RuntimeLog INFO 'Existing shared Python installation updated.' }
+                        elseif ($ExitHex -in @('8A15002B','8A15004F')) { Write-RuntimeLog INFO 'Shared Python is already current in its existing series.' }
+                        else { Write-CommandFailure 'Python upgrade' $Upgrade; Write-RuntimeLog WARNING 'Existing Python retained. No install fallback.' }
+                    } else { Write-RuntimeLog WARNING 'Existing Python cannot be upgraded safely with winget; no other Python is installed.' }
+                }
+                $Code = 'import sys,json; sys.path.insert(0,sys.argv[1]); import settings; print(json.dumps(sorted(set(p for p in settings.REQUIRED_PACKAGES.values() if p))))'
+                $Requirements = Invoke-Hidden $Console @('-c',$Code,$Root)
+                if ($Requirements.Code -ne 0) { throw 'Could not read app package requirements.' }
+                $Packages = @($Requirements.Out | ConvertFrom-Json)
+                if ($Packages.Count -eq 0 -or @($Packages | Where-Object { $_ -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]*$' }).Count -gt 0) { throw 'Invalid app package requirements.' }
+                $PipOptions = @('-m','pip','--isolated','--cache-dir',(Join-Path $Data 'python-pip-cache'))
+                $NetworkOptions = @('--disable-pip-version-check','--index-url','https://pypi.org/simple','--timeout','15','--retries','1')
+                $Pip = Invoke-Hidden $Console ($PipOptions + @('install','--upgrade','--upgrade-strategy','only-if-needed') + $NetworkOptions + @('pip') + $Packages)
+                if ($Pip.Code -ne 0) { Write-CommandFailure 'Shared package upgrade' $Pip; $State.LastResult = 'failed' }
+                elseif (-not (Test-Environment $Console)) { $State.LastResult = 'verification_failed' }
+                else {
+                    $State.LastResult = if ($script:RuntimeDependencyConflicts) { 'completed_with_conflicts' } else { 'completed' }
+                    Write-RuntimeLog INFO ('Weekly shared Python/package maintenance: ' + $State.LastResult)
+                }
+                Save-RuntimeState $State
+                if ($State.LastResult -in @('failed','verification_failed')) {
+                    Write-RuntimeLog ERROR 'Weekly shared-package maintenance failed. Review the error log; shared packages may have changed.'
+                    $ExitCode = 1
+                    if (-not $MaintenanceOnly -and -not (Test-Environment $Console)) { throw 'Shared packages failed validation after maintenance. Review the error log before restarting.' }
+                }
+            }
+        } else { Write-RuntimeLog INFO 'No weekly maintenance due; no online Python/package update check at this start.' }
+        if (-not $MaintenanceOnly) {
+            # Initial setup/migration may install missing packages, but pins all
+            # installed distributions: it cannot upgrade existing packages off-schedule.
+            $Probe = 'import sys,json,importlib.metadata as m; sys.path.insert(0,sys.argv[1]); import settings; names=sorted(set(p for p in settings.REQUIRED_PACKAGES.values() if p)); found={d.metadata["Name"].lower().replace("_","-") for d in m.distributions() if d.metadata["Name"]}; print(json.dumps([n for n in names if n.lower().replace("_","-") not in found]))'
+            $MissingResult = Invoke-Hidden $Console @('-c',$Probe,$Root)
+            if ($MissingResult.Code -ne 0) { throw 'Could not inspect required packages locally.' }
+            $Missing = @($MissingResult.Out | ConvertFrom-Json)
+            if ($Missing.Count -gt 0) {
+                if (Test-PythonBusy) { throw 'Required shared packages are missing, but Python is in use. Close Python programs and start FolderForge again.' }
+                $Pins = Join-Path $Data ('runtime-pins-' + [guid]::NewGuid().ToString('N') + '.txt')
+                try {
+                    $PinCode = 'import importlib.metadata as m; names=sorted({d.metadata["Name"] for d in m.distributions() if d.metadata["Name"]}); print("\n".join(n+"=="+m.version(n) for n in names))'
+                    $PinResult = Invoke-Hidden $Console @('-c',$PinCode)
+                    if ($PinResult.Code -ne 0) { throw 'Could not pin installed packages. No package installation attempted.' }
+                    [IO.File]::WriteAllText($Pins,$PinResult.Out,$Utf8NoBom)
+                    $HasPip = Invoke-Hidden $Console @('-m','pip','--version')
+                    if ($HasPip.Code -ne 0) {
+                        $Ensure = Invoke-Hidden $Console @('-m','ensurepip')
+                        if ($Ensure.Code -ne 0) { Write-CommandFailure 'Missing pip' $Ensure; throw 'pip is missing and could not be installed.' }
+                    }
+                    $Install = Invoke-Hidden $Console (@('-m','pip','--isolated','install','--constraint',$Pins,'--disable-pip-version-check','--index-url','https://pypi.org/simple','--timeout','15','--retries','1') + $Missing)
+                    if ($Install.Code -ne 0) { Write-CommandFailure 'Missing shared packages' $Install; throw 'Missing shared packages could not be installed without changing existing versions. See the error log.' }
+                    Write-RuntimeLog INFO 'Missing shared packages installed; existing versions were pinned and not upgraded.'
+                } finally { if (Test-Path -LiteralPath $Pins) { Remove-Item -LiteralPath $Pins } }
+            }
+        }
+    }
+    if (-not $MaintenanceOnly) {
+        $Windowless = Join-Path (Split-Path $Console) 'pythonw.exe'
+        if (-not (Test-Path -LiteralPath $Windowless -PathType Leaf)) { throw 'pythonw.exe is unavailable. Start aborted instead of opening a console.' }
+        if (-not $Running) {
+            # Refresh cached launchers too, so a later missing-Python start can bootstrap itself.
+            $BrandCode = 'import sys; from pathlib import Path; sys.path.insert(0,sys.argv[1]); from updater import ensure_launcher; ensure_launcher(Path(sys.argv[1]),Path(sys.argv[2]),Path(sys.argv[1])/"Icon"/"projektmapp.ico")'
+            try {
+                $Brand = Invoke-Hidden $Console @('-I','-c',$BrandCode,$Root,$Windowless)
+                if ($Brand.Code -ne 0) { Write-RuntimeLog WARNING 'Native launcher refresh failed; use Starta-FolderForge.vbs if needed.' }
+            } catch { Write-RuntimeLog WARNING 'Native launcher refresh failed; use Starta-FolderForge.vbs if needed.' }
+        }
+        $AppArgs = @('--tray')
+        if ($Arguments64) { $AppArgs = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Arguments64)).Split(@([char]0), [StringSplitOptions]::RemoveEmptyEntries)) }
+        $env:FOLDERFORGE_RUNTIME_READY = '1'
+        $env:FOLDERFORGE_RUNTIME_POLICY = 'weekly-shared'
+        $env:FOLDERFORGE_RUNTIME_SECONDARY = if ($Running) { '1' } else { '0' }
+        $Start = New-Object Diagnostics.ProcessStartInfo
+        $Start.FileName = $Windowless
+        $Start.Arguments = (Quote-Argument (Join-Path $Root 'folder.pyw')) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
+        $Start.WorkingDirectory = $Root
+        $Start.UseShellExecute = $false
+        $Start.CreateNoWindow = $true
+        $Start.EnvironmentVariables.Remove('PYTHONHOME')
+        $Start.EnvironmentVariables.Remove('PYTHONPATH')
+        $Child = [Diagnostics.Process]::Start($Start)
+        # Keep maintenance serialized until the app owns its lock, even on slow startup.
+        try {
+            while (-not $Child.HasExited -and -not (Test-AppRunning)) { Start-Sleep -Milliseconds 100 }
+        } finally { $Child.Dispose() }
+    }
 } catch {
     Write-RuntimeLog ERROR $_.Exception.Message
-    Add-Type -AssemblyName System.Windows.Forms
-    [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'FolderForge - Python check') | Out-Null
+    if ($State -and $State.LastResult -eq 'running') {
+        $State.LastResult = 'failed'
+        try { Save-RuntimeState $State } catch { }
+    }
+    if (-not $MaintenanceOnly) {
+        Add-Type -AssemblyName System.Windows.Forms
+        [Windows.Forms.MessageBox]::Show($_.Exception.Message, 'FolderForge - Python check') | Out-Null
+    }
     $ExitCode = 1
 } finally {
     if ($Held) { $Maintenance.ReleaseMutex() }

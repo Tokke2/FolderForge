@@ -2,49 +2,69 @@
 
 © 2026 Rickard Längkvist
 
-## Start med Python- och paketkontroll (Windows)
+## Python och gemensamma tillägg — veckovis, måndag kl. 08.00
 
-Dubbelklicka på **`Starta-FolderForge.vbs`** vid första start. Den startar
-`Starta-FolderForge.ps1` utan konsolfönster och fungerar även om Python saknas.
-Det egna `FolderForge.exe` och autostart använder sedan samma kontrollflöde.
-Direkt start av `folder.pyw` kopplas också vidare till kontrollen när Python
-redan finns. Interna omstarter och `--selftest` startar inte om kontrollrundan.
+Appen använder **befintlig gemensam Python och dess paket**, inte en egen
+venv. Inga nya privata Python-miljöer skapas. Tidigare appmiljöer används
+inte av den nya primära instansen och lämnas orörda på disk för manuell
+hantering. En extra start kan tillfälligt använda en fortfarande körande
+äldre instans miljö enbart för hälsokontroll/återställning under övergången.
 
-Vid varje extern start:
+**Python- och paketuppdateringar kontrolleras en gång i veckan, måndagar
+kl. 08.00 enligt datorns lokala klocka.** Det registreras som en uppgift för
+inloggad användare i Windows Schemaläggaren. Den startar utan konsolfönster
+via VBS och öppnar inte själva appen. Missad körning startar när det är
+möjligt efter att datorn/inloggningen är tillgänglig igen. Första planerade
+kontrollen ligger efter att veckoschemat aktiverats; historiska veckor körs
+inte vid första installationen.
 
-1. Sök efter befintlig Python via sparad appmiljö, vald tolk, register,
-   PATH, Microsoft Store och `py -0p`. Store-alias utan installerad tolk
-   räknas inte som Python. En trasig/otillgänglig befintlig installation ger
-   ett reparationsbesked, inte en parallell installation.
-2. Finns Python uppgraderas **samma serie** via winget när den kan identifieras
-   säkert: exempelvis senaste tillgängliga 3.13.x, inte en extra 3.14-installation.
-   Uppgraderingsfel leder aldrig till automatisk nyinstallation. Python måste
-   vara stabil och minst 3.11; en äldre befintlig serie behöver bytas uttryckligen.
-3. Bara om Python saknas installeras senaste stabila Python-serie som finns i
-   Microsofts winget-manifest, per användare. Prerelease-serier väljs inte.
-4. Kontrollera alla paket i `settings.REQUIRED_PACKAGES`, pip och kompatibla
-   beroendeuppdateringar. En skrivskyddad pip-plan avgör om något behöver ändras.
-   Paket uppdateras bara i appens egna miljö under `data/python-envs/`, aldrig
-   med global `pip install --upgrade` eller i andra projekts miljöer.
-5. En ny kandidatmiljö skapas bara vid behov, verifieras med importtest och
-   `pip check`, och aktiveras genom en atomisk pekare i `data/python-runtime.json`.
-   Tidigare fungerande miljö behålls. Vid nätverks-/uppdateringsfel används den
-   om den fortfarande är giltig. Utan fungerande miljö visas ett fel i stället
-   för att starta en trasig app. Gamla fungerande miljöer sparas tills vidare
-   som återställningsmöjlighet och kan ta diskutrymme.
+Vanliga starter söker **inte** efter nyare Python-/paketversioner. De väljer
+lokalt befintlig Python och kontrollerar att startnödvändiga paket finns.
+Om veckokontrollen är förfallen kan den tas igen vid nästa appstart. Ett
+veckoförsök sparas före nätverksanrop och upprepas inte vid varje start,
+heller inte om nätverket saknas. Ett misslyckat försök loggas och nästa
+ordinarie uppdateringsförsök sker följande vecka.
 
-En virtuell appmiljö är **inte en ny registrerad systeminstallation av Python**.
-Om FolderForge redan körs ändras inte dess paket. Om andra Python-processer
-körs uppgraderas inte Python-binärena. Kontrollen skjuts då upp utan att några
-processer avslutas. Loggar och fel skrivs under appens `logs/`.
+Om appen eller andra Python-processer körs skjuts ändringarna upp, utan
+att några processer avslutas. En uppskjuten körning räknas inte som veckans
+uppdateringsförsök. Schemaläggaren kan försöka igen var 15:e minut upp till
+tolv gånger vid upptagen Python; därefter finns återtagning vid nästa start.
+Inga nya nätverks-/paketuppdateringar körs under dessa rena väntelägen.
+Om schemaregistrering nekas av IT-policy används förfallen kontroll vid
+nästa vanliga start i stället. Datorn väcks inte av uppgiften.
 
-Windows App Installer/winget och internet behövs för att installera eller
-uppgradera Python. En befintlig tolk som winget inte säkert kan hantera behålls
-med besked i loggen; ingen annan tolk installeras som reserv. Administratörs-
-och företagspolicyer respekteras; nekad uppgradering kringgås inte. VBS,
-PowerShell och skriptkörning måste vara tillåtna av datorns IT-policy.
-Första kontrollen/uppdateringen kan göra starten långsammare. Windows-flödet
-behöver verifieras på Windows; Linux-tester och syntaxkontroll ersätter inte det.
+Vid veckounderhåll används winget **upgrade för samma befintliga Python-serie**,
+inte installation av en parallell serie. Uppgraderingsfel ger aldrig någon
+nyinstallation som reserv. Bara när Python faktiskt saknas får en stabil
+version installeras. En trasig, för gammal eller otillgänglig installation
+kräver reparation/uttryckligt byte, inte automatiskt en andra Python.
+
+Appens paket från `settings.REQUIRED_PACKAGES` och pip uppdateras i den
+**gemensamma** installationen med nödvändiga kompatibla beroenden.
+**Det kan påverka andra Python-program och det finns ingen isolerad
+kandidatmiljö eller automatisk miljöåterställning.** Fel och beroendekonflikter
+loggas. Övriga program avinstalleras eller stoppas aldrig. Konflikter mellan
+andra gemensamma paket rapporteras men blockerar inte appen om dess egna
+importer fortfarande fungerar.
+
+Saknad Python och saknade startnödvändiga paket kan installeras även vid
+första start — det är inte en uppdateringskontroll. När endast saknade
+paket installeras låses versionerna av redan installerade paket med
+constraints för att inte uppgradera dem utanför veckoschemat. Vid konflikt
+avbryts installationen med felbesked i stället för att ändra befintliga
+versioner. Andra Python-processer måste då vara stängda.
+
+Starta **`Starta-FolderForge.vbs`** om Python saknas. Eget `FolderForge.exe`,
+autostart och direkt `folder.pyw`-start använder samma startflöde.
+Interna omstarter och självtest startar ingen ny underhållsrunda; en gammal
+privat miljö migreras dock till gemensam Python vid nästa riktiga omstart.
+State/schemainformation sparas i `data/python-runtime.json`, alla loggar i
+`logs/`. Winget, internet och tillåtna Windows-skript behövs för installation
+eller uppgradering; inga rättigheter eller företagspolicyer kringgås.
+
+Detta veckoschema gäller **Python och tillägg**. FolderForges egen kontroll
+av GitHub-releaser behåller sitt separata 12-timmarsschema. Windows-flödet
+behöver verifieras på Windows; tester och syntaxkontroll ersätter inte det.
 
 ## Start i systemfältet
 

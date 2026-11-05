@@ -331,10 +331,13 @@ if __name__ == "__main__":
     if relaunch_without_console():
         sys.exit(0)
 
-    # External Windows starts check Python/packages before importing GUI packages.
+    # External Windows starts select shared Python and register weekly maintenance.
     # The marker is inherited only by this bootstrap's children/internal restarts.
     if (IS_WINDOWS and "--selftest" not in sys.argv
-            and os.environ.get("FOLDERFORGE_RUNTIME_READY") != "1"):
+            and (os.environ.get("FOLDERFORGE_RUNTIME_READY") != "1"
+                 or os.environ.get("FOLDERFORGE_RUNTIME_POLICY") != "weekly-shared"
+                 or (sys.prefix != sys.base_prefix
+                     and os.environ.get("FOLDERFORGE_RUNTIME_SECONDARY") != "1"))):
         from updater import launch_runtime_bootstrap
         try:
             launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
@@ -7359,6 +7362,13 @@ if __name__ == "__main__":
         if not recover_unresponsive_instance(_instance_lock, BASE_DIR / "folder.pyw"):
             logger.info("FolderForge körs redan — ingen ny instans eller fönstervisning.")
             sys.exit(0)
+    if IS_WINDOWS and sys.prefix != sys.base_prefix:
+        # Recovery of a legacy private instance must still migrate the new primary.
+        _instance_lock.release()
+        os.environ.pop("FOLDERFORGE_RUNTIME_SECONDARY", None)
+        from updater import launch_runtime_bootstrap
+        launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
+        sys.exit(0)
     # All start, även efter uppdatering, ska vara dold i systemfältet.
     _raw_start = read_json_safe(SETTINGS_FILE, {}) or {}
     _start_clean, _start_rep, _start_log = validate_settings(_raw_start)

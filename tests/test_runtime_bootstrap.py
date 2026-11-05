@@ -79,7 +79,7 @@ class RuntimeBootstrapTests(unittest.TestCase):
         self.assertLess(self.ps.index('Get-PythonInfo $Candidate'), install)
         self.assertLess(self.ps.index('if (-not $Info) {'), install)
         self.assertEqual(self.ps.count("@('install','--id'"), 1)
-        upgrade = self.ps[self.ps.index("@('upgrade','--id'"):self.ps.index('$Console = if ($State)')]
+        upgrade = self.ps[self.ps.index("@('upgrade','--id'"):self.ps.index("$Code = 'import sys,json; sys.path.insert(0,sys.argv[1]); import settings; print(json.dumps(sorted(set(p for p in settings.REQUIRED_PACKAGES.values() if p))))'", self.ps.index("@('upgrade','--id'"))]
         self.assertNotIn("@('install'", upgrade)
         self.assertIn('Python.Python.$Series', upgrade)
         self.assertIn('No install fallback', upgrade)
@@ -97,30 +97,32 @@ class RuntimeBootstrapTests(unittest.TestCase):
         for token in ['Stop-Process', 'taskkill', 'TerminateProcess']:
             self.assertNotIn(token, self.ps)
 
-    def test_package_check_is_read_only_and_updates_a_candidate_environment(self):
-        self.assertIn("'--dry-run','--report'", self.ps)
-        self.assertIn("'--upgrade-strategy','eager'", self.ps)
-        self.assertIn("'--isolated'", self.ps)
-        self.assertIn('settings.REQUIRED_PACKAGES.values()', self.ps)
-        self.assertIn("'https://pypi.org/simple'", self.ps)
-        self.assertIn('Test-Environment $CandidateConsole', self.ps)
-        self.assertIn('Save-RuntimeState $NewState', self.ps)
-        self.assertLess(self.ps.index('Test-Environment $CandidateConsole'), self.ps.index('Save-RuntimeState $NewState'))
-        self.assertNotIn('Remove-Item -Recurse', self.ps)
-        self.assertIn('previous verified environment retained', self.ps)
+    def test_weekly_updates_use_shared_python_without_creating_environment(self):
+        self.assertIn('$Console = [string]$Info.executable', self.ps)
+        self.assertNotIn("'-m','venv'", self.ps)
+        self.assertNotIn('python-envs', self.ps)
+        self.assertNotIn('CandidateConsole', self.ps)
+        self.assertIn("$PipOptions = @('-m','pip','--isolated'", self.ps)
+        self.assertIn("'--upgrade-strategy','only-if-needed'", self.ps)
+        self.assertIn('Test-Environment $Console', self.ps)
+        # Do not isolate Python's user-site: shared installs may live there.
+        environment_check = self.ps[self.ps.index('function Test-Environment'):self.ps.index('function Get-LatestStableSeries')]
+        self.assertNotIn("'-I'", environment_check)
 
-    def test_update_pointer_is_atomic_and_keeps_previous_environment(self):
+    def test_schedule_state_is_atomic_and_old_environment_is_not_deleted(self):
         self.assertIn('[IO.File]::Replace($Temp, $Path, $null)', self.ps)
         self.assertIn('[IO.File]::Move($Temp, $Path)', self.ps)
-        self.assertIn('Previous environment retained', self.ps)
+        self.assertNotIn('shutil.rmtree', self.ps)
+        self.assertNotIn('Remove-Item -Recurse', self.ps)
+        self.assertIn('LastAttemptPeriod', self.ps)
 
-    def test_logging_stays_under_app_logs_and_no_unrelated_pip_environment_is_changed(self):
+    def test_shared_package_operations_and_logs_remain_explicit(self):
         self.assertIn("$Logs = Join-Path $Root 'logs'", self.ps)
         self.assertIn('folderforge-errors.log', self.ps)
-        self.assertIn("$PipOptions = @('-I','-m','pip','--isolated'", self.ps)
-        self.assertNotIn('--user', self.ps)
+        self.assertIn("$PipOptions = @('-m','pip','--isolated'", self.ps)
         self.assertIn("$Start.EnvironmentVariables.Remove('PYTHONHOME')", self.ps)
         self.assertIn("$Start.EnvironmentVariables.Remove('PYTHONPATH')", self.ps)
+        self.assertIn("$env:FOLDERFORGE_RUNTIME_POLICY = 'weekly-shared'", self.ps)
 
     def test_every_external_start_but_not_selftest_or_internal_restart_checks_runtime(self):
         tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
@@ -156,5 +158,74 @@ class RuntimeBootstrapTests(unittest.TestCase):
     def test_runtime_command_failures_reach_central_logs_with_bounded_details(self):
         self.assertIn('function Write-CommandFailure', self.ps)
         self.assertIn('$Detail.Length -gt 4000', self.ps)
-        self.assertIn("Write-CommandFailure 'Candidate package installation' $Pip", self.ps)
+        self.assertIn("Write-CommandFailure 'Shared package upgrade' $Pip", self.ps)
         self.assertIn("Write-CommandFailure 'Python upgrade' $Upgrade", self.ps)
+
+    def test_weekly_task_runs_monday_eight_with_missed_run_catchup(self):
+        self.assertIn("-Weekly -WeeksInterval 1 -DaysOfWeek Monday -At '08:00'", self.ps)
+        self.assertIn('-StartWhenAvailable', self.ps)
+        self.assertIn('-LogonType Interactive -RunLevel Limited', self.ps)
+        self.assertIn(' -MaintenanceOnly', updater.RUNTIME_BOOTSTRAP_FILES['Starta-FolderForge.vbs'])
+        self.assertIn('if (-not $MaintenanceOnly)', self.ps)
+        self.assertIn('Get-WeeklyBoundary $Now', self.ps)
+
+    def test_weekly_attempt_is_recorded_before_network_operations(self):
+        due = self.ps.index('        if ($Due) {')
+        stamp = self.ps.index('$State.LastAttemptPeriod = $Boundary', due)
+        upgrade = self.ps.index("@('upgrade','--id'", due)
+        pip = self.ps.index("'install','--upgrade'", due)
+        self.assertLess(due, stamp)
+        self.assertLess(stamp, upgrade)
+        self.assertLess(stamp, pip)
+        self.assertIn('([datetime]$State.LastAttemptPeriod) -lt $Boundary', self.ps)
+        self.assertIn('No weekly maintenance due; no online Python/package update check at this start', self.ps)
+
+    def test_busy_deferral_does_not_mark_week_as_attempted(self):
+        due = self.ps.index('        if ($Due) {')
+        busy = self.ps.index('if (Test-PythonBusy)', due)
+        stamp = self.ps.index('$State.LastAttemptPeriod =', due)
+        self.assertLess(busy, stamp)
+        self.assertIn('if ($MaintenanceOnly) { $ExitCode = 2 }', self.ps)
+        self.assertIn('no maintenance attempt recorded', self.ps)
+
+    def test_initial_missing_only_installs_pin_existing_versions_without_upgrade(self):
+        start = self.ps.index('# Initial setup/migration')
+        end = self.ps.index('$Windowless = Join-Path', start)
+        initial = self.ps[start:end]
+        self.assertIn("'--constraint',$Pins", initial)
+        self.assertNotIn("'--upgrade'", initial)
+        self.assertIn("$Console @('-m','ensurepip')", initial)
+        self.assertIn('if (Test-PythonBusy)', initial)
+        self.assertIn('m.version(n)', initial)
+
+    def test_first_registration_does_not_run_historical_week_at_every_start(self):
+        self.assertIn('if (-not $State.WeeklyEnabledAt)', self.ps)
+        self.assertIn('$Boundary -ge ([datetime]$State.WeeklyEnabledAt)', self.ps)
+        self.assertIn('$Now.Date.AddDays(-$Days).AddHours(8)', self.ps)
+        self.assertIn('$Boundary = $Boundary.AddDays(-7)', self.ps)
+
+    def test_private_runtime_migrates_even_on_internal_restart_without_secondary_loop(self):
+        source = Path('folder.pyw').read_text(encoding='utf-8')
+        self.assertIn('sys.prefix != sys.base_prefix', source)
+        self.assertIn('os.environ.get("FOLDERFORGE_RUNTIME_POLICY") != "weekly-shared"', source)
+        self.assertIn('os.environ.get("FOLDERFORGE_RUNTIME_SECONDARY") != "1"', source)
+        self.assertIn('Recovery of a legacy private instance must still migrate', source)
+        self.assertIn('\n    if IS_WINDOWS and sys.prefix != sys.base_prefix:\n', source)
+
+    def test_scheduled_job_is_windowless_and_preserves_busy_exit_code(self):
+        self.assertIn("'wscript.exe'", self.ps)
+        self.assertIn('-Execute $WindowlessHost', self.ps)
+        vbs = updater.RUNTIME_BOOTSTRAP_FILES['Starta-FolderForge.vbs']
+        self.assertIn('shell.Run(command, 0, True)', vbs)
+        self.assertIn('WScript.Quit result', vbs)
+        self.assertIn('-MaintenanceOnly', vbs)
+
+    def test_scheduled_job_skips_already_handled_week_without_retry_loop(self):
+        self.assertIn('if ($MaintenanceOnly -and -not $Due)', self.ps)
+        self.assertIn('Weekly maintenance already handled or not yet due', self.ps)
+        self.assertIn('-DontStopIfGoingOnBatteries', self.ps)
+        self.assertIn('-ExecutionTimeLimit ([TimeSpan]::Zero)', self.ps)
+
+    def test_offline_weekly_failure_does_not_block_still_working_shared_imports(self):
+        self.assertIn("if (-not $MaintenanceOnly -and -not (Test-Environment $Console))", self.ps)
+        self.assertIn('completed_with_conflicts', self.ps)

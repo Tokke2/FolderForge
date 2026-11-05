@@ -1,9 +1,9 @@
 # FolderForge v0.0.2
 
 ## Ändringar
-- Python-/paketkontroll vid varje extern Windows-start. Återanvänd befintlig Python och uppgradera inom samma serie via winget; installera bara om Python saknas. Ingen installationsreserv vid misslyckad uppgradering.
-- Isolerade app-paket med kompatibel uppdateringsplan, verifierad kandidatmiljö och atomiskt byte; tidigare fungerande miljö behålls vid fel. Pågående app/andra Python-processer skyddas genom uppskjutna ändringar.
-- Nya konsolfria Starta-FolderForge.vbs/ps1 för start även utan Python. Branded exe/autostart och direkt pyw-start använder samma kontroll. Självtest/interna omstarter undantas.
+- Python-/paketkontroll en gång i veckan, måndagar kl. 08.00 lokalt, via konsolfri Windows-uppgift. Missad körning tas igen när möjligt; normal start gör ingen versions-/uppdateringssökning. Befintlig Python uppgraderas inom samma serie; installation bara om Python saknas.
+- Gemensam Python och gemensamma paket används, utan egen venv eller kandidatmiljö. Veckoförsök sparas för att undvika omkontroll vid varje start; ändringar skjuts upp när Python används. Saknade startpaket installeras separat med låsta befintliga versioner. Gemensamma uppdateringar kan påverka andra program.
+- Konsolfria Starta-FolderForge.vbs/ps1 för start även utan Python samt veckounderhåll utan att öppna appen. Branded exe/autostart och direkt pyw-start delar startflödet. Självtest/interna omstarter undantas.
 - Maskin tillagd bredvid Husbil och Lastbil i projektdialogen, med samma valfria enkelval och direkt förhandsvisning av mappnamnet.
 - Copyright Rickard Längkvist tydliggjord i Om FolderForge och README; befintlig sidfot behålls.
 - Hälsokontroll via färskt svar från Tk-loopen vid extra start. Windows kan efter strikt processidentifiering och uttrycklig varning/bekräftelse återstarta en instans som inte svarar; andra Python-program lämnas orörda. Ny instans måste ta det riktiga instanslåset och startar minimerad.
@@ -53,7 +53,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Saknas Py
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-231 automatiserade tester godkända och Python-syntax kontrollerad.
+240 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 
