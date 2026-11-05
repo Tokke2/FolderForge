@@ -1,6 +1,9 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Python-/paketkontroll vid varje extern Windows-start. Återanvänd befintlig Python och uppgradera inom samma serie via winget; installera bara om Python saknas. Ingen installationsreserv vid misslyckad uppgradering.
+- Isolerade app-paket med kompatibel uppdateringsplan, verifierad kandidatmiljö och atomiskt byte; tidigare fungerande miljö behålls vid fel. Pågående app/andra Python-processer skyddas genom uppskjutna ändringar.
+- Nya konsolfria Starta-FolderForge.vbs/ps1 för start även utan Python. Branded exe/autostart och direkt pyw-start använder samma kontroll. Självtest/interna omstarter undantas.
 - Maskin tillagd bredvid Husbil och Lastbil i projektdialogen, med samma valfria enkelval och direkt förhandsvisning av mappnamnet.
 - Copyright Rickard Längkvist tydliggjord i Om FolderForge och README; befintlig sidfot behålls.
 - Hälsokontroll via färskt svar från Tk-loopen vid extra start. Windows kan efter strikt processidentifiering och uttrycklig varning/bekräftelse återstarta en instans som inte svarar; andra Python-program lämnas orörda. Ny instans måste ta det riktiga instanslåset och startar minimerad.
@@ -46,11 +49,11 @@ version automatiskt.
 Status visas under Hjälp → Uppdateringsstatus.
 
 För manuell installation: ladda ned Source code (zip) under Assets och packa
-upp till en skrivbar plats. Python 3.11+ med Tkinter krävs; starta folder.pyw.
+upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Saknas Python installeras en stabil version via winget; befintlig Python återanvänds. Appen kräver Python 3.11+ med Tkinter.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-213 automatiserade tester godkända och Python-syntax kontrollerad.
+231 automatiserade tester godkända och Python-syntax kontrollerad.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

@@ -331,6 +331,18 @@ if __name__ == "__main__":
     if relaunch_without_console():
         sys.exit(0)
 
+    # External Windows starts check Python/packages before importing GUI packages.
+    # The marker is inherited only by this bootstrap's children/internal restarts.
+    if (IS_WINDOWS and "--selftest" not in sys.argv
+            and os.environ.get("FOLDERFORGE_RUNTIME_READY") != "1"):
+        from updater import launch_runtime_bootstrap
+        try:
+            launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
+        except Exception:
+            logger.exception("Kunde inte starta Python-/paketkontrollen")
+            sys.exit(1)
+        sys.exit(0)
+
     # M29c/v5.0 — --selftest får ALDRIG trigga beroendeinstallationen.
     #
     # check_and_install_requirements() visar en MODAL Tk-dialog och väntar på

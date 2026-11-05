@@ -2,6 +2,50 @@
 
 © 2026 Rickard Längkvist
 
+## Start med Python- och paketkontroll (Windows)
+
+Dubbelklicka på **`Starta-FolderForge.vbs`** vid första start. Den startar
+`Starta-FolderForge.ps1` utan konsolfönster och fungerar även om Python saknas.
+Det egna `FolderForge.exe` och autostart använder sedan samma kontrollflöde.
+Direkt start av `folder.pyw` kopplas också vidare till kontrollen när Python
+redan finns. Interna omstarter och `--selftest` startar inte om kontrollrundan.
+
+Vid varje extern start:
+
+1. Sök efter befintlig Python via sparad appmiljö, vald tolk, register,
+   PATH, Microsoft Store och `py -0p`. Store-alias utan installerad tolk
+   räknas inte som Python. En trasig/otillgänglig befintlig installation ger
+   ett reparationsbesked, inte en parallell installation.
+2. Finns Python uppgraderas **samma serie** via winget när den kan identifieras
+   säkert: exempelvis senaste tillgängliga 3.13.x, inte en extra 3.14-installation.
+   Uppgraderingsfel leder aldrig till automatisk nyinstallation. Python måste
+   vara stabil och minst 3.11; en äldre befintlig serie behöver bytas uttryckligen.
+3. Bara om Python saknas installeras senaste stabila Python-serie som finns i
+   Microsofts winget-manifest, per användare. Prerelease-serier väljs inte.
+4. Kontrollera alla paket i `settings.REQUIRED_PACKAGES`, pip och kompatibla
+   beroendeuppdateringar. En skrivskyddad pip-plan avgör om något behöver ändras.
+   Paket uppdateras bara i appens egna miljö under `data/python-envs/`, aldrig
+   med global `pip install --upgrade` eller i andra projekts miljöer.
+5. En ny kandidatmiljö skapas bara vid behov, verifieras med importtest och
+   `pip check`, och aktiveras genom en atomisk pekare i `data/python-runtime.json`.
+   Tidigare fungerande miljö behålls. Vid nätverks-/uppdateringsfel används den
+   om den fortfarande är giltig. Utan fungerande miljö visas ett fel i stället
+   för att starta en trasig app. Gamla fungerande miljöer sparas tills vidare
+   som återställningsmöjlighet och kan ta diskutrymme.
+
+En virtuell appmiljö är **inte en ny registrerad systeminstallation av Python**.
+Om FolderForge redan körs ändras inte dess paket. Om andra Python-processer
+körs uppgraderas inte Python-binärena. Kontrollen skjuts då upp utan att några
+processer avslutas. Loggar och fel skrivs under appens `logs/`.
+
+Windows App Installer/winget och internet behövs för att installera eller
+uppgradera Python. En befintlig tolk som winget inte säkert kan hantera behålls
+med besked i loggen; ingen annan tolk installeras som reserv. Administratörs-
+och företagspolicyer respekteras; nekad uppgradering kringgås inte. VBS,
+PowerShell och skriptkörning måste vara tillåtna av datorns IT-policy.
+Första kontrollen/uppdateringen kan göra starten långsammare. Windows-flödet
+behöver verifieras på Windows; Linux-tester och syntaxkontroll ersätter inte det.
+
 ## Start i systemfältet
 
 Appen startar alltid minimerad i systemfältet utan att huvudfönstret
@@ -20,7 +64,8 @@ start visar inte automatiskt en redan körande app.
 - Uppdateringen hämtas i bakgrunden och installeras automatiskt **vid nästa
   appstart**. Ingen pågående session avbryts.
 - Releasens källkodsarkiv måste innehålla `folder.pyw`, `settings.py`,
-  `historik.py`, `logg.py`, `updater.py` och `cache_cleanup.py`. Pythonfiler syntaxkontrolleras
+  `historik.py`, `logg.py`, `updater.py`, `cache_cleanup.py`,
+  `Starta-FolderForge.ps1` och `Starta-FolderForge.vbs`. Pythonfiler syntaxkontrolleras
   innan installation. Ikoner i `Icon/` följer också med.
 - Användardata i `data/` och Git-filer skrivs inte över. Tidigare appfiler
   sparas i `data/update-backup/`; skrivfel under installation återställs.
@@ -435,3 +480,9 @@ snapshot som du faktiskt granskade används för arkiveringen; nya fel under
 bekräftelsen kan alltså inte kvitteras av misstag. Pollningen stoppas när
 fönstret stängs. Tillfälliga läsfel ger ett diskret besked och nytt försök,
 inte upprepade dialogrutor.
+
+
+Utveckling: efter ändringar i startskripten körs
+`python tools/sync_runtime_bootstrap.py`. Det uppdaterar återställningskopian
+i `updater.py`, så äldre sexfilersinstallationer också får de nya startfilerna.
+Tester kontrollerar att skripten och den inbäddade kopian överensstämmer.
