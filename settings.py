@@ -133,6 +133,8 @@ PACKAGE_PURPOSE: Final[Dict[str, str]] = {
 SETTINGS_SCHEMA: Final[Dict[str, Tuple[type, Any]]] = {
     "save_root": (str, ""),                 # rotmapp för nya projekt
     "open_after_creation": (bool, True),    # öppna Utforskaren efter skapande
+    "text_size": (str, "100%"),            # text och kontroller skalas tillsammans
+    "high_contrast": (bool, False),
     "theme": (str, "Dark"),                 # se SETTINGS_ENUMS nedan
     "default_template": (str, "Skaderapport"), # sparad standardmall
     "last_template": (str, ""),             # senast använda mall
@@ -144,6 +146,7 @@ SETTINGS_SCHEMA: Final[Dict[str, Tuple[type, Any]]] = {
 # Tillåtna värden för inställningar som är uppräkningar.
 SETTINGS_ENUMS: Final[Dict[str, Sequence[str]]] = {
     "theme": ("System", "Dark", "Light"),
+    "text_size": ("100%", "110%", "125%", "150%"),
 }
 
 
@@ -153,6 +156,14 @@ SETTINGS_ENUMS: Final[Dict[str, Sequence[str]]] = {
 # En enda källa: vill du ändra en etikett eller hjälptext ändrar du HÄR —
 # fönstret hämtar sin text via appens _settings_option()-hjälp.
 SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
+    "text_size": {
+        "label": "Text och gränssnittsstorlek",
+        "beskrivning": "Text, knappar och avstånd förstoras tillsammans. Ändringen gäller direkt.",
+    },
+    "high_contrast": {
+        "label": "Hög kontrast",
+        "beskrivning": "Svarta ytor, vit text och tydlig fokusmarkering. Kan kombineras med alla teman.",
+    },
     "save_root": {
         "label": "Spara projekt i",
         "beskrivning": "Rotmappen där nya projektmappar skapas.",

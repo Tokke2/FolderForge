@@ -2,6 +2,40 @@
 
 © 2026 Rickard Längkvist
 
+## Tillgänglighet: tangentbord, textstorlek och hög kontrast
+
+Under **Inställningar → Tillgänglighet** väljer du **100, 110, 125 eller
+150 procent** samt **Hög kontrast**. Valen gäller direkt och sparas mellan
+starter. Text, knappar och avstånd förstoras tillsammans, ovanpå datorns
+vanliga DPI-anpassning. Hög kontrast använder svarta ytor, vit text, tydliga
+knappkanter och gul fokusmarkering. Färgade val/knappar behåller en avvikande
+mörkblå yta; radioknappar, kryssrutor och rullningslister förblir synliga.
+Det vanliga temat kan fortfarande ändras och återställs när hög kontrast
+stängs av.
+
+| Tangent | Funktion |
+| --- | --- |
+| Tab / Skift+Tab | Nästa/föregående synliga kontroll i visuell ordning |
+| Enter / mellanslag | Aktivera fokuserad knapp, kryssruta eller radioknapp |
+| Alt+ned | Öppna en vallista; välj med listans vanliga piltangenter/Enter |
+| Ctrl+Page Up / Page Down | Byt mellan synliga sidor i huvudfönstret |
+| Page Up / Page Down | Rulla närliggande område utanför textfält/redigerare |
+| Ctrl+Tab i textredigerare | Infoga en riktig tabb, eftersom Tab flyttar fokus |
+| Skift+F10 på en sidoknapp | Öppna sidans snabbmeny |
+
+Tabbningen hoppar över dolda/inaktiva åtgärder, stannar inom en modal dialog
+och rullar fram fokuserade kontroller. Skrivskyddade textdetaljer går fortfarande
+att fokusera för läsning/kopiering. Textfält behåller sin vanliga Enter- och
+mellanslagsfunktion. Sidomenyn går att rulla även i korta fönster; infällda
+sidoknappar visar sitt fullständiga namn vid tangentbordsfokus eller pekning.
+Långa texter/knapptexter radbryts och knappar kan växa i höjd vid behov.
+
+Windows egna fil-/meddelandedialoger följer systemets tillgänglighetsinställningar.
+Detta innebär inte utlovat fullständigt skärmläsarstöd eller WCAG-certifiering.
+Tangentbordslogik, inställningar och kontraståterställning testas automatiskt
+utan bildskärm; faktisk layout/fokus på Windows behöver fortfarande verifieras,
+särskilt med stor text, olika DPI och små fönster.
+
 ## Python och gemensamma tillägg — veckovis, måndag kl. 08.00
 
 Appen använder **befintlig gemensam Python och dess paket**, inte en egen

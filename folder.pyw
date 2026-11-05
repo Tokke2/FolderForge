@@ -121,6 +121,8 @@ import re
 import shutil
 import threading
 import logging
+import weakref
+from types import SimpleNamespace
 import atexit
 import ctypes
 import math
@@ -1748,11 +1750,345 @@ class NameValidator:
 # ============================================================
 # Dataklasser
 # ============================================================
+# Tillgänglighet: tangentbord, textstorlek och reversibel hög kontrast
+# ============================================================
+accessibility_logger = logging.getLogger("accessibility")
+TEXT_SIZES = SETTINGS_ENUMS["text_size"]
+FOCUS_TAG = "FolderForgeAccessible"
+CONTROLS = {"CTkButton", "CTkEntry", "CTkTextbox", "CTkCheckBox",
+            "CTkRadioButton", "CTkOptionMenu", "CTkComboBox"}
+COLOR_KEYS = ("fg_color", "text_color", "text_color_disabled", "border_color",
+              "hover_color", "button_color", "button_hover_color",
+              "checkmark_color", "placeholder_text_color", "progress_color")
+
+
+def text_scale(value):
+    return int(value[:-1]) / 100 if value in TEXT_SIZES else 1.0
+
+
+def widget_kind(widget):
+    return next((cls.__name__ for cls in type(widget).__mro__
+                 if cls.__name__ in CONTROLS | {"CTk", "CTkToplevel", "CTkFrame",
+                                               "CTkLabel", "CTkSegmentedButton", "CTkScrollableFrame",
+                                               "CTkScrollbar", "CTkProgressBar", "DropdownMenu"}), "")
+
+
+def contrast_colors(kind, baseline, colorful=False):
+    """Black/white surfaces; blue retains filled/selected button distinction."""
+    colors = {}
+    for key, value in baseline.items():
+        if key == "fg_color":
+            colors[key] = ("transparent" if value == "transparent" else
+                           "#FFFFFF" if kind == "CTkRadioButton" else
+                           "#003B70" if kind == "CTkButton" and colorful else "#000000")
+        elif key in {"hover_color", "button_hover_color"}:
+            colors[key] = "#333333"
+        elif key == "button_color":
+            colors[key] = "#FFFFFF" if kind == "CTkScrollbar" else "#003B70"
+        elif key == "border_width":
+            colors[key] = 2
+        elif key in {"text_color_disabled", "placeholder_text_color"}:
+            colors[key] = "#BBBBBB"
+        else:
+            colors[key] = "#FFFFFF"
+    return colors
+
+
+class AccessibilityController:
+    def __init__(self, root, ctk, high_contrast=False, size="100%"):
+        self.root, self.ctk = root, ctk
+        self.high_contrast, self.size = bool(high_contrast), size
+        self._focus = None
+        self._highlight = {}
+        for sequence, callback in {
+            "<Tab>": lambda e: self.move_focus(e, 1),
+            "<Shift-Tab>": lambda e: self.move_focus(e, -1),
+            "<ISO_Left_Tab>": lambda e: self.move_focus(e, -1),
+            "<Return>": self.activate, "<space>": self.activate,
+            "<Alt-Down>": self.open_choices,
+            "<Prior>": lambda e: self.scroll_page(e, -1),
+            "<Next>": lambda e: self.scroll_page(e, 1),
+            "<Control-Tab>": self.insert_tab,
+            "<FocusIn>": self.focus_in, "<FocusOut>": self.focus_out,
+        }.items():
+            root.bind_class(FOCUS_TAG, sequence, callback, add="+")
+        root.bind_all("<Map>", self.on_map, add="+")
+        self.refresh()
+
+    def walk(self, widget):
+        yield widget
+        for child in widget.winfo_children():
+            yield from self.walk(child)
+
+    def owner(self, widget):
+        while widget is not None:
+            if widget_kind(widget) in CONTROLS:
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
+    def scope(self, widget):
+        grabbed = self.root.grab_current()
+        return (grabbed or widget).winfo_toplevel()
+
+    def candidates(self, scope):
+        window = scope.winfo_toplevel()
+        def visit(widget):
+            if not widget.winfo_viewable() or widget.winfo_toplevel() != window:
+                return
+            if widget_kind(widget) in CONTROLS:
+                try:
+                    disabled = str(widget.cget("state")) == "disabled"
+                except Exception:
+                    disabled = False
+                if not disabled or widget_kind(widget) == "CTkTextbox":
+                    yield widget
+                return  # One tab stop, not each internal Canvas/Label/Entry.
+            for child in sorted(widget.winfo_children(), key=lambda w: (w.winfo_y(), w.winfo_x())):
+                yield from visit(child)
+        return list(visit(scope))
+
+    def move_focus(self, event, direction):
+        controls = self.candidates(self.scope(event.widget))
+        if controls:
+            current = self.owner(event.widget)
+            index = controls.index(current) if current in controls else (-1 if direction > 0 else 0)
+            target = controls[(index + direction) % len(controls)]
+            target.focus_set()
+            self.reveal(target)
+            return "break"
+        return None
+
+    def activate(self, event):
+        if getattr(self.root, "recording_hotkey", False) or getattr(event, "state", 0) & (4 | 8 | 128 | 131072):
+            return None
+        widget = self.owner(event.widget)
+        kind = widget_kind(widget)
+        if kind not in {"CTkButton", "CTkCheckBox", "CTkRadioButton", "CTkOptionMenu"}:
+            return None  # Preserve entry Return actions and normal text editing.
+        if str(widget.cget("state")) != "disabled":
+            if kind == "CTkCheckBox":
+                widget.toggle()
+            elif kind == "CTkOptionMenu":
+                self.open_choices(event)
+            else:
+                widget.invoke()
+        return "break"  # Do not also invoke a dialog's default Return action.
+
+    def open_choices(self, event):
+        widget = self.owner(event.widget)
+        if widget_kind(widget) in {"CTkOptionMenu", "CTkComboBox"}:
+            if str(widget.cget("state")) != "disabled":
+                widget._open_dropdown_menu()
+            return "break"
+        return None
+
+    def scroll_page(self, event, direction):
+        widget = self.owner(event.widget)
+        if widget_kind(widget) in {"CTkEntry", "CTkTextbox", "CTkComboBox"}:
+            return None  # Native cursor/selection and editor scrolling stay intact.
+        parent = getattr(widget, "master", None)
+        while parent is not None:
+            if widget_kind(parent) == "CTkScrollableFrame":
+                parent._parent_canvas.yview_scroll(direction, "pages")
+                return "break"
+            parent = getattr(parent, "master", None)
+        return None
+
+    def insert_tab(self, event):
+        if widget_kind(self.owner(event.widget)) == "CTkTextbox":
+            event.widget.insert("insert", "\t")
+            return "break"
+        return None
+
+    def focus_in(self, event):
+        if self.owner(event.widget) is None:
+            return
+        self.focus_out(None)
+        widget = event.widget
+        try:
+            self._highlight = {key: widget.cget(key) for key in
+                               ("highlightthickness", "highlightcolor", "highlightbackground")}
+            color = "#FFD54F" if self.high_contrast or self.ctk.get_appearance_mode() == "Dark" else "#005FCC"
+            widget.configure(highlightthickness=2, highlightcolor=color, highlightbackground=color)
+            self._focus = weakref.ref(widget)
+            self.reveal(self.owner(widget))
+        except Exception:
+            accessibility_logger.debug("Could not highlight focus", exc_info=True)
+
+    def focus_out(self, event):
+        widget = self._focus() if self._focus else None
+        if widget is not None:
+            try:
+                widget.configure(**self._highlight)
+            except Exception:
+                pass  # A dialog can be destroyed while its control owns focus.
+        self._focus, self._highlight = None, {}
+
+    def reveal(self, widget):
+        """Scroll focused controls into view, including nested dialog bodies."""
+        parent = getattr(widget, "master", None)
+        while parent is not None:
+            if widget_kind(parent) == "CTkScrollableFrame":
+                try:
+                    canvas = parent._parent_canvas
+                    top = canvas.canvasy(0)
+                    y = widget.winfo_rooty() - parent.winfo_rooty()
+                    if y < top or y + widget.winfo_height() > top + canvas.winfo_height():
+                        canvas.yview_moveto(max(0, y - 15) / max(1, parent.winfo_height()))
+                except Exception:
+                    accessibility_logger.debug("Could not reveal focused control", exc_info=True)
+            parent = getattr(parent, "master", None)
+
+    def on_map(self, event):
+        # Covers later-created dialogs, refreshed history rows and sidebar buttons.
+        self.prepare(event.widget)
+
+    def colorful(self, widget, value):
+        try:
+            if isinstance(value, (tuple, list)):
+                value = value[self.ctk.get_appearance_mode() == "Dark"]
+            rgb = widget.winfo_rgb(value)
+            return max(rgb) - min(rgb) > 30 * 257
+        except Exception:
+            return False
+
+    def prepare(self, widget):
+        kind = widget_kind(widget)
+        if self.owner(widget) is not None and kind != "DropdownMenu" and not any(cls.__name__ == "Menu" for cls in type(widget).__mro__):
+            tags = widget.bindtags()
+            if FOCUS_TAG not in tags:
+                widget.bindtags((FOCUS_TAG,) + tags)
+        if kind == "CTkScrollableFrame":
+            # Its colors are delegated to a separate CTkFrame. Keep one desired
+            # palette, not a second snapshot of the already contrast-mapped colors.
+            self.prepare(widget._parent_frame)
+            desired = widget._parent_frame._ff_accessible_colors
+            widget.configure(fg_color=desired["fg_color"])
+            return
+        if kind and not hasattr(widget, "_ff_accessible_colors"):
+            baseline = {}
+            for key in COLOR_KEYS + (("activeforeground", "disabledforeground") if kind == "DropdownMenu" else ()) + (("border_width",) if kind in {"CTkButton", "CTkEntry"} else ()):
+                try:
+                    value = widget.cget(key)
+                    if value is not None:
+                        baseline[key] = value
+                except Exception:
+                    pass
+            widget._ff_accessible_colors = baseline
+            original = widget.configure
+            ref = weakref.ref(widget)
+
+            def configure(*args, **kwargs):
+                target = ref()
+                if target is not None:
+                    baseline.update({key: value for key, value in kwargs.items() if key in baseline})
+                    if self.high_contrast:
+                        mapped = contrast_colors(kind, baseline, self.colorful(target, baseline.get("fg_color")))
+                        kwargs.update({key: mapped[key] for key in kwargs if key in mapped})
+                if target is not None and kind == "CTkButton" and "height" in kwargs:
+                    target._ff_accessible_height = kwargs["height"]
+                result = original(*args, **kwargs)
+                if target is not None and "text" in kwargs and kind == "CTkButton":
+                    self.wrap_button(target)
+                return result
+
+            widget.configure = configure
+            widget._ff_accessible_configure = original
+            if kind == "CTkButton":
+                widget._ff_accessible_height = widget.cget("height")
+                # Weighted grid columns may shrink; long captions wrap instead of
+                # imposing the button's default 140px minimum on narrow dialogs.
+                if widget.winfo_manager() == "grid" and {"e", "w"}.issubset(str(widget.grid_info().get("sticky", ""))):
+                    original(width=30)
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_button(w), add="+")
+            if kind in {"CTkCheckBox", "CTkRadioButton"}:
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_toggle(w), add="+")
+            if kind == "CTkLabel":
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_label(w), add="+")
+        if kind and hasattr(widget, "_ff_accessible_configure"):
+            baseline = widget._ff_accessible_colors
+            colors = contrast_colors(kind, baseline, self.colorful(widget, baseline.get("fg_color"))) if self.high_contrast else baseline
+            widget._ff_accessible_configure(**colors)
+        if type(widget).__name__ == "Menu":
+            self.style_menu(widget)
+
+    def wrap_label(self, widget):
+        try:
+            if len(str(widget.cget("text"))) > 40:
+                width = max(60, widget.winfo_width() / widget._get_widget_scaling() - 12)
+                if abs(float(widget.cget("wraplength")) - width) > 2:
+                    widget.configure(wraplength=width)
+        except Exception:
+            accessibility_logger.debug("Could not wrap label", exc_info=True)
+
+    def wrap_toggle(self, widget):
+        try:
+            width = max(40, widget.winfo_width() - widget._canvas.winfo_width()
+                        - 10 * widget._get_widget_scaling())
+            widget._text_label.configure(wraplength=width)
+        except Exception:
+            accessibility_logger.debug("Could not wrap toggle caption", exc_info=True)
+
+    def wrap_button(self, widget):
+        try:
+            label = widget._text_label
+            if label is None:
+                return
+            scale = widget._get_widget_scaling()
+            label.configure(wraplength=max(20, widget.winfo_width() - 20 * scale))
+            needed = max(widget._ff_accessible_height, label.winfo_reqheight() / scale + 12)
+            if abs(widget.cget("height") - needed) >= 1:
+                widget._ff_accessible_configure(height=needed)
+        except Exception:
+            accessibility_logger.debug("Could not wrap button", exc_info=True)
+
+    def style_menu(self, widget):
+        from tkinter import font
+        if not hasattr(widget, "_ff_menu_colors"):
+            widget._ff_menu_colors = {key: widget.cget(key) for key in
+                                      ("background", "foreground", "activebackground", "activeforeground", "disabledforeground")}
+            widget._ff_menu_font = font.Font(root=self.root, font=widget.cget("font")).actual()
+            original_configure = widget.configure
+            widget._ff_menu_configure = original_configure
+            def configure(*args, **kwargs):
+                for short, full in (("bg", "background"), ("fg", "foreground")):
+                    if short in kwargs:
+                        kwargs[full] = kwargs.pop(short)
+                widget._ff_menu_colors.update({k: v for k, v in kwargs.items() if k in widget._ff_menu_colors})
+                if self.high_contrast:
+                    mapped = dict(background="#000000", foreground="#FFFFFF", activebackground="#003B70",
+                                  activeforeground="#FFFFFF", disabledforeground="#BBBBBB")
+                    kwargs.update({k: mapped[k] for k in kwargs if k in mapped})
+                return original_configure(*args, **kwargs)
+            widget.configure = configure
+        colors = widget._ff_menu_colors.copy()
+        if self.high_contrast:
+            colors.update(background="#000000", foreground="#FFFFFF", activebackground="#003B70",
+                          activeforeground="#FFFFFF", disabledforeground="#BBBBBB")
+        original = widget._ff_menu_font
+        widget._ff_menu_configure(**colors, font=(original["family"], round(original["size"] * text_scale(self.size)), original["weight"]))
+
+    def refresh(self, high_contrast=None, size=None):
+        if high_contrast is not None:
+            self.high_contrast = bool(high_contrast)
+        if size is not None:
+            self.size = size if size in TEXT_SIZES else "100%"
+        focused = self.root.focus_get()
+        self.focus_out(None)
+        for widget in self.walk(self.root):
+            self.prepare(widget)
+        if focused is not None:
+            self.focus_in(SimpleNamespace(widget=focused))
+
+# ============================================================
 @dataclass
 class AppSettings:
     save_root: str = field(default_factory=lambda: str(Path.home() / "Projects"))
     open_after_creation: bool = True
     theme: str = "Dark"
+    text_size: str = "100%"
+    high_contrast: bool = False
     default_template: str = "Skaderapport"
     last_template: str = ""
     plate_mode: bool = True
@@ -1781,6 +2117,8 @@ class AppSettings:
             save_root=data.get("save_root", str(Path.home() / "Projects")),
             open_after_creation=data.get("open_after_creation", True),
             theme=data.get("theme", "Dark"),
+            text_size=data.get("text_size", "100%"),
+            high_contrast=data.get("high_contrast", False),
             default_template=data.get("default_template", "Skaderapport"),
             last_template=data.get("last_template", ""),
             plate_mode=data.get("plate_mode", True),
@@ -3852,6 +4190,8 @@ class DynamicTabView(ctk.CTkFrame):
                 side="bottom", fill="x",
                 padx=scaled(6, scale), pady=scaled(6, scale),
             )
+            self._nav_scroll = ctk.CTkScrollableFrame(self._tab_bar, fg_color="transparent", width=bredd)
+            self._nav_scroll.pack(side="top", fill="both", expand=True)
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.pack(side="left", fill="both", expand=True)
         else:
@@ -3957,6 +4297,7 @@ class DynamicTabView(ctk.CTkFrame):
         """
         if self._layout != "sidebar":
             return
+        self._dolj_tip()
         self._collapsed = bool(collapsed)
         try:
             self._tab_bar.configure(
@@ -4046,7 +4387,7 @@ class DynamicTabView(ctk.CTkFrame):
             btn_text = f"{icon} {name}"
 
         btn = ctk.CTkButton(
-            self._tab_bar,
+            self._nav_scroll if self._layout == "sidebar" else self._tab_bar,
             text=btn_text,
             command=lambda n=name: self.show_tab(n),
             **self._button_kwargs(name, selected=False),
@@ -4055,6 +4396,9 @@ class DynamicTabView(ctk.CTkFrame):
         # Bindningen är ofarlig i utfällt läge eftersom tipset blir tomt.
         btn.bind("<Enter>", lambda e, n=name: self._visa_tip(n))
         btn.bind("<Leave>", lambda e: self._dolj_tip())
+        btn.bind("<FocusIn>", lambda e, n=name: self._visa_tip(n), add="+")
+        btn.bind("<FocusOut>", lambda e: self._dolj_tip(), add="+")
+        btn.bind("<Shift-F10>", lambda e, n=name: self._keyboard_tab_menu(e, n), add="+")
         self._tab_buttons[name] = btn
         btn.bind("<Button-3>", lambda e, n=name: self._right_click_tab(e, n))
         self._rebuild_tab_bar()
@@ -4079,29 +4423,32 @@ class DynamicTabView(ctk.CTkFrame):
                 )
 
     def _visa_tip(self, name: str) -> None:
-        """Visa verktygstips i kollapsat läge (där etiketten inte syns)."""
+        """A readable overlay, also on keyboard focus; do not stretch icon buttons."""
+        self._dolj_tip()
         if self._layout != "sidebar" or not self._collapsed:
             return
-        it = self._sidebar_items.get(name)
-        if it is None:
+        item = self._sidebar_items.get(name)
+        if item is None:
             return
-        try:
-            self._tab_buttons[name].configure(text=it.icon + "  " + it.label)
-        except Exception:
-            logger.debug("Verktygstips kunde inte visas", exc_info=True)
+        window = self.winfo_toplevel()
+        button = self._tab_buttons[name]
+        tip = ctk.CTkLabel(window, text=item.label, fg_color=UI_SURFACE,
+                          text_color=UI_TEXT, corner_radius=6, padx=10, pady=6)
+        self._tip_label = tip
+        tip.update_idletasks()
+        x = min(button.winfo_rootx() - window.winfo_rootx() + button.winfo_width() + 6,
+                max(0, window.winfo_width() - tip.winfo_reqwidth() - 4))
+        y = min(button.winfo_rooty() - window.winfo_rooty(),
+                max(0, window.winfo_height() - tip.winfo_reqheight() - 4))
+        factor = tip._get_widget_scaling()
+        tip.place(x=max(0, x) / factor, y=max(0, y) / factor)
+        tip.lift()
 
     def _dolj_tip(self) -> None:
-        """Återställ ikon-only-visningen efter hover."""
-        if self._layout != "sidebar" or not self._collapsed:
-            return
-        for namn, btn in self._tab_buttons.items():
-            it = self._sidebar_items.get(namn)
-            if it is None:
-                continue
-            try:
-                btn.configure(text=it.display_text(True))
-            except Exception:
-                logger.debug("Verktygstips kunde inte döljas", exc_info=True)
+        tip = getattr(self, "_tip_label", None)
+        if tip is not None:
+            tip.destroy()
+            self._tip_label = None
 
     def show_tab(self, name: str) -> None:
         if not self._settings.visible_tabs.get(name, True):
@@ -4120,6 +4467,13 @@ class DynamicTabView(ctk.CTkFrame):
                 btn.configure(**self._button_kwargs(n, selected=(n == name)))
             except Exception:
                 logger.debug("Knappfärg kunde inte uppdateras", exc_info=True)
+
+    def _keyboard_tab_menu(self, event, name):
+        button = self._tab_buttons[name]
+        event.x_root = button.winfo_rootx()
+        event.y_root = button.winfo_rooty() + button.winfo_height()
+        self._right_click_tab(event, name)
+        return "break"
 
     def _right_click_tab(self, event: tk.Event, name: str) -> None:
         # M14/v5.0 steg 4 — högerklicksmenyn hade en EGEN hårdkodad färg
@@ -4446,16 +4800,21 @@ class FolderForgeApp(_DnDCTkBase):
 
         ctk.set_appearance_mode(self.settings.theme)
         ctk.set_default_color_theme("blue")
+        ctk.set_widget_scaling(text_scale(self.settings.text_size))
 
         self._configure_window()
         self._build_menu()
         self._create_gui()
         self._update_ui_from_settings()
+        self._accessibility = AccessibilityController(
+            self, ctk, self.settings.high_contrast, self.settings.text_size)
+        self.bind_class(FOCUS_TAG, "<Control-Next>", lambda e: self._keyboard_page(e, 1), add="+")
+        self.bind_class(FOCUS_TAG, "<Control-Prior>", lambda e: self._keyboard_page(e, -1), add="+")
         self._setup_global_hotkey()
         self._toggle_autostart(self.autostart_var.get(), initial=True)
 
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_systray)
-        self.bind("<Configure>", self._on_resize)
+        self.bind("<Configure>", self._on_resize, add="+")
         self.bind("<Unmap>", self._on_window_unmap, add="+")
         self.bind_all("<Map>", self._on_window_mapped, add="+")
         self.after(1000, self._refresh_update_controls)
@@ -4725,7 +5084,7 @@ class FolderForgeApp(_DnDCTkBase):
             self, settings=self.settings, scale=s,
             on_visibility_change=self._on_tab_visibility_changed,
             layout="sidebar",
-            collapsed=should_collapse_sidebar(_bredd, s),
+            collapsed=should_collapse_sidebar(_bredd / text_scale(self.settings.text_size) if _bredd else None, s),
         )
         # Ökat andrum runt innehållet: 15→20 px i sidled och 6→12 px uppåt.
         # Tillsammans med sidebarn är detta det som gör korten större — de får
@@ -4761,7 +5120,7 @@ class FolderForgeApp(_DnDCTkBase):
         # Footer
         footer = ctk.CTkFrame(
             self, fg_color=UI_SURFACE,
-            corner_radius=0, height=scaled(34, s),
+            corner_radius=0, height=scaled(42, s),
         )
         footer.pack(fill="x", side="bottom")
         footer.pack_propagate(False)
@@ -5146,6 +5505,25 @@ class FolderForgeApp(_DnDCTkBase):
             height=scaled(34, s),
         ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(12, s)))
 
+        self._card(scroll, title="Tillgänglighet", color=ACCENT_BLUE)
+        ctk.CTkLabel(scroll, text=SETTINGS_META["text_size"]["label"], anchor="w").pack(
+            fill="x", padx=scaled(15, s), pady=(0, 4))
+        self.text_size_var = ctk.StringVar(value=self.settings.text_size)
+        ctk.CTkOptionMenu(scroll, values=list(TEXT_SIZES), variable=self.text_size_var,
+                          command=lambda _v: self._change_accessibility()).pack(
+            fill="x", padx=scaled(15, s), pady=(0, 8))
+        ctk.CTkLabel(scroll, text=SETTINGS_META["text_size"]["beskrivning"],
+                     justify="left", anchor="w", wraplength=300).pack(fill="x", padx=scaled(15, s))
+        self.high_contrast_var = ctk.BooleanVar(value=self.settings.high_contrast)
+        self._settings_option(scroll, "high_contrast", self.high_contrast_var,
+                              self._change_accessibility)
+        ctk.CTkLabel(scroll, text="Tab / Skift+Tab: flytta fokus. Enter / mellanslag: aktivera knapp.\n"
+                     "Alt+ned: öppna vallista. Ctrl+Page Up/Down: byt sida.\n"
+                     "Page Up/Down: rulla området utanför textredigerare.\n"
+                     "I textredigerare: Ctrl+Tab infogar en tabb.",
+                     justify="left", anchor="w", wraplength=300).pack(
+            fill="x", padx=scaled(15, s), pady=(4, 12))
+
         # Alternativ — ALL synlig text hämtas från SETTINGS_META i
         # settings.py (sektion 7): ändra etikett/hjälptext där, inte här.
         self._card(scroll, title="⚙️  Alternativ", color=ACCENT_GREEN)
@@ -5425,6 +5803,32 @@ class FolderForgeApp(_DnDCTkBase):
         if hasattr(self, 'theme_var'):
             self.theme_var.set(self.settings.theme)
 
+    def _change_accessibility(self) -> None:
+        self.settings.text_size = self.text_size_var.get()
+        self.settings.high_contrast = self.high_contrast_var.get()
+        ctk.set_widget_scaling(text_scale(self.settings.text_size))
+        self._accessibility.refresh(self.settings.high_contrast, self.settings.text_size)
+        self._on_app_resize()
+        self._save_settings_silent()
+
+    def _keyboard_page(self, event, direction):
+        # Never leave a grabbed/modal dialog or steal a text editor's shortcuts.
+        if self.grab_current() is not None or event.widget.winfo_toplevel() is not self:
+            return None
+        names = [name for name in self._tab_view._tabs
+                 if self.settings.visible_tabs.get(name, True)]
+        if names:
+            active = self._tab_view.get_active_tab()
+            index = names.index(active) if active in names else -1
+            name = names[(index + direction) % len(names)]
+            self._tab_view.show_tab(name)
+            self.update_idletasks()
+            controls = self._accessibility.candidates(self._tab_view._tabs[name])
+            if controls:
+                controls[0].focus_set()
+                self._accessibility.reveal(controls[0])
+        return "break"
+
     def _choose_path(self) -> None:
         d = filedialog.askdirectory(initialdir=self.settings.save_root)
         if d:
@@ -5443,9 +5847,13 @@ class FolderForgeApp(_DnDCTkBase):
             new_mode = "Dark"
         ctk.set_appearance_mode(new_mode)
         self.settings.theme = new_mode
+        if hasattr(self, "theme_var"):
+            self.theme_var.set(new_mode)
         # M14/v5.0 — Tk-menyer följer INTE ctk.set_appearance_mode() automatiskt,
         # de måste konfigureras om uttryckligen.
         self._apply_menu_theme(new_mode)
+        if hasattr(self, "_accessibility"):
+            self._accessibility.refresh()
         icons = {"Dark": "🌙", "Light": "☀️", "System": "💻"}
         self._theme_btn.configure(text=icons.get(new_mode, "🌙"))
         self._save_settings_silent()
@@ -5455,6 +5863,8 @@ class FolderForgeApp(_DnDCTkBase):
         self.settings.theme = value
         # M14/v5.0 — se _toggle_theme: Tk-menyer måste konfigureras om för hand.
         self._apply_menu_theme(value)
+        if hasattr(self, "_accessibility"):
+            self._accessibility.refresh()
         self._save_settings_silent()
 
     def _on_app_resize(self, event=None) -> None:
@@ -5475,7 +5885,7 @@ class FolderForgeApp(_DnDCTkBase):
         try:
             if event is not None and getattr(event, "widget", None) is not self:
                 return
-            ändrat = self._tab_view.update_for_width(self.winfo_width())
+            ändrat = self._tab_view.update_for_width(int(self.winfo_width() / text_scale(self.settings.text_size)))
             if ändrat:
                 self._sidebar_kollapsad = bool(self._tab_view._collapsed)
                 logger.debug("Sidebar %s vid bredd %s px",
@@ -6717,6 +7127,8 @@ class FolderForgeApp(_DnDCTkBase):
             self._minimize_to_systray()
 
     def _minimize_to_systray(self) -> None:
+        if hasattr(self, "_tab_view"):
+            self._tab_view._dolj_tip()
         self.withdraw()
         # ENDAST EN TRAY-IKON, alltid:
         #  • ikon finns redan          → gör inget (dubbelminimering/X+hotkey)

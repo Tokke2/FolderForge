@@ -1,6 +1,8 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Tangentbordsnavigering med Tab/Skift+Tab i visuell ordning, synlig fokusmarkering, Enter/mellanslag för åtgärder och Alt+ned för vallistor. Fokus hålls i modala dialoger och rullas fram; Ctrl+Page Up/Down byter synlig sida och Skift+F10 öppnar sidomenyns snabbmeny.
+- Tillgänglighet i Inställningar: 100/110/125/150 % text- och gränssnittsstorlek samt reversibel hög kontrast, direkt tillämpning och sparade val. Radbrytning/växande knappar, rullbar sidomeny och läsbara namn på infällda sidoknappar. Windows egna dialoger följer systeminställningarna.
 - Python-/paketkontroll en gång i veckan, måndagar kl. 08.00 lokalt, via konsolfri Windows-uppgift. Missad körning tas igen när möjligt; normal start gör ingen versions-/uppdateringssökning. Befintlig Python uppgraderas inom samma serie; installation bara om Python saknas.
 - Gemensam Python och gemensamma paket används, utan egen venv eller kandidatmiljö. Veckoförsök sparas för att undvika omkontroll vid varje start; ändringar skjuts upp när Python används. Saknade startpaket installeras separat med låsta befintliga versioner. Gemensamma uppdateringar kan påverka andra program.
 - Konsolfria Starta-FolderForge.vbs/ps1 för start även utan Python samt veckounderhåll utan att öppna appen. Branded exe/autostart och direkt pyw-start delar startflödet. Självtest/interna omstarter undantas.
@@ -53,7 +55,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Saknas Py
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-240 automatiserade tester godkända och Python-syntax kontrollerad.
+278 automatiserade tester godkända och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 
