@@ -7305,10 +7305,12 @@ class FolderForgeApp(_DnDCTkBase):
                 self._quit_app()
             return
         self._tray_start_attempts = 0
-        # Samma ikonkedja som fönstren (M28): cachad, RGBA och med
-        # procedurell reserv — inte rå Image.open som kraschar om .ico saknas.
+        # Dedicated, bold tray badge: dark backing remains visible on light
+        # taskbars, gold edge separates it from dark taskbars. Other app icons
+        # and the wordmark are unchanged; older installs retain a fallback.
+        tray_path = BASE_DIR / "Icon" / "folderforge-tray.png"
         img = load_app_icon(
-            APP_ICON_PNG if APP_ICON_PNG.exists() else APP_ICON, 64)
+            tray_path if tray_path.is_file() else (APP_ICON_PNG if APP_ICON_PNG.exists() else APP_ICON), 64)
         if img is None:
             img = Image.new('RGB', (64, 64), (76, 158, 241))
         # lambda *args: pystray anropar menycallbacks med (icon, item) i

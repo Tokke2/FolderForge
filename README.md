@@ -86,7 +86,7 @@ inte automatiskt huvudfönstret.
 
 **Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
-309 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+311 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
