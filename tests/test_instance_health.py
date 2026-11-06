@@ -44,6 +44,15 @@ class InstanceHealthTests(unittest.TestCase):
         updater.service_instance_health(self.folder, self.script)
         self.assertFalse(path.with_suffix('.reply').exists())
 
+    def test_locked_cleanup_does_not_discard_valid_health_answer(self):
+        write = updater._health_write
+        def answer(path, value):
+            write(path, value)
+            write(path.with_suffix('.reply'), value)
+        with patch.object(updater, '_health_write', side_effect=answer), \
+             patch.object(Path, 'unlink', side_effect=PermissionError('Windows reader still open')):
+            self.assertTrue(updater.probe_instance(self.folder, os.getpid(), 1))
+
     def test_concurrent_probes_have_separate_replies(self):
         stop = threading.Event()
         def answer():

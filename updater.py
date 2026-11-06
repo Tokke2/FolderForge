@@ -921,8 +921,13 @@ def probe_instance(lock_dir, pid, timeout=8):
             time.sleep(0.1)
         return False
     finally:
-        request.unlink(missing_ok=True)
-        reply.unlink(missing_ok=True)
+        # Windows may still hold a request open in the Tk responder. Cleanup
+        # must not turn a valid health answer into an exception/failed probe.
+        for path in (request, reply):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass  # The responder's age filter removes leftovers later.
 
 
 def clear_instance_health(lock_dir):
