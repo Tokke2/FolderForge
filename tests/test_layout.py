@@ -26,10 +26,20 @@ class LayoutTests(unittest.TestCase):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
         code = ast.unparse(method)
-        self.assertIn('footer.grid_remove()', code)
-        self.assertIn("btn_row = ctk.CTkFrame(body, fg_color='transparent')", code)
+        self.assertNotIn('footer.grid_remove()', code)
+        self.assertIn("btn_row = ctk.CTkFrame(footer, fg_color='transparent')", code)
         self.assertLess(code.index('preview_ram.pack('), code.index('btn_row.pack('))
         self.assertLess(code.index('btn_row.pack('), code.index('skapa_knapp ='))
+
+    def test_project_dialog_labels_expand_and_options_share_a_row(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(node)
+        self.assertIn("subtitle_label.pack(fill='x'", code)
+        self.assertIn("heading_label.pack(fill='x'", code)
+        self.assertIn("preview_ram = ctk.CTkFrame(footer", code)
+        self.assertIn("location_menu.grid(row=1, column=0", code)
+        self.assertIn("year_menu.grid(row=1, column=1", code)
 
     def test_manual_update_available_in_app_and_tray(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')

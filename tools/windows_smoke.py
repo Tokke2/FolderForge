@@ -113,6 +113,28 @@ def main():
         allow_window.set()
         command('restore', 1)
         wait(lambda s: s.get('state') == 'normal', 'Explicit tray restore failed')
+        command('project-dialog', 21)
+        layout_path = base / 'data/project-dialog-layout.json'
+        deadline = time.monotonic() + 20
+        layout = None
+        while time.monotonic() < deadline:
+            try:
+                layout = json.loads(layout_path.read_text())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.1)
+        assert layout, 'Modal project dialog did not report its geometry'
+        width, height = layout['window']
+        assert layout['subtitle'][2] > width * 0.65, ('Narrow subtitle', layout)
+        assert layout['subtitle'][3] < 100, ('Vertically wrapped subtitle', layout)
+        assert abs(layout['location'][1] - layout['year'][1]) < 8, layout
+        for key in ('preview', 'actions'):
+            x, y, w, h = layout[key]
+            assert y >= 0 and y + h <= height + 2, ('Footer clipped', key, layout)
+        assert layout['actions'][1] >= layout['preview'][1] + layout['preview'][3], layout
+        (evidence / 'project-dialog.json').write_text(json.dumps(layout, indent=2))
+        command('close-project-dialog', 22)
+        time.sleep(0.3)
         command('hide', 2)
         wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Return to tray failed')
         allow_window.clear()

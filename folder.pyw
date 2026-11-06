@@ -2027,6 +2027,8 @@ class AccessibilityController:
     def wrap_label(self, widget):
         try:
             if len(str(widget.cget("text"))) > 40:
+                if widget.winfo_width() < 24:
+                    return  # Wait for actual allocation instead of wrapping to 60px.
                 width = max(60, widget.winfo_width() / widget._get_widget_scaling() - 12)
                 if abs(float(widget.cget("wraplength")) - width) > 2:
                     widget.configure(wraplength=width)
@@ -4899,6 +4901,12 @@ class FolderForgeApp(_DnDCTkBase):
                 self._restore_from_tray()
             elif action == "hide":
                 self._minimize_to_systray()
+            elif action == "project-dialog":
+                self.after(0, self._create_folder_dialog)
+            elif action == "close-project-dialog":
+                for child in self.winfo_children():
+                    if isinstance(child, tk.Toplevel) and child.title() == "Nytt Standardprojekt":
+                        child.destroy()
             elif action == "exit":
                 self.after(100, self._quit_app)
         atomic_write_json(DATA_DIR / "windows-smoke-status.json", {
@@ -6109,23 +6117,26 @@ class FolderForgeApp(_DnDCTkBase):
         win.resizable(True, True)
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        bredd = min(scaled(560, s), max(320, sw - 80))
-        höjd = min(scaled(560, s), max(240, sh - 100))
+        bredd = min(scaled(640, s), max(320, sw - 80))
+        höjd = min(scaled(620, s), max(240, sh - 100))
         win.geometry(f"{bredd}x{höjd}+{(sw - bredd) // 2}+{(sh - höjd) // 2}")
         body, footer = dialog_layout(win)
-        footer.grid_remove()  # Knapparna följer slutnamnet, inte fönstrets nederkant.
+        # Slutnamn och knappar sitter ihop, utanför det rullbara formuläret.
+        footer.configure(fg_color=UI_SURFACE)
 
         # ── Rubrik + underrubrik ───────────────────────────────────
-        ctk.CTkLabel(
-            body, text="📁  Nytt standardprojekt",
+        heading_label = ctk.CTkLabel(
+            body, text="Nytt standardprojekt", image=load_ui_icon("Skapa", scaled(24, s)), compound="left",
             font=ctk.CTkFont(size=scaled_font(15, s), weight="bold"),
             anchor="w", text_color=("gray15", "gray90"),
-        ).pack(anchor="w", padx=scaled(15, s), pady=(scaled(12, s), 0))
-        ctk.CTkLabel(
-            body, text="Skapar projektmappen med din valda standardmall.",
+        )
+        heading_label.pack(fill="x", padx=scaled(18, s), pady=(scaled(16, s), scaled(4, s)))
+        subtitle_label = ctk.CTkLabel(
+            body, text="Skapa en projektmapp med din standardmall. Snabbvalen är valfria.",
             font=ctk.CTkFont(size=scaled_font(11, s)),
             text_color=("gray40", "gray55"), anchor="w",
-        ).pack(anchor="w", padx=scaled(15, s), pady=(0, scaled(4, s)))
+        )
+        subtitle_label.pack(fill="x", padx=scaled(18, s), pady=(0, scaled(10, s)))
 
         resultat: Dict[str, Optional[str]] = {"namn": None}
         namn_var = ctk.StringVar()
@@ -6138,7 +6149,7 @@ class FolderForgeApp(_DnDCTkBase):
                 body, text=text,
                 font=ctk.CTkFont(size=scaled_font(11, s), weight="bold"),
                 text_color=("gray40", "gray55"), anchor="w",
-            ).pack(anchor="w", padx=scaled(15, s),
+            ).pack(fill="x", padx=scaled(15, s),
                    pady=(scaled(8, s), scaled(3, s)))
 
         # ── Projektnamn ────────────────────────────────────────────
@@ -6159,7 +6170,7 @@ class FolderForgeApp(_DnDCTkBase):
             except Exception:
                 pass
 
-        _rubrik("FORDONSSLAG  ·  välj ett, valfritt")
+        _rubrik("FORDONSSLAG  ·  valfritt")
         vehicle_row = ctk.CTkFrame(body, fg_color="transparent")
         vehicle_row.pack(fill="x", padx=scaled(15, s), pady=(0, scaled(4, s)))
         vehicle_buttons = {}
@@ -6171,7 +6182,7 @@ class FolderForgeApp(_DnDCTkBase):
         for column, choice in enumerate(VEHICLE_CHOICES):
             vehicle_row.grid_columnconfigure(column, weight=1, uniform="vehicles")
             button = ctk.CTkButton(
-                vehicle_row, text=choice.title(), width=scaled(70, s), height=scaled(32, s),
+                vehicle_row, text=choice.title(), width=scaled(70, s), height=scaled(36, s),
                 command=lambda value=choice: toggle_vehicle(value),
                 fg_color=UI_BACKGROUND, text_color=UI_TEXT, hover_color=UI_BORDER,
                 corner_radius=8, font=ctk.CTkFont(size=scaled_font(12, s)),
@@ -6180,21 +6191,20 @@ class FolderForgeApp(_DnDCTkBase):
             vehicle_buttons[choice] = button
 
         # ── Skadetyp-chips med visuellt markeringsläge ─────────────
-        _rubrik("SKADETYP  ·  SIDORUTA/BAKRUTA utesluter varandra")
+        _rubrik("SKADETYP  ·  valfria snabbval")
         chips_row = ctk.CTkFrame(body, fg_color="transparent")
         chips_row.pack(fill="x", padx=scaled(15, s))
-        chip_färger = (ACCENT_ORANGE, ACCENT_PURPLE, ACCENT_TEAL, ACCENT_BLUE)
         chip_knappar: Dict[str, Any] = {}
         for i, chip in enumerate(DAMAGE_TYPE_CHIPS):
             knapp = ctk.CTkButton(
                 chips_row, text=chip,
                 command=lambda c=chip: toggla(c),
-                fg_color=("gray70", "gray30"),
-                height=scaled(26, s), corner_radius=13,
+                fg_color=UI_BACKGROUND, text_color=UI_TEXT, hover_color=UI_BORDER,
+                height=scaled(34, s), corner_radius=8,
                 font=ctk.CTkFont(size=scaled_font(11, s)),
             )
             knapp.grid(row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
-            chips_row.grid_columnconfigure(i % 2, weight=1)
+            chips_row.grid_columnconfigure(i % 2, weight=1, uniform="damage")
             chip_knappar[chip] = knapp
 
         def toggla(chip: str) -> None:
@@ -6214,25 +6224,30 @@ class FolderForgeApp(_DnDCTkBase):
             namn_var.set(" ".join(ord_lista))
             _avsluta_redigering()
 
-        # ── Lokal ──────────────────────────────────────────────────
-        _rubrik("LOKAL  ·  före valt år")
-        ctk.CTkOptionMenu(
-            body, values=["—"] + list(LOKAL_CHOICES),
-            variable=lokal_var,
-            command=lambda _v: _förnya_utseende(),
-            fg_color=ACCENT_BLUE, button_color=ACCENT_BLUE,
-            height=scaled(28, s), corner_radius=8,
-            font=ctk.CTkFont(size=scaled_font(12, s)),
-        ).pack(anchor="w", padx=scaled(15, s))
-
-        _rubrik("ÅR  ·  välj eller skriv ett år, valfritt")
-        year_menu = ctk.CTkComboBox(
-            body, values=["—"] + project_year_choices(), variable=year_var,
-            command=lambda _v: _förnya_utseende(),
-            height=scaled(28, s), corner_radius=8,
+        # Lokal och år delar en rad, med samma bredd och tydliga etiketter.
+        details_row = ctk.CTkFrame(body, fg_color="transparent")
+        details_row.pack(fill="x", padx=scaled(15, s), pady=(scaled(10, s), scaled(8, s)))
+        for column in (0, 1):
+            details_row.grid_columnconfigure(column, weight=1, uniform="details")
+        for column, caption in enumerate(("LOKAL  ·  valfritt", "ÅR  ·  välj eller skriv")):
+            ctk.CTkLabel(details_row, text=caption, anchor="w", text_color=UI_MUTED,
+                         font=ctk.CTkFont(size=scaled_font(11, s), weight="bold")).grid(
+                             row=0, column=column, sticky="ew", padx=(0, 10) if column == 0 else (10, 0), pady=(0, 5))
+        location_menu = ctk.CTkOptionMenu(
+            details_row, values=["—"] + list(LOKAL_CHOICES), variable=lokal_var,
+            command=lambda _v: _förnya_utseende(), width=1,
+            fg_color=UI_PRIMARY, button_color=UI_PRIMARY,
+            height=scaled(36, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s)),
         )
-        year_menu.pack(anchor="w", padx=scaled(15, s))
+        location_menu.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        year_menu = ctk.CTkComboBox(
+            details_row, values=["—"] + project_year_choices(), variable=year_var,
+            command=lambda _v: _förnya_utseende(), width=1,
+            height=scaled(36, s), corner_radius=8,
+            font=ctk.CTkFont(size=scaled_font(12, s)),
+        )
+        year_menu.grid(row=1, column=1, sticky="ew", padx=(10, 0))
 
         def refresh_year_choices():
             values = ["—"] + project_year_choices()
@@ -6243,19 +6258,25 @@ class FolderForgeApp(_DnDCTkBase):
         win.after(60_000, refresh_year_choices)
 
         # ── Live-förhandsvisning av slutnamnet ─────────────────────
-        preview_ram = ctk.CTkFrame(body, corner_radius=8,
-                                   fg_color=("gray88", "gray20"))
-        preview_ram.pack(fill="x", padx=scaled(15, s), pady=(scaled(12, s), 0))
+        preview_ram = ctk.CTkFrame(footer, corner_radius=8,
+                                   fg_color=UI_BACKGROUND, border_width=1, border_color=UI_BORDER)
+        preview_ram.pack(fill="x", padx=0, pady=(0, scaled(8, s)))
+        ctk.CTkLabel(preview_ram, text="MAPPNAMN", anchor="w", text_color=UI_MUTED,
+                     font=ctk.CTkFont(size=scaled_font(10, s), weight="bold")).pack(
+                         fill="x", padx=12, pady=(8, 0))
         preview_var = ctk.StringVar()
-        ctk.CTkLabel(
+        preview_label = ctk.CTkLabel(
             preview_ram, textvariable=preview_var,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
-            text_color=("gray20", ACCENT_BLUE), anchor="w",
-        ).pack(anchor="w", padx=scaled(12, s), pady=scaled(8, s))
+            text_color=UI_TEXT, anchor="w", justify="left",
+        )
+        preview_label.pack(fill="x", padx=scaled(12, s), pady=(0, scaled(8, s)))
+        preview_label.bind("<Configure>", lambda _e: preview_label.configure(
+            wraplength=max(80, preview_label.winfo_width() / preview_label._get_widget_scaling() - 8)), add="+")
 
         # ── Knappar ────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(body, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=(scaled(8, s), scaled(12, s)))
+        btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+        btn_row.pack(fill="x", padx=0, pady=0)
 
         def ok(*_e) -> None:
             if not namn_var.get().strip():
@@ -6271,8 +6292,8 @@ class FolderForgeApp(_DnDCTkBase):
             win.destroy()
 
         skapa_knapp = ctk.CTkButton(
-            btn_row, text="Skapa", command=ok,
-            fg_color=ACCENT_BLUE, height=scaled(34, s), corner_radius=8,
+            btn_row, text="Skapa projekt", command=ok,
+            fg_color=UI_PRIMARY, hover_color=ACCENT_BLUE, height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
         skapa_knapp.pack(side="right")
@@ -6296,8 +6317,8 @@ class FolderForgeApp(_DnDCTkBase):
                 aktiv = chip.upper() in ord_set
                 chip_knappar[chip].configure(
                     text=("✓ " + chip) if aktiv else chip,
-                    fg_color=(chip_färger[i % len(chip_färger)] if aktiv
-                              else ("gray70", "gray30")),
+                    fg_color=UI_PRIMARY if aktiv else UI_BACKGROUND,
+                    text_color="white" if aktiv else UI_TEXT,
                 )
             eget_namn = namn_var.get().strip()
             # Viktigt: "tomt namn" mäts på textfältet — ENBART en vald
@@ -6317,6 +6338,18 @@ class FolderForgeApp(_DnDCTkBase):
         win.bind("<Escape>", lambda _e: win.destroy())
         win.protocol("WM_DELETE_WINDOW", win.destroy)
         win.after(150, lambda: focus_project_name(entry))
+
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
+            def report_layout():
+                def box(widget):
+                    return [widget.winfo_rootx() - win.winfo_rootx(), widget.winfo_rooty() - win.winfo_rooty(),
+                            widget.winfo_width(), widget.winfo_height()]
+                atomic_write_json(DATA_DIR / "project-dialog-layout.json", {
+                    "window": [win.winfo_width(), win.winfo_height()],
+                    "subtitle": box(subtitle_label), "preview": box(preview_ram),
+                    "actions": box(btn_row), "location": box(location_menu), "year": box(year_menu),
+                })
+            win.after(900, report_layout)
 
         self.wait_window(win)
         namn = (resultat["namn"] or "").strip()
