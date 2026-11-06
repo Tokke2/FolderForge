@@ -311,6 +311,18 @@ class ErrorLogTests(unittest.TestCase):
                 pass
         self.assertEqual([call.args[1:] for call in fake.locking.call_args_list], [(1, 1), (0, 1)])
 
+    def test_redirected_stderr_does_not_duplicate_errors_or_copy_info(self):
+        import io
+        redirected = io.StringIO()
+        with patch.object(sys, 'stderr', redirected):
+            logg.init_logging()
+            logging.getLogger('redirected').info('general-only-message')
+            logging.getLogger('redirected').warning('single-error-message')
+        content = self.read_errors()
+        self.assertNotIn('general-only-message', content)
+        self.assertEqual(content.count('single-error-message'), 1)
+        self.assertEqual(redirected.getvalue(), '')
+
     def test_multiple_processes_preserve_all_error_records(self):
         import subprocess
         script = """

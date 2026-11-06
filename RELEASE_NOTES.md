@@ -64,7 +64,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-307 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+308 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-CI godkänd för Python 3.11 och 3.13: native/VBS/dold PowerShell-start,
 tray, dold start, dubbelstart, visa/dölj/avsluta, avsiktligt trasig uppdatering
 med återställning samt fungerande uppdatering med bekräftelse från Tk-loopen.

@@ -326,7 +326,8 @@ def init_logging() -> None:
     except Exception:
         _logger.error("Kunde inte öppna eller arkivera den vanliga loggen", exc_info=True)
 
-    if sys.stderr is not None:          # pythonw har ingen konsoll
+    if sys.stderr is not None and getattr(sys.stderr, "isatty", lambda: False)():
+        # Detached launch stderr is the error file, not an interactive console.
         kons = logging.StreamHandler()
         kons.setFormatter(fmt)
         kons.addFilter(LibraryNoiseFilter())

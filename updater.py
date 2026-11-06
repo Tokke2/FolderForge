@@ -154,7 +154,7 @@ def matches_manifest(root, manifest):
         for name, digest in manifest.items():
             relative = PurePosixPath(name)
             if (relative.is_absolute() or ".." in relative.parts or "\\" in name
-                    or not (name in FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
+                    or not (name in FILES | OPTIONAL_FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
                                               and relative.suffix.lower() in {".png", ".ico", ".icns"}))):
                 return False
             file = root / name

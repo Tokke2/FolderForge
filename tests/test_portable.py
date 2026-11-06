@@ -54,6 +54,7 @@ class PortableTests(unittest.TestCase):
         self.assertTrue(updater.matches_manifest(self.base, manifest))
         new_manifest = updater.content_manifest(self.base)
         self.assertTrue(updater.OPTIONAL_FILES.issubset(new_manifest))
+        self.assertTrue(updater.matches_manifest(self.base, new_manifest))
 
     def test_linux_shortcut_is_terminal_free_and_quotes_paths(self):
         base = self.base / 'Lisa\'s folder %test'
