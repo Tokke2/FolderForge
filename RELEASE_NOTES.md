@@ -5,9 +5,9 @@
 - Alltid minimerad start. Även extra starter lämnar befintligt fönster oförändrat och öppnar ingen ny instans. Öppna uttryckligen via systemfält/snabbtangent. Windows-låsfel stoppar ny start; säker hälsokontroll behålls.
 - Tangentbordsnavigering med Tab/Skift+Tab i visuell ordning, synlig fokusmarkering, Enter/mellanslag för åtgärder och Alt+ned för vallistor. Fokus hålls i modala dialoger och rullas fram; Ctrl+Page Up/Down byter synlig sida och Skift+F10 öppnar sidomenyns snabbmeny.
 - Tillgänglighet i Inställningar: 100/110/125/150 % text- och gränssnittsstorlek samt reversibel hög kontrast, direkt tillämpning och sparade val. Radbrytning/växande knappar, rullbar sidomeny och läsbara namn på infällda sidoknappar. Windows egna dialoger följer systeminställningarna.
-- Python-/paketkontroll en gång i veckan, måndagar kl. 08.00 lokalt, via konsolfri Windows-uppgift. Missad körning tas igen när möjligt; normal start gör ingen versions-/uppdateringssökning. Befintlig Python uppgraderas inom samma serie; installation bara om Python saknas.
-- Gemensam Python och gemensamma paket används, utan egen venv eller kandidatmiljö. Veckoförsök sparas för att undvika omkontroll vid varje start; ändringar skjuts upp när Python används. Saknade startpaket installeras separat med låsta befintliga versioner. Gemensamma uppdateringar kan påverka andra program.
-- Konsolfria Starta-FolderForge.vbs/ps1 för start även utan Python samt veckounderhåll utan att öppna appen. Branded exe/autostart och direkt pyw-start delar startflödet. Självtest/interna omstarter undantas.
+- Python-/paketkontrollen och veckounderhållet borttagna. Systemets befintliga Python används utan versionsval, nyinstallation, pip eller uppgradering. Saknade paket installeras inte vid start.
+- Den felande Python check-rutan och runtime-state-skrivningen används inte längre. Gamla veckouppgiften för aktuell appmapp tas bort när tillåtet; kvarvarande underhållsanrop är verkningslösa och öppnar ingen app.
+- Start sker konsolfritt med befintlig pythonw.exe och alltid minimerat. Systemmiljön måste redan ha Python 3.11+ och nödvändiga paket. Biblioteks-/startfel loggas i logs/. Appens egna releasekontroller är oförändrade.
 - Maskin tillagd bredvid Husbil och Lastbil i projektdialogen, med samma valfria enkelval och direkt förhandsvisning av mappnamnet.
 - Copyright Rickard Längkvist tydliggjord i Om FolderForge och README; befintlig sidfot behålls.
 - Hälsokontroll via färskt svar från Tk-loopen vid extra start. Windows kan efter strikt processidentifiering och uttrycklig varning/bekräftelse återstarta en instans som inte svarar; andra Python-program lämnas orörda. Ny instans måste ta det riktiga instanslåset och startar minimerad.
@@ -57,7 +57,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Saknas Py
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-286 automatiserade tester godkända och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+277 automatiserade tester godkända och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

@@ -333,34 +333,20 @@ if __name__ == "__main__":
     if relaunch_without_console():
         sys.exit(0)
 
-    # External Windows starts select shared Python and register weekly maintenance.
-    # The marker is inherited only by this bootstrap's children/internal restarts.
+    # Select the system interpreter windowlessly, without runtime maintenance.
     if (IS_WINDOWS and "--selftest" not in sys.argv
             and (os.environ.get("FOLDERFORGE_RUNTIME_READY") != "1"
-                 or os.environ.get("FOLDERFORGE_RUNTIME_POLICY") != "weekly-shared"
-                 or (sys.prefix != sys.base_prefix
-                     and os.environ.get("FOLDERFORGE_RUNTIME_SECONDARY") != "1"))):
+                 or os.environ.get("FOLDERFORGE_RUNTIME_POLICY") != "system-python")):
         from updater import launch_runtime_bootstrap
         try:
             launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
         except Exception:
-            logger.exception("Kunde inte starta Python-/paketkontrollen")
+            logger.exception("Kunde inte starta med systemets Python")
             sys.exit(1)
         sys.exit(0)
 
-    # M29c/v5.0 — --selftest får ALDRIG trigga beroendeinstallationen.
-    #
-    # check_and_install_requirements() visar en MODAL Tk-dialog och väntar på
-    # svar. "Testa autostart"-knappen kör det registrerade kommandot i en
-    # underprocess; en modal dialog där skulle blockera i det oändliga och
-    # användaren skulle uppleva knappen som hängande, utan att någonsin få ett
-    # svar. Självtestets hela uppgift är dessutom att RAPPORTERA saknade paket
-    # exakt, inte att installera dem interaktivt — det sker längre ner i filen.
-    #
-    # Vaktet ligger här och inte vid självtestet eftersom detta är det FÖRSTA
-    # __main__-blocket i filen och körs före allt annat.
-    if "--selftest" not in sys.argv and not check_and_install_requirements():
-        sys.exit(1)
+    # No automatic Python/package checks, installations or upgrades at startup.
+    # Missing dependencies are reported by normal imports in the error log.
 
 # ============================================================
 # Biblioteksimport
