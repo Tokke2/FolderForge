@@ -579,3 +579,7 @@ Den uppdaterade guldfärgade/turkosa ikonen finns i alla ICO-storlekar;
 en matchande FolderForge-logotyp används i appens rubrik utan att förvränga
 bildens proportioner. Delad system-Python behåller sin egen processidentitet
 i Aktivitetshanterarens Detaljer-vy.
+
+Verifierat på riktiga Windows-runners med Python 3.11 och 3.13:
+[Windows-start och uppdateringsåterställning, godkänd körning](https://github.com/Tokke2/FolderForge/actions/runs/42196664760).
+299 enhetstester och samtliga GUI-/uppdateringssteg godkända på båda versionerna.

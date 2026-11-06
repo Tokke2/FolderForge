@@ -61,8 +61,13 @@ Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
 299 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
-Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
-på Windows. Publicerad från arbetsgrenen; main är orörd.
+Windows-CI godkänd för Python 3.11 och 3.13: native/VBS/dold PowerShell-start,
+tray, dold start, dubbelstart, visa/dölj/avsluta, avsiktligt trasig uppdatering
+med återställning samt fungerande uppdatering med bekräftelse från Tk-loopen.
+Inga synliga konsolfönster eller oavsiktligt visade Tk-fönster observerades
+under testets mätintervall. Det är inte en garanti för alla datorer/IT-policyer.
+Verifieringskörning: https://github.com/Tokke2/FolderForge/actions/runs/42196664760
+Publicerad från arbetsgrenen; main är orörd.
 
 ---
 
