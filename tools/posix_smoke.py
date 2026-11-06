@@ -52,6 +52,13 @@ def main():
     try:
         launch()
         first = wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Hidden GUI/tray did not initialize')
+        if sys.platform.startswith('linux'):
+            from Xlib import display
+            connection = display.Display()
+            try:
+                assert connection.get_selection_owner(connection.intern_atom('_NET_SYSTEM_TRAY_S0')), 'No X11 tray manager'
+            finally:
+                connection.close()
         launch()
         time.sleep(3)
         assert status()['pid'] == first['pid']
@@ -62,6 +69,56 @@ def main():
         wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Hide failed')
         command('exit', 3)
         psutil.Process(first['pid']).wait(timeout=15)
+        # A real healthy update must acknowledge its own Tk callback on this OS.
+        pending = base / 'data/update-pending'
+        pending.mkdir()
+        for name in updater.FILES | updater.OPTIONAL_FILES:
+            shutil.copy2(base / name, pending / name)
+        keep = base / 'data/user-keep.txt'
+        keep.write_text('preserve user data')
+        updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',
+                                     pending_hashes=updater.content_manifest(pending)))
+        updater.apply_pending(base)
+        previous = os.environ.get('FOLDERFORGE_WINDOWS_SMOKE')
+        os.environ['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
+        try:
+            worker = updater.launch_update_trial(base, sys.executable)
+        finally:
+            if previous is None:
+                os.environ.pop('FOLDERFORGE_WINDOWS_SMOKE', None)
+            else:
+                os.environ['FOLDERFORGE_WINDOWS_SMOKE'] = previous
+        healthy = wait(lambda v: v.get('pid') != first['pid'] and v.get('state') == 'withdrawn' and v.get('tray'),
+                       'Healthy update did not start hidden')
+        assert worker.wait(timeout=30) == 0, 'Tk startup acknowledgement failed'
+        assert not updater.read_state(base).get('startup_pending')
+        assert (base / 'data/update-backup/folder.pyw').exists()
+        assert keep.read_text() == 'preserve user data'
+        command('exit', 4)
+        psutil.Process(healthy['pid']).wait(timeout=15)
+
+        # The old, stable supervisor must survive an intentionally broken app.
+        pending.mkdir()
+        for name in updater.FILES | updater.OPTIONAL_FILES:
+            shutil.copy2(base / name, pending / name)
+        (pending / 'folder.pyw').write_text("raise RuntimeError('intentional CI failed update')\n")
+        updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',
+                                     pending_hashes=updater.content_manifest(pending)))
+        updater.apply_pending(base)
+        harness = base / 'data/recover-ci.py'
+        harness.write_text('import importlib.util,sys\nfrom pathlib import Path\n'
+            'b=Path(sys.argv[1])\ns=importlib.util.spec_from_file_location("stable",b/"data/update-supervisor.py")\n'
+            'm=importlib.util.module_from_spec(s)\ns.loader.exec_module(m)\n'
+            'sys.exit(m.supervise_update(b,Path(sys.executable),offer=lambda question: True))\n')
+        worker = subprocess.Popen([sys.executable, str(harness), str(base)], env=env, cwd=base,
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        assert worker.wait(timeout=30) == 1, 'Broken update was not detected'
+        restored = wait(lambda v: v.get('pid') != healthy['pid'] and v.get('state') == 'withdrawn' and v.get('tray'),
+                        'Previous app did not restart after rollback')
+        assert keep.read_text() == 'preserve user data'
+        assert (base / 'folder.pyw').read_bytes() == (source / 'folder.pyw').read_bytes()
+        command('exit', 5)
+        psutil.Process(restored['pid']).wait(timeout=15)
     finally:
         for process in psutil.process_iter(['pid', 'cmdline']):
             if process.pid != os.getpid() and str(base) in ' '.join(process.info['cmdline'] or []):

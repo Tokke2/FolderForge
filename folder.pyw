@@ -5274,7 +5274,8 @@ class FolderForgeApp(_DnDCTkBase):
             card = ctk.CTkFrame(scroll, fg_color=UI_SURFACE, border_color=UI_BORDER,
                                border_width=1, corner_radius=14)
             card.pack(fill="x", padx=10, pady=(0, 14))
-            ctk.CTkLabel(card, text=title, anchor="w", text_color=UI_TEXT,
+            ctk.CTkLabel(card, text=title, image=load_ui_icon("Skapa" if primary else "Mallar", scaled(24, s)),
+                         compound="left", anchor="w", text_color=UI_TEXT,
                          font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=18, pady=(18, 6))
             text = ctk.CTkLabel(card, text=description, anchor="w", justify="left", text_color=UI_MUTED)
             text.pack(fill="x", padx=18, pady=(0, 12))

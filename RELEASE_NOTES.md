@@ -1,6 +1,10 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Multi-OS: portabel dold start med befintlig Python, macOS menyradsintegration på huvudtråden, Linux X11-tray och lås för säkrare uppdateringsåterställning. macOS öppnar filer/mappar med Finder. Wayland och företagsbehörigheter har uttryckliga begränsningar.
+- Generera lokala `.app`-/`.desktop`-genvägar med egen ikon, utan installation eller automatisk aktivering av autostart. Nativ Windows-start behålls. macOS/Linux använder operativsystemets egna inloggningsobjekt.
+- Kort svensk README med logotyp, ikonöversikt, OS-guide, tydliga förutsättningar och felsökning. Detaljer flyttade till docs/TEKNISK_GUIDE.md.
+- Matchande ljusa/mörka navigations- och sektionsikoner i hela appen, enhetlig marinblå/turkos profil samt macOS ICNS/Dock-ikon. Universell Arkiv → Avsluta-meny för skrivbord utan traymenyer.
 - Startbekräftad appuppdatering: full backup före filbytet, bevarad fönsterlös övervakare och kontroll av process/starttoken, SHA-256 samt levande GUI/tray. Återställning erbjuds vid misslyckad start; vid timeout behålls backup utan att någon process tvångsavslutas. Projekt, inställningar och historik lämnas orörda. Gäller uppdateringar som installeras av denna uppdaterare.
 - Windows-CI för Python 3.11/3.13 med riktig dold GUI/tray, native/VBS/PowerShell-start, dubbelstart, visa/dölj/avsluta och avsiktligt trasig uppdatering med återställning. Synliga konsoler och oavsiktligt visade Tk-fönster övervakas; ingen universell konsolfrihetsgaranti påstås.
 - Matchande FolderForge-logotyp och förnyad ikon, korrekta bildproportioner i rubriken. Windows-specifika testfel och blandade CRLF/LF-rader i felgrupperingen rättade; logginitiering serialiserad mellan processer.
@@ -60,7 +64,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-299 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+307 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-CI godkänd för Python 3.11 och 3.13: native/VBS/dold PowerShell-start,
 tray, dold start, dubbelstart, visa/dölj/avsluta, avsiktligt trasig uppdatering
 med återställning samt fungerande uppdatering med bekräftelse från Tk-loopen.
