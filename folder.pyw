@@ -1805,7 +1805,14 @@ class AccessibilityController:
             "<Control-Tab>": self.insert_tab,
             "<FocusIn>": self.focus_in, "<FocusOut>": self.focus_out,
         }.items():
-            root.bind_class(FOCUS_TAG, sequence, callback, add="+")
+            try:
+                root.bind_class(FOCUS_TAG, sequence, callback, add="+")
+            except tk.TclError:
+                if sequence != "<ISO_Left_Tab>":
+                    raise
+                # X11 keysym is absent on some Windows Tk releases. Shift-Tab
+                # above is the portable binding and remains active.
+                accessibility_logger.debug("ISO_Left_Tab stöds inte av denna Tk-version")
         root.bind_all("<Map>", self.on_map, add="+")
         self.refresh()
 
@@ -1963,6 +1970,10 @@ class AccessibilityController:
         if kind and not hasattr(widget, "_ff_accessible_colors"):
             baseline = {}
             for key in COLOR_KEYS + (("activeforeground", "disabledforeground") if kind == "DropdownMenu" else ()) + (("border_width",) if kind in {"CTkButton", "CTkEntry"} else ()):
+                # SegmentedButton inherits readable CTkFrame.border_color,
+                # but its own configure() explicitly rejects that option.
+                if kind == "CTkSegmentedButton" and key == "border_color":
+                    continue
                 try:
                     value = widget.cget(key)
                     if value is not None:

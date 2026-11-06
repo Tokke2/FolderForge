@@ -15,7 +15,8 @@ NAMES = {'TEXT_SIZES', 'FOCUS_TAG', 'CONTROLS', 'COLOR_KEYS', 'accessibility_log
          'validate_settings'}
 NODES = [n for n in TREE.body if getattr(n, 'name', None) in NAMES or
          isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id in NAMES for t in n.targets)]
-NS = dict(vars(settings), logging=logging, weakref=weakref, SimpleNamespace=SimpleNamespace)
+NS = dict(vars(settings), logging=logging, weakref=weakref, SimpleNamespace=SimpleNamespace,
+          tk=SimpleNamespace(TclError=RuntimeError))
 exec(compile(ast.fix_missing_locations(ast.Module(body=[ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)] + NODES,
                                                       type_ignores=[])), 'accessibility_helpers', 'exec'), NS)
 Controller = NS['AccessibilityController']
@@ -83,6 +84,30 @@ class AccessibilityTests(unittest.TestCase):
 
     def event(self, widget, key='Return'):
         return SimpleNamespace(widget=widget, keysym=key)
+
+    def test_missing_x11_keysym_does_not_break_windows_startup(self):
+        bind = self.root.bind_class
+        def windows_bind(tag, sequence, callback, add=None):
+            if sequence == '<ISO_Left_Tab>':
+                raise RuntimeError('bad event type or keysym ISO_Left_Tab')
+            bind(tag, sequence, callback, add)
+        self.root.bind_class = windows_bind
+        Controller(self.root, self.ctk)
+        self.assertIn('<Shift-Tab>', self.root.bindings)
+        self.assertIn('<Tab>', self.root.bindings)
+
+    def test_segmented_button_readable_parent_option_is_not_configured(self):
+        class CTkSegmentedButton(CTkFrame):
+            def configure(self, **kwargs):
+                if 'border_color' in kwargs:
+                    raise ValueError('border_color is not supported')
+                super().configure(**kwargs)
+        segmented = CTkSegmentedButton(self.root, border_color='#888888', fg_color='#222222')
+        self.controller.prepare(segmented)
+        self.assertNotIn('border_color', segmented._ff_accessible_colors)
+        self.controller.high_contrast = True
+        self.controller.prepare(segmented)
+        self.assertEqual(segmented.cget('fg_color'), '#000000')
 
     def test_supported_sizes_and_corrupt_value_fallback(self):
         self.assertEqual([NS['text_scale'](s) for s in NS['TEXT_SIZES']], [1, 1.1, 1.25, 1.5])
