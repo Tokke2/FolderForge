@@ -7,3 +7,5 @@ release-assets/
 *.lnk
 
 /logs/
+
+/windows-evidence/

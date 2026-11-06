@@ -40,28 +40,36 @@ def main():
     status_file = base / 'data/windows-smoke-status.json'
     violations, observations = [], []
     stop = threading.Event()
+    allow_window = threading.Event()
+    baseline_consoles = set()
     user32 = ctypes.windll.user32
     callback_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def monitor():
+    def visible_windows():
+        windows = []
         def visit(hwnd, _):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            name = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, name, 256)
-            if name.value != 'ConsoleWindowClass':
-                return True
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-            try:
-                command = ' '.join(psutil.Process(pid.value).cmdline())
-                if str(base).lower() in command.lower():
-                    violations.append(dict(pid=pid.value, window_class=name.value, command=command))
-            except (psutil.Error, OSError):
-                pass
+            if user32.IsWindowVisible(hwnd):
+                name = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(hwnd, name, 256)
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                windows.append((hwnd, name.value, pid.value))
             return True
-        callback = callback_type(visit)
+        user32.EnumWindows(callback_type(visit), 0)
+        return windows
+    baseline_consoles.update(hwnd for hwnd, name, pid in visible_windows() if name == 'ConsoleWindowClass')
+    def monitor():
         while not stop.wait(0.01):
-            user32.EnumWindows(callback, 0)
+            for hwnd, name, pid in visible_windows():
+                if name == 'ConsoleWindowClass' and hwnd not in baseline_consoles:
+                    # conhost owns a console window, not necessarily the app PID.
+                    violations.append(dict(pid=pid, window_class=name, reason='new visible console'))
+                if name.startswith('Tk') and not allow_window.is_set():
+                    try:
+                        command_line = ' '.join(psutil.Process(pid).cmdline())
+                        if str(base).lower() in command_line.lower():
+                            violations.append(dict(pid=pid, window_class=name, reason='GUI mapped before explicit restore'))
+                    except psutil.Error:
+                        pass
     thread = threading.Thread(target=monitor, daemon=True)
     thread.start()
     processes = []
@@ -102,12 +110,27 @@ def main():
             if proc.info['name'].lower() == 'pythonw.exe' and str(base / 'folder.pyw').lower() in command_line.lower():
                 active.append(proc.pid)
         assert active == [first['pid']], ('Duplicate GUI processes', active)
+        allow_window.set()
         command('restore', 1)
         wait(lambda s: s.get('state') == 'normal', 'Explicit tray restore failed')
         command('hide', 2)
         wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Return to tray failed')
+        allow_window.clear()
         command('exit', 3)
         psutil.Process(first['pid']).wait(timeout=15)
+        last_pid = first['pid']
+        # Cold-start through VBS and directly through the hidden PS path as well.
+        for number, arguments in enumerate([
+            ['wscript.exe', str(base / 'Starta-FolderForge.vbs')],
+            ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+             '-File', str(base / 'Starta-FolderForge.ps1')],
+        ], 10):
+            subprocess.Popen(arguments, cwd=base, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+            current = wait(lambda s: s.get('pid') != last_pid and s.get('state') == 'withdrawn' and s.get('tray'),
+                           'Cold VBS/PowerShell startup failed')
+            last_pid = current['pid']
+            command('exit', number)
+            psutil.Process(last_pid).wait(timeout=15)
         # Install a deliberately broken candidate in the disposable installation.
         # The stable supervisor must restore the real previous app, with consent
         # supplied explicitly by this test harness (never a production flag).
@@ -131,7 +154,7 @@ def main():
         worker = subprocess.Popen([str(pythonw), str(harness), str(base), str(pythonw)],
                                   cwd=base, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
         assert worker.wait(timeout=45) == 1, 'Failed candidate was not detected'
-        recovered = wait(lambda s: s.get('pid') != first['pid'] and s.get('state') == 'withdrawn' and s.get('tray'),
+        recovered = wait(lambda s: s.get('pid') != last_pid and s.get('state') == 'withdrawn' and s.get('tray'),
                          'Previous app did not restart hidden after rollback')
         assert sentinel.read_text() == 'user data must survive'
         assert (base / 'folder.pyw').read_bytes() == (source / 'folder.pyw').read_bytes()

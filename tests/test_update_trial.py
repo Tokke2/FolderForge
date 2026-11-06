@@ -162,6 +162,14 @@ class TrialTests(unittest.TestCase):
         offer.assert_not_called()
         spawn.assert_not_called()
 
+    def test_direct_rollback_refuses_a_running_app(self):
+        self.install()
+        with patch.object(updater, '_app_mutex_exists', return_value=True):
+            with self.assertRaises(RuntimeError):
+                updater.rollback_update(self.base)
+        self.assertEqual((self.base / 'folder.pyw').read_text(), '# new release\n')
+        self.assertIsNotNone(updater.read_transaction(self.base))
+
     def test_update_and_rollback_discard_only_app_bytecode(self):
         cache = self.base / '__pycache__'
         cache.mkdir()

@@ -1,6 +1,9 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Startbekräftad appuppdatering: full backup före filbytet, bevarad fönsterlös övervakare och kontroll av process/starttoken, SHA-256 samt levande GUI/tray. Återställning erbjuds vid misslyckad start; vid timeout behålls backup utan att någon process tvångsavslutas. Projekt, inställningar och historik lämnas orörda. Gäller uppdateringar som installeras av denna uppdaterare.
+- Windows-CI för Python 3.11/3.13 med riktig dold GUI/tray, native/VBS/PowerShell-start, dubbelstart, visa/dölj/avsluta och avsiktligt trasig uppdatering med återställning. Synliga konsoler och oavsiktligt visade Tk-fönster övervakas; ingen universell konsolfrihetsgaranti påstås.
+- Matchande FolderForge-logotyp och förnyad ikon, korrekta bildproportioner i rubriken. Windows-specifika testfel och blandade CRLF/LF-rader i felgrupperingen rättade; logginitiering serialiserad mellan processer.
 - Renare gemensam ikon: guldfärgad mapp med turkos struktur utan bakgrundsplatta, transparent bakgrund och sju ICO-storlekar. Samma motiv i app, dialoger, systemfält, genvägar och startprogram. Begränsningen för Python-processikonen i Aktivitetshanteraren kvarstår.
 - Alltid minimerad start. Även extra starter lämnar befintligt fönster oförändrat och öppnar ingen ny instans. Öppna uttryckligen via systemfält/snabbtangent. Windows-låsfel stoppar ny start; säker hälsokontroll behålls.
 - Tangentbordsnavigering med Tab/Skift+Tab i visuell ordning, synlig fokusmarkering, Enter/mellanslag för åtgärder och Alt+ned för vallistor. Fokus hålls i modala dialoger och rullas fram; Ctrl+Page Up/Down byter synlig sida och Skift+F10 öppnar sidomenyns snabbmeny.
@@ -53,11 +56,11 @@ version automatiskt.
 Status visas under Hjälp → Uppdateringsstatus.
 
 För manuell installation: ladda ned Source code (zip) under Assets och packa
-upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Saknas Python installeras en stabil version via winget; befintlig Python återanvänds. Appen kräver Python 3.11+ med Tkinter.
+upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig system-Python och nödvändiga paket måste redan finnas; ingenting installeras automatiskt. Appen kräver Python 3.11+ med Tkinter.
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-277 automatiserade tester godkända och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+294 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-tray och hela uppdateringsförloppet behöver fortfarande verifieras
 på Windows. Publicerad från arbetsgrenen; main är orörd.
 

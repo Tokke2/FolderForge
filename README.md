@@ -530,3 +530,52 @@ Utveckling: efter ändringar i startskripten körs
 `python tools/sync_runtime_bootstrap.py`. Det uppdaterar återställningskopian
 i `updater.py`, så äldre sexfilersinstallationer också får de nya startfilerna.
 Tester kontrollerar att skripten och den inbäddade kopian överensstämmer.
+
+
+### Startbekräftad appuppdatering och återställning
+
+Den nya uppdateraren sparar en komplett kopia av berörda appfiler i
+`data/update-backup` **innan** någon appfil ersätts. En separat, bevarad
+övervakare provar den uppdaterade appen via `pythonw.exe`, utan konsol och
+med dold start. En callback i den levande Tk-loopen måste bekräfta både
+rätt process/starttoken, oförändrade appfiler och fungerande tray eller ett
+uttryckligen öppnat fönster. Förrän dess behålls säkerhetskopian och nya
+uppdateringskontroller pausas.
+
+Om provstarten avslutas före bekräftelsen erbjuds återställning. Den görs
+bara efter ditt godkännande och när ingen FolderForge-instans körs; den gamla
+appen startas därefter minimerad. Vid saknad bekräftelse efter 90 sekunder
+avslutas **ingen** process automatiskt. Stäng appen och starta via ordinarie
+startprogram igen för återställningserbjudandet. Samma återhämtning erbjuds
+vid nästa start efter ett strömavbrott eller en avbruten installation.
+
+Inställningar, historik, projekt och loggar återställs inte och raderas inte.
+Säkerhetskopians samtliga filer kontrolleras före återställning. En skadad
+backup stoppar återställningen i stället för att blanda in okända filer.
+Senast bekräftade backup behålls till nästa installation. Skyddet gäller
+uppdateringar som installeras **av den nya uppdateraren**, inte retroaktivt
+för installationen som först inför den.
+
+### Windows-testning
+
+`.github/workflows/windows.yml` kör enhetstester samt ett riktigt GUI-test på
+Windows med Python 3.11 och 3.13. `tools/windows_smoke.py` använder en separat
+tillfällig installation: native start, VBS och dold PowerShell-start, dold
+GUI/tray, dubbelstart utan extra GUI-process, uttrycklig återställning av
+fönstret, döljning och riktigt avslut. Dessutom installeras en avsiktligt trasig
+uppdatering för att verifiera att den bevarade övervakaren återställer och
+startar den tidigare appen utan att ändra testets användardata.
+
+Testet kontrollerar GUI-processens konsolhandtag och observerar synliga
+konsolfönster/Tk-fönster var tionde millisekund. Detta är mätbar testning,
+**inte en absolut garanti** för varje Windows-version, dator eller IT-policy.
+Ordinarie start är `Starta-FolderForge.vbs` eller appens genererade startprogram;
+ett konsolfönster som anroparen själv öppnar med `python.exe` kan inte
+förhindras retroaktivt. Ingen konsoltolk används som startreserv.
+CI:s paketinstallation sker endast på den tillfälliga GitHub-runnern,
+aldrig på användarens dator. Testresultat och loggar sparas som CI-artefakter.
+
+Den uppdaterade guldfärgade/turkosa ikonen finns i alla ICO-storlekar;
+en matchande FolderForge-logotyp används i appens rubrik utan att förvränga
+bildens proportioner. Delad system-Python behåller sin egen processidentitet
+i Aktivitetshanterarens Detaljer-vy.

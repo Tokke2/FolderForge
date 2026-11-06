@@ -498,6 +498,8 @@ def rollback_update(base):
     journal = read_transaction(base)
     if not journal:
         return False
+    if _app_mutex_exists():
+        raise RuntimeError('Stäng FolderForge före återställning; inga processer avslutas automatiskt')
     entries = journal.get('files')
     if not isinstance(entries, dict) or not entries or not all(_app_relative(n) for n in entries):
         raise ValueError('Otillåten sökväg i återställningen')
