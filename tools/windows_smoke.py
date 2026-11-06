@@ -25,7 +25,7 @@ def main():
     import updater
     evidence = Path('windows-evidence').resolve()
     evidence.mkdir(exist_ok=True)
-    base = Path(tempfile.mkdtemp(prefix='FolderForge-smoke-'))
+    base = Path(tempfile.mkdtemp(prefix='FolderForge-smoke-')).resolve()
     source = Path(__file__).resolve().parents[1]
     for name in updater.FILES:
         shutil.copy2(source / name, base / name)
