@@ -4849,7 +4849,7 @@ class FolderForgeApp(_DnDCTkBase):
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
             return
         command = read_json_safe(DATA_DIR / "windows-smoke-command.json", {}) or {}
-        if command.get("id") != getattr(self, "_smoke_command_id", None):
+        if command.get("pid") == os.getpid() and command.get("id") != getattr(self, "_smoke_command_id", None):
             self._smoke_command_id = command.get("id")
             action = command.get("action")
             if action == "restore":

@@ -95,7 +95,7 @@ def main():
     def command(action, number):
         path = base / 'data/windows-smoke-command.json'
         temporary = path.with_suffix('.tmp')
-        temporary.write_text(json.dumps(dict(id=number, action=action)))
+        temporary.write_text(json.dumps(dict(id=number, action=action, pid=status().get('pid'))))
         os.replace(temporary, path)
     try:
         launch()
