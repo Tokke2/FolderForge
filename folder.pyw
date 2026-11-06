@@ -355,7 +355,6 @@ try:
     import customtkinter as ctk
     import tkinter as tk
     from tkinter import messagebox, filedialog
-    from pynput import keyboard
     from PIL import Image
     import pystray
 
@@ -364,6 +363,13 @@ try:
 except ImportError as e:
     logger.error("Import misslyckades: %s", e)
     sys.exit(1)
+
+# Global hotkeys are optional: Wayland/macOS policy must not prevent startup.
+try:
+    from pynput import keyboard
+except (ImportError, RuntimeError, OSError) as exc:
+    keyboard = None
+    logger.warning("Global snabbtangent är inte tillgänglig på detta skrivbord: %s", exc)
 
 # Drag & Drop — kräver att root-fönstret använder TkinterDnD
 DND_AVAILABLE = False
@@ -2795,6 +2801,21 @@ def load_app_icon(
     return img
 
 
+def load_ui_icon(name, size=22, _cache={}):
+    names = {"Skapa": "create", "Historik": "history", "Mallar": "templates",
+             "Exportera": "export", "Inställningar": "settings", "Snabbtangent": "keyboard"}
+    key = (name, size)
+    if key not in _cache:
+        try:
+            prefix = BASE_DIR / "Icon" / ("nav-" + names[name])
+            _cache[key] = ctk.CTkImage(
+                light_image=Image.open(str(prefix) + "-light.png").convert("RGBA"),
+                dark_image=Image.open(str(prefix) + "-dark.png").convert("RGBA"), size=(size, size))
+        except (OSError, KeyError):
+            return None  # Older installations retain readable text/emoji fallback.
+    return _cache[key]
+
+
 def apply_icon_to_window(
     win: Any,
     icon_path: Optional[Path] = None,
@@ -3297,7 +3318,7 @@ MENU_THEMES: Dict[str, Dict[str, str]] = {
     "Dark": {
         "bg": "#172233",
         "fg": "#E7EDF6",
-        "active_bg": "#4C9EF1",
+        "active_bg": "#193047",
         "active_fg": "#ffffff",
         "disabled_fg": "#6a6a80",
         "border": "#2A3B50",
@@ -4019,7 +4040,7 @@ def sidebar_colors(appearance_mode: Any = None) -> Dict[str, str]:
 
     bg = bas.get("bg", "#1e1e2e")
     fg = bas.get("fg", "#f0f0f5")
-    aktiv = bas.get("active_bg", "#4C9EF1")
+    aktiv = bas.get("active_bg", "#193047")
     aktiv_fg = bas.get("active_fg", "#ffffff")
 
     return {
@@ -4313,7 +4334,8 @@ class DynamicTabView(ctk.CTkFrame):
             it = self._sidebar_items.get(namn)
             if it is None:
                 continue
-            btn.configure(text=it.display_text(self._collapsed))
+            btn.configure(text=("" if self._collapsed else it.label) if getattr(btn, "_ff_nav_image", None)
+                          else it.display_text(self._collapsed))
         # v5.0 steg 4 — knappens pil måste vända med läget, annars visar den
         # "Fäll in" när sidebarn redan är infälld.
         knapp = getattr(self, "_collapse_btn", None)
@@ -4391,12 +4413,16 @@ class DynamicTabView(ctk.CTkFrame):
             icon = TAB_ICONS.get(name, "")
             btn_text = f"{icon} {name}"
 
+        nav_image = load_ui_icon(name, scaled(22, self._scale))
+        if nav_image:
+            btn_text = "" if self._layout == "sidebar" and self._collapsed else name
         btn = ctk.CTkButton(
             self._nav_scroll if self._layout == "sidebar" else self._tab_bar,
-            text=btn_text,
+            text=btn_text, image=nav_image, compound="left",
             command=lambda n=name: self.show_tab(n),
             **self._button_kwargs(name, selected=False),
         )
+        btn._ff_nav_image = nav_image
         # I kollapsat läge är ikonen enda ledtråden, därför verktygstips.
         # Bindningen är ofarlig i utfällt läge eftersom tipset blir tomt.
         btn.bind("<Enter>", lambda e, n=name: self._visa_tip(n))
@@ -4861,7 +4887,7 @@ class FolderForgeApp(_DnDCTkBase):
         atomic_write_json(DATA_DIR / "windows-smoke-status.json", {
             "pid": os.getpid(), "state": self.state(),
             "tray": bool(self.systray_icon and self.systray_icon.visible),
-            "console": int(ctypes.windll.kernel32.GetConsoleWindow() or 0),
+            "console": int(ctypes.windll.kernel32.GetConsoleWindow() or 0) if IS_WINDOWS else 0,
             "icon": self._icon_method,
         })
         self.after(100, self._service_windows_smoke)
@@ -4921,6 +4947,14 @@ class FolderForgeApp(_DnDCTkBase):
         # togs (ico-fil saknas / icke-Windows) dog den tyst på int.append().
         self._icon_method = apply_icon_to_window(self, APP_ICON, size=32)
         logger.debug("Fönsterikon applicerad via %s", self._icon_method)
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSApplication, NSImage
+                self._mac_brand_icon = NSImage.alloc().initWithContentsOfFile_(str(APP_ICON_PNG))
+                if self._mac_brand_icon is not None:
+                    NSApplication.sharedApplication().setApplicationIconImage_(self._mac_brand_icon)
+            except Exception:
+                logger.debug("macOS Dock-ikon kunde inte sättas", exc_info=True)
 
     # ============================================================
     # Menyrad
@@ -5581,10 +5615,14 @@ class FolderForgeApp(_DnDCTkBase):
                               self.open_var, self._save_settings_silent)
 
         self.autostart_var = ctk.BooleanVar(value=self._check_autostart())
-        self._settings_option(
-            scroll, "autostart", self.autostart_var,
-            lambda: self._toggle_autostart(self.autostart_var.get()),
-        )
+        if IS_WINDOWS:
+            self._settings_option(
+                scroll, "autostart", self.autostart_var,
+                lambda: self._toggle_autostart(self.autostart_var.get()),
+            )
+        else:
+            ctk.CTkLabel(scroll, text="Autostart: lägg FolderForge-genvägen i operativsystemets inloggningsobjekt.",
+                         wraplength=380, anchor="w").pack(fill="x", padx=15, pady=8)
 
         # Regns-läge: normaliserar bara regnr-prefixet ('dss 817 årg 2020' →
         # 'DSS817 ÅRG 2020') — fri text efter följer alltid med.
@@ -6796,8 +6834,10 @@ class FolderForgeApp(_DnDCTkBase):
         try:
             if IS_WINDOWS:
                 os.startfile(path)
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', str(path.resolve())])
             else:
-                subprocess.Popen(['xdg-open', str(path)])
+                subprocess.Popen(['xdg-open', str(path.resolve())])
         except OSError as e:
             logger.warning("Kunde inte öppna mapp: %s", e)
 
@@ -6823,6 +6863,9 @@ class FolderForgeApp(_DnDCTkBase):
         return set(DEFAULT_HOTKEY)
 
     def _rec_hotkey(self) -> None:
+        if keyboard is None:
+            self._set_hotkey_status("Global snabbtangent stöds inte av detta skrivbord.")
+            return
         # Stoppa en eventuell gammal inspelningslyssnare FÖRST — annars läggs
         # två keyboard.Listener-trådar ovanpå varandra om man trycker Spela in
         # på nytt utan att spara/avbryta, och båda matar samma set.
@@ -6907,6 +6950,9 @@ class FolderForgeApp(_DnDCTkBase):
             self.hk_status_label.configure(text=text, text_color=UI_MUTED if active else "#c0392b")
 
     def _setup_global_hotkey(self) -> None:
+        if keyboard is None:
+            self._set_hotkey_status("Ej tillgänglig – använd systemfältets meny.")
+            return
         if self.global_hotkey:
             self.global_hotkey.stop()
         self.global_hotkey = None
@@ -7212,7 +7258,12 @@ class FolderForgeApp(_DnDCTkBase):
             ),
         )
         self.systray_icon = pystray.Icon(APP_NAME, img, APP_NAME, menu)
-        threading.Thread(target=self.systray_icon.run, daemon=True).start()
+        try:
+            # Cocoa must integrate with the main Tk event loop on macOS.
+            self.systray_icon.run_detached()
+        except Exception:
+            logger.exception("Systemfältet kunde inte startas; ingen osynlig app lämnas körande")
+            self._quit_app()
 
     def _stop_tray_icon(self) -> None:
         """Stoppa tray-ikonen exakt en gång — den ENDA vägen att plocka bort den.
@@ -7484,7 +7535,7 @@ class FolderForgeApp(_DnDCTkBase):
             height=scaled(60, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            body, text=" FolderForge", image=self._brand_image, compound="left",
+            body, text="" if self._brand_image else "FolderForge", image=self._brand_image, compound="left",
             font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
             text_color="white",
         ).place(x=scaled(15, s), y=scaled(15, s))

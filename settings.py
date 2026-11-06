@@ -209,12 +209,12 @@ SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
 # ══════════════════════════════════════════════════════════════════════════
 # Accentfärgerna används per kort/sektion i appen. MENU_THEMES i folder.pyw
 # är svaret på frågan "vilken färg blir bakgrunden?" — dessa är förgrunden.
-ACCENT_BLUE: Final[str] = "#4C9EF1"
+ACCENT_BLUE: Final[str] = "#193047"
 ACCENT_GREEN: Final[str] = "#2ECC71"
 ACCENT_RED: Final[str] = "#E74C3C"
 ACCENT_ORANGE: Final[str] = "#F39C12"
 ACCENT_PURPLE: Final[str] = "#9B59B6"
-ACCENT_TEAL: Final[str] = "#1ABC9C"
+ACCENT_TEAL: Final[str] = "#109A95"
 
 # Konventionell visningsordning (menyer, temaväljare, dubblett-kontroller).
 ACCENT_ORDER: Final[Tuple[str, ...]] = (

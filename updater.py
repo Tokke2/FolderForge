@@ -28,6 +28,7 @@ REPOSITORY = "Tokke2/FolderForge"
 INTERVAL = 12 * 60 * 60
 MAX_DOWNLOAD = 32 * 1024 * 1024
 FILES = frozenset({"folder.pyw", "settings.py", "historik.py", "logg.py", "updater.py", "cache_cleanup.py", "Starta-FolderForge.ps1", "Starta-FolderForge.vbs"})
+OPTIONAL_FILES = frozenset({"Starta-FolderForge.py", "requirements.txt"})
 logger = logging.getLogger(__name__)
 _check_lock = threading.Lock()
 
@@ -116,8 +117,8 @@ def unpack(data, destination):
                 continue
             relative = PurePosixPath(*parts[1:])
             name = str(relative)
-            allowed = name in FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
-                       and relative.suffix.lower() in {".png", ".ico"})
+            allowed = name in FILES | OPTIONAL_FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
+                       and relative.suffix.lower() in {".png", ".ico", ".icns"})
             if not allowed or member.is_dir():
                 continue
             if name in found:
@@ -140,10 +141,10 @@ def content_manifest(root):
     """SHA-256 för exakt de appfiler och ikoner som får installeras."""
     return {str(file.relative_to(root).as_posix()): hashlib.sha256(file.read_bytes()).hexdigest()
             for file in root.rglob("*") if file.is_file()
-            and (str(file.relative_to(root).as_posix()) in FILES
+            and (str(file.relative_to(root).as_posix()) in FILES | OPTIONAL_FILES
                  or (len(file.relative_to(root).parts) == 2
                      and file.relative_to(root).parts[0] == "Icon"
-                     and file.suffix.lower() in {".png", ".ico"}))}
+                     and file.suffix.lower() in {".png", ".ico", ".icns"}))}
 
 
 def matches_manifest(root, manifest):
@@ -154,7 +155,7 @@ def matches_manifest(root, manifest):
             relative = PurePosixPath(name)
             if (relative.is_absolute() or ".." in relative.parts or "\\" in name
                     or not (name in FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
-                                              and relative.suffix.lower() in {".png", ".ico"}))):
+                                              and relative.suffix.lower() in {".png", ".ico", ".icns"}))):
                 return False
             file = root / name
             if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != digest:
@@ -424,9 +425,33 @@ def start_updates(base, current_version):
     return stop
 
 
+def launch_portable(base=None, interpreter=None):
+    """Start hidden using existing Python only; no shell, pip or installations."""
+    import sys
+    base = Path(base or Path(__file__).resolve().parent).resolve()
+    interpreter = Path(interpreter or sys.executable)
+    if os.name == 'nt':
+        return launch_runtime_bootstrap(base, interpreter, ['--tray'])
+    logs = base / 'logs'
+    logs.mkdir(parents=True, exist_ok=True)
+    journal = base / 'data/update-transaction.json'
+    supervisor = base / 'data/update-supervisor.py'
+    if journal.exists():
+        if not supervisor.is_file():
+            raise OSError('Återställningsövervakaren saknas; säkerhetskopian lämnas orörd')
+        args = [str(interpreter), str(supervisor), '--recover', str(base), str(interpreter)]
+    else:
+        args = [str(interpreter), str(base / 'folder.pyw'), '--tray']
+    with (logs / 'folderforge-errors.log').open('ab') as errors:
+        return subprocess.Popen(args, cwd=base, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=errors,
+                                start_new_session=True, close_fds=True)
+
+
 def supervise_update(base, interpreter, recover=False, timeout=90, offer=None):
     # Serialize workers before inspecting a journal or offering recovery.
     handle = None
+    lock_stream = None
     if os.name == 'nt':
         import ctypes
         api = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -441,11 +466,23 @@ def supervise_update(base, interpreter, recover=False, timeout=90, offer=None):
         if ctypes.get_last_error() == 183:
             api.CloseHandle(handle)
             return 0
+    else:
+        import fcntl
+        folder = Path(base) / 'data'
+        folder.mkdir(parents=True, exist_ok=True)
+        lock_stream = (folder / 'update-supervisor.lock').open('a+b')
+        try:
+            fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            lock_stream.close()
+            return 0
     try:
         return _supervise_update(base, interpreter, recover, timeout, offer)
     finally:
         if handle:
             api.CloseHandle(handle)
+        if lock_stream:
+            lock_stream.close()
 
 
 # A stable copy of this module supervises a candidate, even if new imports fail.
@@ -477,8 +514,8 @@ def read_transaction(base):
 def _app_relative(name):
     path = PurePosixPath(name)
     return (isinstance(name, str) and '\\' not in name and '..' not in path.parts
-            and not path.is_absolute() and (name in FILES or
-            len(path.parts) == 2 and path.parts[0] == 'Icon' and path.suffix.lower() in {'.png', '.ico'}))
+            and not path.is_absolute() and (name in FILES | OPTIONAL_FILES or
+            len(path.parts) == 2 and path.parts[0] == 'Icon' and path.suffix.lower() in {'.png', '.ico', '.icns'}))
 
 
 def _invalidate_app_bytecode(base):
@@ -569,6 +606,18 @@ def launch_update_trial(base, interpreter):
 
 def _app_mutex_exists():
     if os.name != 'nt':
+        import fcntl
+        path = Path(os.environ.get('XDG_RUNTIME_DIR') or tempfile.gettempdir()) / 'FolderForge/folderforge.lock'
+        if not path.exists():
+            return False
+        try:
+            with path.open('r+b') as stream:
+                try:
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    return True
+        except OSError:
+            return True  # Unknown ownership/permissions is not permission to restore.
         return False
     import ctypes
     api = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -585,7 +634,20 @@ def _app_mutex_exists():
 
 def _offer_rollback(message):
     if os.name != 'nt':
-        return False
+        try:
+            import tkinter as tk
+            from tkinter import messagebox
+            root = tk.Tk()
+            root.withdraw()
+            try:
+                return messagebox.askyesno('FolderForge – säker återställning', message +
+                    '\n\nÅterställ föregående app? Projekt och inställningar ändras inte.',
+                    parent=root, default='no', icon='warning')
+            finally:
+                root.destroy()
+        except Exception:
+            logger.exception('Återställningsfrågan kunde inte visas; säkerhetskopian behålls')
+            return False
     import ctypes
     return ctypes.windll.user32.MessageBoxW(None, message + '\n\nÅterställ föregående app? Dina projekt och inställningar ändras inte.',
                                             'FolderForge – säker återställning', 0x134) == 6
@@ -660,7 +722,8 @@ def apply_pending(base):
     sources = [pending / name for name in FILES]
     if not all(path.is_file() for path in sources):
         return False
-    sources += list((pending / "Icon").glob("*.png")) + list((pending / "Icon").glob("*.ico"))
+    sources += [pending / name for name in OPTIONAL_FILES if (pending / name).is_file()]
+    sources += list((pending / "Icon").glob("*.png")) + list((pending / "Icon").glob("*.ico")) + list((pending / "Icon").glob("*.icns"))
     backup = base / "data/update-backup"
     if backup.exists():
         shutil.rmtree(backup)

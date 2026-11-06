@@ -1,0 +1,45 @@
+name: Linux and macOS desktop
+on:
+  push:
+    branches: ['arena/319fd9b1-folderforge']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  desktop:
+    runs-on: '${{ matrix.os }}'
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Linux graphical test environment (runner only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+      - name: Dependencies (disposable runner only)
+        run: python -m pip install -r requirements.txt psutil
+      - name: Unit tests
+        run: python tools/ci_tests.py
+      - name: Linux X11 Tk and tray integration
+        if: runner.os == 'Linux'
+        env:
+          PYSTRAY_BACKEND: xorg
+        run: xvfb-run -a python tools/posix_smoke.py
+      - name: macOS Cocoa Tk and tray integration
+        if: runner.os == 'macOS'
+        run: python tools/posix_smoke.py
+      - name: Preserve desktop evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-evidence-${{ matrix.os }}
+          path: windows-evidence/
