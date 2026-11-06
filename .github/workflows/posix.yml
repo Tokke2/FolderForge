@@ -24,7 +24,7 @@ jobs:
           python-version: '3.13'
       - name: Linux graphical test environment (runner only)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb stalonetray
       - name: Dependencies (disposable runner only)
         run: python -m pip install -r requirements.txt psutil
       - name: Unit tests
@@ -33,7 +33,14 @@ jobs:
         if: runner.os == 'Linux'
         env:
           PYSTRAY_BACKEND: xorg
-        run: xvfb-run -a python tools/posix_smoke.py
+        run: |
+          xvfb-run -a bash -c '
+            stalonetray --geometry 1x1+0+0 &
+            tray_pid=$!
+            trap "kill $tray_pid 2>/dev/null || true" EXIT
+            python tools/posix_smoke.py
+          '
+
       - name: macOS Cocoa Tk and tray integration
         if: runner.os == 'macOS'
         run: python tools/posix_smoke.py

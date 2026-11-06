@@ -70,7 +70,8 @@ inte automatiskt huvudfönstret.
 
 - **Öppna FolderForge** i ikonens meny visar fönstret.
 - **Stäng/minimera** döljer fönstret igen.
-- **Avsluta** i ikonens meny stänger appen helt.
+- **Avsluta** i ikonens meny eller **Arkiv → Avsluta FolderForge** stänger appen helt.
+- Linux X11 utan stöd för ikonmenyer: klicka på ikonen för att öppna, avsluta via Arkiv.
 - Global snabbtangent är ett tillval och beror på skrivbordets behörigheter.
 
 ## Operativsystem och begränsningar

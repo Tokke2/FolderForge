@@ -95,7 +95,8 @@ class PortableTests(unittest.TestCase):
         source = Path('folder.pyw').read_text(encoding='utf-8')
         self.assertIn('self.systray_icon.run_detached()', source)
         self.assertIn("elif sys.platform == 'darwin':", source)
-        self.assertNotIn("threading.Thread(target=self.systray_icon.run", source)
+        self.assertIn('if sys.platform == "darwin":', source)
+        self.assertIn("threading.Thread(target=self.systray_icon.run, daemon=True).start()", source)
 
 
 if __name__ == '__main__':

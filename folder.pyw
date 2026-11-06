@@ -2801,6 +2801,23 @@ def load_app_icon(
     return img
 
 
+def linux_tray_available():
+    """Xorg's visible flag can be true even when no panel accepted the icon."""
+    if not sys.platform.startswith("linux") or pystray.Icon.__module__ != "pystray._xorg":
+        return True
+    try:
+        from Xlib import display
+        connection = display.Display()
+        try:
+            selection = connection.intern_atom("_NET_SYSTEM_TRAY_S" + str(connection.get_default_screen()))
+            return bool(connection.get_selection_owner(selection))
+        finally:
+            connection.close()
+    except Exception:
+        logger.warning("Kunde inte verifiera Linux-systemfältet", exc_info=True)
+        return False
+
+
 def load_ui_icon(name, size=22, _cache={}):
     names = {"Skapa": "create", "Historik": "history", "Mallar": "templates",
              "Exportera": "export", "Inställningar": "settings", "Snabbtangent": "keyboard"}
@@ -4970,6 +4987,12 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self.configure(menu=self._menubar)
+        file_menu = tk.Menu(self._menubar, font=("Segoe UI", scaled_font(11, self._scale)),
+                            **menu_configure_kwargs(ctk.get_appearance_mode()))
+        file_menu.add_command(label="Minimera till systemfältet", command=self._minimize_to_systray)
+        file_menu.add_separator()
+        file_menu.add_command(label="Avsluta FolderForge", command=self._quit_app)
+        self._menubar.add_cascade(label="Arkiv", menu=file_menu)
 
         # M14/v5.0 steg 4 — SLUTFÖRD. Block B5:s kommentar hävdade att alla
         # fem hårdkodade menyfärgerna ersatts, men i verkligheten patchades
@@ -5804,8 +5827,12 @@ class FolderForgeApp(_DnDCTkBase):
         )
         f.pack(fill="x", padx=scaled(10, s), pady=(scaled(8, s), scaled(4, s)))
 
+        section = next((name for name in TAB_ICONS if name.lower() in title.lower()), None)
+        section_icon = load_ui_icon(section, scaled(22, s)) if section else None
+        if section_icon:
+            title = title.lstrip("📋📤⚙️⌨️🕐🏗️ ")
         ctk.CTkLabel(
-            f, text=title,
+            f, text=title, image=section_icon, compound="left",
             font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
             text_color=(title_light, title_dark), anchor="w",
         ).pack(
@@ -7234,6 +7261,16 @@ class FolderForgeApp(_DnDCTkBase):
         if self._tray_stopping:
             self.after(500, self._minimize_to_systray)
             return
+        if not linux_tray_available():
+            attempts = getattr(self, "_tray_start_attempts", 0) + 1
+            self._tray_start_attempts = attempts
+            if attempts < 40:  # Let the desktop panel initialize after login.
+                self.after(500, self._minimize_to_systray)
+            else:
+                logger.error("Inget Linux-systemfält hittades; dold start avbröts. Aktivera ett systemfält och starta igen.")
+                self._quit_app()
+            return
+        self._tray_start_attempts = 0
         # Samma ikonkedja som fönstren (M28): cachad, RGBA och med
         # procedurell reserv — inte rå Image.open som kraschar om .ico saknas.
         img = load_app_icon(
@@ -7259,8 +7296,12 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self.systray_icon = pystray.Icon(APP_NAME, img, APP_NAME, menu)
         try:
-            # Cocoa must integrate with the main Tk event loop on macOS.
-            self.systray_icon.run_detached()
+            if sys.platform == "darwin":
+                # Cocoa integrates with Tk's main event loop. Xorg's detached
+                # implementation starts setup twice and leaks a waiting thread.
+                self.systray_icon.run_detached()
+            else:
+                threading.Thread(target=self.systray_icon.run, daemon=True).start()
         except Exception:
             logger.exception("Systemfältet kunde inte startas; ingen osynlig app lämnas körande")
             self._quit_app()
