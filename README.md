@@ -78,17 +78,22 @@ inte automatiskt huvudfönstret.
 
 | | Windows | macOS | Linux |
 |---|---|---|---|
-| Projekt, mallar, historik och export | Ja | Porterat | Porterat |
+| Projekt, mallar, historik och export | Ja | Ja | Ja |
 | Startikon | Native startprogram | Genererad `.app` | Genererad `.desktop` |
 | Dold start | Systemfält | Menyrad | Systemfält krävs |
 | Inbyggd autostart-inställning | Ja | Använd OS inloggningsobjekt | Använd skrivbordets autostart |
 | Global snabbtangent | Beror på policy | Kan kräva Hjälpmedel/Input Monitoring | X11; Wayland kan begränsa |
 
-**Windows har verifierats med verkliga GUI-/uppdateringstester.** Se
-[CI-körningarna](https://github.com/Tokke2/FolderForge/actions) för aktuella
-Windows-, Linux- och macOS-resultat. Plattformsspecifika tester är inte en
-garanti för varje skrivbordsmiljö. macOS/Linux ska inte betraktas som fullt
-verifierade bara för att enhetstester går igenom.
+**Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
+samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
+308 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
+med återställning och bevarade användardata.
+
+[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42199566829) ·
+[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42199566826)
+
+Detta verifierar inte alla macOS-versioner, Linux-skrivbord eller IT-policyer.
 
 Linux behöver en grafisk session och ett fungerande systemfält. GNOME/Wayland
 kan kräva en systemfältstillägg och/eller XWayland; ren Wayland stöds inte

@@ -1,4 +1,7 @@
-# FolderForge
+# Teknisk guide för FolderForge
+
+För snabbstart och aktuell OS-status, se [README](../README.md).
+Vissa avsnitt nedan beskriver Windows-specifika funktioner.
 
 © 2026 Rickard Längkvist
 
