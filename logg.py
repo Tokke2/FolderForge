@@ -50,11 +50,11 @@ def local_today():
 
 
 @contextmanager
-def _locked_logs(folder):
+def _locked_logs(folder, filename=".folderforge-log.lock"):
     """Samma kortlivade fillås i alla processer, även före appens instanslås."""
     with _file_lock:
         folder.mkdir(parents=True, exist_ok=True)
-        with (folder / ".folderforge-log.lock").open("a+b") as stream:
+        with (folder / filename).open("a+b") as stream:
             if stream.seek(0, os.SEEK_END) == 0:
                 stream.write(b"0")
                 stream.flush()
@@ -302,16 +302,19 @@ def init_logging() -> None:
     # Importera fel INNAN vanliga historiska loggar flyttas till datumarkiv.
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        marker = LOG_DIR / ".errors-history-imported"
-        import_history = (not marker.exists() and not ERROR_LOG_FILE.exists()
-                          and not any(LOG_DIR.glob(ERROR_LOG_FILE.name + ".[0-9]*")))
-        _merge_legacy_errors()
-        errors = PersistentErrorHandler(ERROR_LOG_FILE)
-        errors.setFormatter(fmt)
-        rot.addHandler(errors)
-        if import_history:
-            _import_existing_errors(errors)
-        marker.touch(exist_ok=True)
+        # Separate process-wide initialization lock; handler writes below use
+        # the ordinary log lock and must never recursively lock the same file.
+        with _locked_logs(LOG_DIR, '.folderforge-log-init.lock'):
+            marker = LOG_DIR / ".errors-history-imported"
+            import_history = (not marker.exists() and not ERROR_LOG_FILE.exists()
+                              and not any(LOG_DIR.glob(ERROR_LOG_FILE.name + ".[0-9]*")))
+            _merge_legacy_errors()
+            errors = PersistentErrorHandler(ERROR_LOG_FILE)
+            errors.setFormatter(fmt)
+            rot.addHandler(errors)
+            if import_history:
+                _import_existing_errors(errors)
+            marker.touch(exist_ok=True)
     except Exception:
         _logger.error("Kunde inte öppna den samlade felloggen", exc_info=True)
 

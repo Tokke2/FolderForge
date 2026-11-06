@@ -156,4 +156,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except Exception:
+        import traceback
+        details = traceback.format_exc()
+        for log in Path('windows-evidence/logs').glob('*.log'):
+            details += '\n' + log.name + '\n' + log.read_text(encoding='utf-8', errors='replace')[-12000:]
+        print('::error title=Real Windows startup::' + details.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A'), flush=True)
+        raise

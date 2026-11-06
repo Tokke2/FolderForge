@@ -162,6 +162,20 @@ class TrialTests(unittest.TestCase):
         offer.assert_not_called()
         spawn.assert_not_called()
 
+    def test_update_and_rollback_discard_only_app_bytecode(self):
+        cache = self.base / '__pycache__'
+        cache.mkdir()
+        ours = cache / 'settings.cpython-313.pyc'
+        other = cache / 'unrelated.cpython-313.pyc'
+        ours.write_bytes(b'old cached code')
+        other.write_bytes(b'not our module')
+        self.install()
+        self.assertFalse(ours.exists())
+        ours.write_bytes(b'candidate cached code')
+        updater.rollback_update(self.base)
+        self.assertFalse(ours.exists())
+        self.assertEqual(other.read_bytes(), b'not our module')
+
     def test_recovery_guards_are_in_both_windowless_launchers(self):
         ps = updater.RUNTIME_BOOTSTRAP_FILES['Starta-FolderForge.ps1']
         self.assertIn('update-transaction.json', ps)
