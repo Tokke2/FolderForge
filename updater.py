@@ -1084,7 +1084,7 @@ def ensure_runtime_bootstrap(base):
         target = base / name
         encoding = 'utf-8-sig' if name.endswith('.ps1') else 'utf-8'
         payload = content.encode(encoding)
-        if target.is_file() and target.read_bytes() == payload:
+        if target.is_file() and target.read_bytes().replace(b'\r\n', b'\n') == payload.replace(b'\r\n', b'\n'):
             continue
         fd, temporary = tempfile.mkstemp(prefix='.bootstrap-', dir=base)
         try:

@@ -36,6 +36,16 @@ class RuntimeBootstrapTests(unittest.TestCase):
         updater.ensure_runtime_bootstrap(self.base)
         self.assertEqual(script.read_text(encoding='utf-8-sig'), self.ps)
 
+    def test_valid_windows_line_endings_are_not_rewritten_after_manifest(self):
+        updater.ensure_runtime_bootstrap(self.base)
+        for name in updater.RUNTIME_BOOTSTRAP_FILES:
+            path = self.base / name
+            path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+        before = {name: (self.base / name).read_bytes() for name in updater.RUNTIME_BOOTSTRAP_FILES}
+        updater.ensure_runtime_bootstrap(self.base)
+        for name, data in before.items():
+            self.assertEqual((self.base / name).read_bytes(), data)
+
     def test_failed_atomic_bootstrap_write_keeps_existing_file(self):
         script = self.base / 'Starta-FolderForge.ps1'
         script.write_text('existing script')
