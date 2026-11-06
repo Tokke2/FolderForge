@@ -1,6 +1,7 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Omgjord dialog för nytt standardprojekt: breda etiketter utan smal vertikal radbrytning, kompakt formulär, lokal och år på samma rad samt alltid synligt slutnamn med Skapa/Avbryt direkt under. Formuläret kan rullas utan att åtgärderna försvinner.
 - Multi-OS: portabel dold start med befintlig Python, macOS menyradsintegration på huvudtråden, Linux X11-tray och lås för säkrare uppdateringsåterställning. macOS öppnar filer/mappar med Finder. Wayland och företagsbehörigheter har uttryckliga begränsningar.
 - Generera lokala `.app`-/`.desktop`-genvägar med egen ikon, utan installation eller automatisk aktivering av autostart. Nativ Windows-start behålls. macOS/Linux använder operativsystemets egna inloggningsobjekt.
 - Kort svensk README med logotyp, ikonöversikt, OS-guide, tydliga förutsättningar och felsökning. Detaljer flyttade till docs/TEKNISK_GUIDE.md.
@@ -64,15 +65,15 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-308 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+309 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-CI godkänd för Python 3.11 och 3.13; macOS/Cocoa och Linux/X11
 med Python 3.13 också godkända. Linux-testet använder Xvfb och stalonetray.
 Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,
 fungerande uppdatering med Tk-bekräftelse och trasig uppdatering med återställning.
 Användardata bevaras. Windows-testet övervakar synliga konsoler/Tk-fönster.
 Wayland, alla OS-versioner och företagens IT-policyer är inte fullständigt verifierade.
-Windows: https://github.com/Tokke2/FolderForge/actions/runs/42199566829
-macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42199566826
+Windows: https://github.com/Tokke2/FolderForge/actions/runs/42206085136
+macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42206085153
 Publicerad från arbetsgrenen; main är orörd.
 
 ---

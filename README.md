@@ -86,12 +86,12 @@ inte automatiskt huvudfönstret.
 
 **Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
-308 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+309 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
-[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42199566829) ·
-[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42199566826)
+[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42206085136) ·
+[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42206085153)
 
 Detta verifierar inte alla macOS-versioner, Linux-skrivbord eller IT-policyer.
 
