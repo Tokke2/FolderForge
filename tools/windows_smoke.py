@@ -108,6 +108,36 @@ def main():
         wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Return to tray failed')
         command('exit', 3)
         psutil.Process(first['pid']).wait(timeout=15)
+        # Install a deliberately broken candidate in the disposable installation.
+        # The stable supervisor must restore the real previous app, with consent
+        # supplied explicitly by this test harness (never a production flag).
+        pending = base / 'data/update-pending'
+        pending.mkdir()
+        for name in updater.FILES:
+            shutil.copy2(base / name, pending / name)
+        (pending / 'folder.pyw').write_text("raise RuntimeError('simulated failed update')\n")
+        sentinel = base / 'data/user-keep.txt'
+        sentinel.write_text('user data must survive')
+        updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',
+                                     pending_hashes=updater.content_manifest(pending)))
+        updater.apply_pending(base)
+        harness = base / 'data/trial-ci.py'
+        harness.write_text(
+            'import importlib.util,sys\nfrom pathlib import Path\n'
+            'base=Path(sys.argv[1])\n'
+            'spec=importlib.util.spec_from_file_location("stable",base/"data/update-supervisor.py")\n'
+            'module=importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n'
+            'sys.exit(module.supervise_update(base,Path(sys.argv[2]),offer=lambda message: True))\n')
+        worker = subprocess.Popen([str(pythonw), str(harness), str(base), str(pythonw)],
+                                  cwd=base, env=env, creationflags=subprocess.CREATE_NO_WINDOW)
+        assert worker.wait(timeout=45) == 1, 'Failed candidate was not detected'
+        recovered = wait(lambda s: s.get('pid') != first['pid'] and s.get('state') == 'withdrawn' and s.get('tray'),
+                         'Previous app did not restart hidden after rollback')
+        assert sentinel.read_text() == 'user data must survive'
+        assert (base / 'folder.pyw').read_bytes() == (source / 'folder.pyw').read_bytes()
+        assert not (base / 'data/update-transaction.json').exists()
+        command('exit', 4)
+        psutil.Process(recovered['pid']).wait(timeout=15)
         assert not violations, violations
     finally:
         stop.set()

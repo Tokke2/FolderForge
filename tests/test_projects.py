@@ -87,7 +87,7 @@ class ProjectTests(unittest.TestCase):
         created = self.ns['_build_structure'](app, 'jobb', [{'path': ['ny'], 'is_dir': True}])
         self.assertFalse(created)
         self.assertFalse((self.base / 'JOBB/ny').exists())
-        self.assertFalse((self.base / 'jobb').exists())
+        self.assertNotIn('jobb', [path.name for path in self.base.iterdir()])
         app._on_creation_success.assert_not_called()
         app._open_path.assert_called_once()
 

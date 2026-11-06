@@ -424,7 +424,7 @@ def _error_entries(text):
                 current = None
                 continue
             module = (match[3] or 'äldre_logg').rsplit(':', 1)[0]
-            message = match[4]
+            message = match[4].rstrip('\r\n')
             if module == 'äldre_logg' and message.startswith('[launcher] '):
                 module, message = 'launcher', message[len('[launcher] '):]
             identity = '\0'.join((module, match[2], message))

@@ -93,6 +93,14 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertEqual(len(issues), 1)
         self.assertEqual(issues[0]['count'], 2)
 
+    def test_mixed_windows_and_unix_lines_group_together(self):
+        self.errors.write_bytes(b'2026-11-04 12:00:00 ERROR [app:42] [MainThread] same\r\n')
+        self.write('same')
+        issues, _ = logg.get_error_issues()
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0]['count'], 2)
+        self.assertEqual(issues[0]['message'], 'same')
+
     def test_empty_error_list(self):
         self.assertEqual(logg.get_error_issues()[0], [])
 

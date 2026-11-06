@@ -78,7 +78,7 @@ class CleanupTests(unittest.TestCase):
         original = Path.unlink
 
         def unlink(path, *args, **kwargs):
-            if path == locked:
+            if path.resolve() == locked.resolve():
                 raise PermissionError('locked')
             return original(path, *args, **kwargs)
 

@@ -22,7 +22,7 @@ class FocusTests(unittest.TestCase):
         tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
         node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'SingleInstanceLock')
         self.ns = dict(Path=Path, os=os, re=re, tempfile=tempfile, time=time,
-                       ctypes=ctypes, atexit=Mock(), logger=Mock(), IS_WINDOWS=False,
+                       ctypes=ctypes, atexit=Mock(), logger=Mock(), IS_WINDOWS=(os.name == 'nt'),
                        DEFAULT_POLL_MS=1000, BASE_DIR=self.folder, _pid_alive=lambda pid: pid == os.getpid())
         nodes = [ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0), node]
         exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), 'lock', 'exec'), self.ns)

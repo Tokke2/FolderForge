@@ -50,7 +50,7 @@ class BrandingTests(unittest.TestCase):
         exe = self.build(runner)
         self.assertEqual(exe.name, 'FolderForge.exe')
         self.assertIn('/target:winexe', runner.call_args.args[0])
-        self.assertIn('/win32icon:' + str(self.icon), runner.call_args.args[0])
+        self.assertIn('/win32icon:' + str(self.icon.resolve()), runner.call_args.args[0])
 
     def test_cached_launcher_not_recompiled(self):
         self.build()
@@ -126,7 +126,7 @@ class BrandingTests(unittest.TestCase):
 
     def test_source_quotes_paths_and_forwards_selftest(self):
         source = updater.launcher_source(Path('C:/Lisa"s/pythonw.exe'), Path('C:/Folder Forge/folder.pyw'))
-        self.assertIn('@"C:/Lisa""s/pythonw.exe"', source)
+        self.assertIn('@"' + str(Path('C:/Lisa"s/pythonw.exe')).replace('"', '""') + '"', source)
         self.assertIn('args.Contains("--selftest")', source)
         self.assertIn('info.CreateNoWindow = true', source)
         self.assertIn('return process.ExitCode', source)
