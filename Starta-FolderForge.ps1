@@ -93,7 +93,13 @@ try {
     $env:FOLDERFORGE_RUNTIME_POLICY = 'system-python'
     $Start = New-Object Diagnostics.ProcessStartInfo
     $Start.FileName = $Windowless
-    $Start.Arguments = (Quote-Argument (Join-Path $Root 'folder.pyw')) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    $Target = Join-Path $Root 'folder.pyw'
+    $Supervisor = Join-Path $Root 'data/update-supervisor.py'
+    if ((Test-Path -LiteralPath (Join-Path $Root 'data/update-transaction.json')) -and (Test-Path -LiteralPath $Supervisor)) {
+        $Target = $Supervisor
+        $AppArgs = @('--recover',$Root,$Windowless)
+    }
+    $Start.Arguments = (Quote-Argument $Target) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
     $Start.WorkingDirectory = $Root
     $Start.UseShellExecute = $false
     $Start.CreateNoWindow = $true

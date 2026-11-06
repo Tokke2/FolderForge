@@ -1,0 +1,32 @@
+name: Windows startup and update safety
+on:
+  push:
+    branches: ['arena/319fd9b1-folderforge']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python }}'
+      - name: Install test dependencies on the disposable runner only
+        run: python -m pip install customtkinter pillow pystray pynput pywin32 tkinterdnd2 psutil
+      - name: Unit and update recovery tests
+        run: python -m unittest discover -s tests -v
+      - name: Real Windows startup, tray, double-start and exit
+        run: python tools/windows_smoke.py
+      - name: Preserve Windows evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-evidence-${{ matrix.python }}
+          path: windows-evidence/

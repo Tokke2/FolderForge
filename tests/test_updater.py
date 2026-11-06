@@ -1,4 +1,5 @@
 import io
+import os
 import json
 from pathlib import Path
 import tempfile
@@ -132,6 +133,11 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(updater.read_state(self.base)['pending_revision'], REVISION)
         self.assertTrue(updater.apply_pending(self.base))
         self.assertEqual(updater.read_state(self.base)['installed_revision'], REVISION)
+        journal = updater.read_transaction(self.base)
+        journal['trial_pid'] = os.getpid()
+        updater._write_transaction(self.base, journal)
+        with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN=journal['token']):
+            self.assertTrue(updater.confirm_startup(self.base))
         with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
             updater.check_once(self.base, '0.0.2', now=100000 + updater.INTERVAL)
             self.assertEqual(fetch.call_count, 2)

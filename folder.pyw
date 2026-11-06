@@ -4768,7 +4768,7 @@ class FolderForgeApp(_DnDCTkBase):
         # konsol-python (svart ruta vid inloggning) INNAN något annat körs.
         # Kastar aldrig; returnerar 'skipped' utanför Windows.
         try:
-            resultat = repair_stale_autostart(APP_NAME)
+            resultat = "skipped" if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1" else repair_stale_autostart(APP_NAME)
             if resultat == "repaired":
                 logger.info("Autostart reparerad vid start (ingen konsolruta).")
         except Exception:
@@ -4804,8 +4804,9 @@ class FolderForgeApp(_DnDCTkBase):
             self, ctk, self.settings.high_contrast, self.settings.text_size)
         self.bind_class(FOCUS_TAG, "<Control-Next>", lambda e: self._keyboard_page(e, 1), add="+")
         self.bind_class(FOCUS_TAG, "<Control-Prior>", lambda e: self._keyboard_page(e, -1), add="+")
-        self._setup_global_hotkey()
-        self._toggle_autostart(self.autostart_var.get(), initial=True)
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            self._setup_global_hotkey()
+            self._toggle_autostart(self.autostart_var.get(), initial=True)
 
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_systray)
         self.bind("<Configure>", self._on_resize, add="+")
@@ -4818,6 +4819,38 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Fönster
     # ============================================================
+    def _confirm_update_start(self):
+        if self.winfo_exists() and ((self.systray_icon is not None and self.systray_icon.visible)
+                                   or self.state() in ("normal", "zoomed")):
+            try:
+                from updater import confirm_startup
+                confirm_startup(BASE_DIR)
+            except Exception:
+                logger.exception("Kunde inte bekräfta uppdaterad start; säkerhetskopian behålls")
+        else:
+            self.after(250, self._confirm_update_start)
+
+    def _service_windows_smoke(self):
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            return
+        command = read_json_safe(DATA_DIR / "windows-smoke-command.json", {}) or {}
+        if command.get("id") != getattr(self, "_smoke_command_id", None):
+            self._smoke_command_id = command.get("id")
+            action = command.get("action")
+            if action == "restore":
+                self._restore_from_tray()
+            elif action == "hide":
+                self._minimize_to_systray()
+            elif action == "exit":
+                self.after(100, self._quit_app)
+        atomic_write_json(DATA_DIR / "windows-smoke-status.json", {
+            "pid": os.getpid(), "state": self.state(),
+            "tray": bool(self.systray_icon and self.systray_icon.visible),
+            "console": int(ctypes.windll.kernel32.GetConsoleWindow() or 0),
+            "icon": self._icon_method,
+        })
+        self.after(100, self._service_windows_smoke)
+
     def _configure_window(self) -> None:
         self.configure(fg_color=UI_BACKGROUND)
         self.title(f"{APP_NAME} v{APP_VERSION}")
@@ -4987,11 +5020,18 @@ class FolderForgeApp(_DnDCTkBase):
             padx=scaled(20, s), pady=scaled(10, s),
         )
 
-        brand_image = load_app_icon(APP_ICON_PNG, 64)
+        try:
+            brand_image = Image.open(BASE_DIR / "Icon" / "folderforge-logo.png").convert("RGBA")
+        except (OSError, ValueError):
+            brand_image = None
+        logo_ratio = min(220 / brand_image.width, 44 / brand_image.height) if brand_image else 1
+        logo_size = (scaled(max(1, int(brand_image.width * logo_ratio)), s),
+                     scaled(max(1, int(brand_image.height * logo_ratio)), s)) if brand_image else (1, 1)
         self._brand_image = ctk.CTkImage(light_image=brand_image, dark_image=brand_image,
-                                        size=(scaled(36, s), scaled(36, s))) if brand_image else None
+                                        size=logo_size) if brand_image else None
         ctk.CTkLabel(
-            header_inner, text=" FolderForge", image=self._brand_image, compound="left",
+            header_inner, text="" if self._brand_image else "FolderForge", image=self._brand_image, compound="left",
+            fg_color="#FFFFFF", corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
             text_color=UI_TEXT,
         ).pack(side="left")
@@ -7784,7 +7824,7 @@ if __name__ == "__main__":
     _start_minimerad = True
 
     try:
-        from updater import apply_pending, start_updates
+        from updater import apply_pending, start_updates, launch_update_trial
         try:
             _updated = apply_pending(BASE_DIR)
         except Exception as exc:
@@ -7795,9 +7835,11 @@ if __name__ == "__main__":
         if _updated:
             # Läs in alla nya moduler i en ren process, med samma startläge.
             _instance_lock.release()
-            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "folder.pyw"), *sys.argv[1:]])
+            launch_update_trial(BASE_DIR, sys.executable)
+            sys.exit(0)
         app = FolderForgeApp(start_minimerad=_start_minimerad)
-        app._update_stop = start_updates(BASE_DIR, APP_VERSION)
+        app._update_stop = (threading.Event() if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1"
+                            else start_updates(BASE_DIR, APP_VERSION))
         from cache_cleanup import start_cleanup
         app._cleanup_stop = start_cleanup(BASE_DIR)
         from logg import start_log_archiver
@@ -7806,6 +7848,9 @@ if __name__ == "__main__":
         # Polla triggerfilen i Tk-huvudtråden (~1 s) och återställ fönstret.
         # root.after() är den trådsäkra vägen in i Tk (C43).
         _instance_lock.poll_start(app, app._restore_from_tray)
+        app.after(250, app._confirm_update_start)
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
+            app.after(100, app._service_windows_smoke)
         app.mainloop()
     finally:
         _instance_lock.release()

@@ -318,7 +318,7 @@ def _checked_once(base, current_version, now=None, *, force=False):
 
 def check_once(base, current_version, now=None, *, force=False):
     """Manuell kontroll får kringgå intervallet, men aldrig starta parallell hämtning."""
-    if not _check_lock.acquire(blocking=False):
+    if read_state(base).get('startup_pending') or not _check_lock.acquire(blocking=False):
         return False
     try:
         _checked_once(base, current_version, now, force=force)
@@ -329,6 +329,9 @@ def check_once(base, current_version, now=None, *, force=False):
 
 def pending_ready_for_restart(base):
     state = read_state(base)
+    if state.get('startup_pending'):
+        return False
+
     return bool(not _check_lock.locked() and not state.get("restart_blocked")
                 and version(state.get("pending", ""))
                 and matches_manifest(base / "data/update-pending", state.get("pending_hashes")))
@@ -421,6 +424,206 @@ def start_updates(base, current_version):
     return stop
 
 
+def supervise_update(base, interpreter, recover=False, timeout=90, offer=None):
+    # Serialize workers before inspecting a journal or offering recovery.
+    handle = None
+    if os.name == 'nt':
+        import ctypes
+        api = ctypes.WinDLL('kernel32', use_last_error=True)
+        api.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        api.CreateMutexW.restype = ctypes.c_void_p
+        api.CloseHandle.argtypes = [ctypes.c_void_p]
+        name = 'Local\\FolderForge_Update_' + hashlib.sha256(str(Path(base).resolve()).lower().encode()).hexdigest()[:16]
+        ctypes.set_last_error(0)
+        handle = api.CreateMutexW(None, False, name)
+        if not handle:
+            raise OSError('Uppdateringslåset kunde inte tas')
+        if ctypes.get_last_error() == 183:
+            api.CloseHandle(handle)
+            return 0
+    try:
+        return _supervise_update(base, interpreter, recover, timeout, offer)
+    finally:
+        if handle:
+            api.CloseHandle(handle)
+
+
+# A stable copy of this module supervises a candidate, even if new imports fail.
+def _write_transaction(base, value):
+    path = Path(base) / 'data/update-transaction.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix='.transaction-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+            json.dump(value, stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+
+
+def read_transaction(base):
+    path = Path(base) / 'data/update-transaction.json'
+    if not path.exists():
+        return None
+    value = json.loads(path.read_text('utf-8'))
+    if not isinstance(value, dict) or not isinstance(value.get('token'), str):
+        raise ValueError('Ogiltig uppdateringstransaktion; ingen automatisk ändring görs')
+    return value
+
+
+def _app_relative(name):
+    path = PurePosixPath(name)
+    return (isinstance(name, str) and '\\' not in name and '..' not in path.parts
+            and not path.is_absolute() and (name in FILES or
+            len(path.parts) == 2 and path.parts[0] == 'Icon' and path.suffix.lower() in {'.png', '.ico'}))
+
+
+def rollback_update(base):
+    """Restore only journaled app files; never settings, projects, history or logs."""
+    base = Path(base)
+    journal = read_transaction(base)
+    if not journal:
+        return False
+    entries = journal.get('files')
+    if not isinstance(entries, dict) or not entries or not all(_app_relative(n) for n in entries):
+        raise ValueError('Otillåten sökväg i återställningen')
+    backup = base / 'data/update-backup'
+    # Validate the ENTIRE backup before changing any current file.
+    for name, digest in entries.items():
+        target, saved = base / name, backup / name
+        if target.is_symlink() or saved.is_symlink() or target.parent.is_symlink() or saved.parent.is_symlink():
+            raise ValueError('Symbolisk länk i återställningen')
+        if digest is not None and (not saved.is_file() or hashlib.sha256(saved.read_bytes()).hexdigest() != digest):
+            raise ValueError('Säkerhetskopian saknas eller har ändrats: ' + name)
+    for name, digest in entries.items():
+        target = base / name
+        if digest is None:
+            target.unlink(missing_ok=True)
+        else:
+            temporary = target.with_name(target.name + '.rollback-tmp')
+            shutil.copy2(backup / name, temporary)
+            os.replace(temporary, target)
+    state = dict(journal['previous_state'])
+    for key in ('pending', 'pending_hashes', 'pending_revision', 'pending_notes'):
+        state.pop(key, None)
+    state.update(status='error', restart_blocked=True,
+                 installation_error='Föregående app återställd efter misslyckad start.', startup_pending=False)
+    write_state(base, state)
+    (base / 'data/update-transaction.json').unlink()
+    return True
+
+
+def confirm_startup(base):
+    """Called by a live Tk callback only after the hidden GUI and tray are ready."""
+    journal = read_transaction(base)
+    if not journal or journal.get('phase') == 'confirmed':
+        return False
+    if (os.environ.get('FOLDERFORGE_UPDATE_TOKEN') != journal['token']
+            or journal.get('trial_pid') != os.getpid()):
+        return False
+    state = read_state(base)
+    if not matches_manifest(Path(base), state.get('installed_hashes')):
+        raise ValueError('Appfiler ändrades före startbekräftelsen')
+    state.update(startup_pending=False, startup_verified_at=time.time())
+    write_state(base, state)
+    journal['phase'] = 'confirmed'
+    _write_transaction(base, journal)
+    return True
+
+
+def _windowless_interpreter(interpreter):
+    interpreter = Path(interpreter)
+    if os.name == 'nt':
+        interpreter = interpreter.with_name('pythonw.exe')
+        if not interpreter.is_file():
+            raise OSError('pythonw.exe saknas; ingen konsolreserv används')
+    return interpreter
+
+
+def launch_update_trial(base, interpreter):
+    base = Path(base)
+    interpreter = _windowless_interpreter(interpreter)
+    supervisor = base / 'data/update-supervisor.py'
+    if not supervisor.is_file():
+        raise OSError('Stabil uppdateringsövervakare saknas')
+    return subprocess.Popen([str(interpreter), str(supervisor), '--trial', str(base), str(interpreter)],
+                            cwd=str(base), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+
+
+def _app_mutex_exists():
+    if os.name != 'nt':
+        return False
+    import ctypes
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    api.OpenMutexW.argtypes = [ctypes.c_uint, ctypes.c_int, ctypes.c_wchar_p]
+    api.OpenMutexW.restype = ctypes.c_void_p
+    api.CloseHandle.argtypes = [ctypes.c_void_p]
+    for name in ('Global\\FolderForge_SingleInstance_Mutex', 'Local\\FolderForge_SingleInstance_Mutex'):
+        handle = api.OpenMutexW(0x100000, False, name)
+        if handle:
+            api.CloseHandle(handle)
+            return True
+    return False
+
+
+def _offer_rollback(message):
+    if os.name != 'nt':
+        return False
+    import ctypes
+    return ctypes.windll.user32.MessageBoxW(None, message + '\n\nÅterställ föregående app? Dina projekt och inställningar ändras inte.',
+                                            'FolderForge – säker återställning', 0x134) == 6
+
+
+def _supervise_update(base, interpreter, recover=False, timeout=90, offer=None):
+    """No forced termination. A timeout with a live child leaves backup untouched."""
+    base = Path(base)
+    offer = offer or _offer_rollback
+    journal = read_transaction(base)
+    if not journal:
+        return 0
+    if journal.get('phase') == 'confirmed':
+        (base / 'data/update-transaction.json').unlink()
+        if recover and not _app_mutex_exists():
+            subprocess.Popen([str(_windowless_interpreter(interpreter)), str(base / 'folder.pyw'), '--tray'],
+                             cwd=str(base), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+        return 0
+    if _app_mutex_exists():
+        return 0  # Never roll back files underneath an existing app.
+    if recover:
+        if offer('Förra uppdateringen saknar bekräftad start.'):
+            rollback_update(base)
+            subprocess.Popen([str(_windowless_interpreter(interpreter)), str(base / 'folder.pyw'), '--tray'],
+                             cwd=str(base), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+        return 1
+    env = os.environ.copy()
+    env.update(FOLDERFORGE_UPDATE_TOKEN=journal['token'], FOLDERFORGE_RUNTIME_READY='1',
+               FOLDERFORGE_RUNTIME_POLICY='system-python')
+    child = subprocess.Popen([str(_windowless_interpreter(interpreter)), str(base / 'folder.pyw'), '--tray'],
+                             cwd=str(base), env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+    journal.update(trial_pid=child.pid, phase='starting')
+    _write_transaction(base, journal)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        current = read_transaction(base)
+        if current and current.get('phase') == 'confirmed' and current['token'] == journal['token']:
+            (base / 'data/update-transaction.json').unlink()
+            return 0
+        if child.poll() is not None:
+            mark_installation_failed(base, 'Den uppdaterade appen avslutades före startbekräftelsen.')
+            if offer('Den uppdaterade appen kunde inte starta.'):
+                rollback_update(base)
+                subprocess.Popen([str(_windowless_interpreter(interpreter)), str(base / 'folder.pyw'), '--tray'],
+                                 cwd=str(base), creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+            return 1
+        time.sleep(0.25)
+    mark_installation_failed(base, 'Startbekräftelse saknas. Stäng appen och starta igen för att erbjudas återställning.')
+    # In particular, do NOT kill a slow/busy candidate and do not replace its files.
+    return 2
+
+
 def apply_pending(base):
     """Installera före GUI-start. Spara backup och återställ vid skrivfel."""
     state = read_state(base)
@@ -431,6 +634,9 @@ def apply_pending(base):
     hashes = state.get("pending_hashes")
     if hashes is not None and not matches_manifest(pending, hashes):
         raise ValueError("Hämtade appfiler har ändrats eller saknas; hämta uppdateringen igen")
+    transaction = read_transaction(base)
+    if transaction and transaction.get('phase') != 'confirmed':
+        raise RuntimeError('Föregående uppdatering saknar startbekräftelse; säkerhetskopian behålls')
     sources = [pending / name for name in FILES]
     if not all(path.is_file() for path in sources):
         return False
@@ -438,6 +644,25 @@ def apply_pending(base):
     backup = base / "data/update-backup"
     if backup.exists():
         shutil.rmtree(backup)
+    # Finish the backup and durable journal BEFORE replacing a single app file.
+    entries = {}
+    for source in sources:
+        relative = source.relative_to(pending)
+        target, saved = base / relative, backup / relative
+        if target.is_symlink() or saved.is_symlink() or target.parent.is_symlink() or saved.parent.is_symlink():
+            raise ValueError('Symbolisk länk bland appfiler')
+        if target.exists():
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, saved)
+            entries[relative.as_posix()] = hashlib.sha256(saved.read_bytes()).hexdigest()
+        else:
+            entries[relative.as_posix()] = None
+    import uuid
+    journal = dict(token=uuid.uuid4().hex, phase='installing', files=entries, previous_state=dict(state))
+    # Snapshot the working updater: recovery must not import the candidate's code.
+    supervisor = base / 'data/update-supervisor.py'
+    supervisor.write_text(Path(__file__).read_text('utf-8') + "\nif __name__ == '__main__':\n    import sys\n    sys.exit(supervise_update(Path(sys.argv[2]), Path(sys.argv[3]), recover=sys.argv[1] == '--recover'))\n", encoding='utf-8')
+    _write_transaction(base, journal)
     changed = []
     try:
         for source in sources:
@@ -459,6 +684,7 @@ def apply_pending(base):
         state.pop("installation_error", None)
         state.pop("error", None)
         state["status"] = "checked"
+        state["startup_pending"] = True
         state.pop("pending_notes", None)
         state["installed"] = state.pop("pending")
         revision = state.pop("pending_revision", None)
@@ -473,6 +699,7 @@ def apply_pending(base):
                 shutil.copy2(saved, target)
             else:
                 target.unlink(missing_ok=True)
+        (base / 'data/update-transaction.json').unlink(missing_ok=True)
         raise
     shutil.rmtree(pending)
     return True
@@ -515,6 +742,11 @@ class FolderForgeLauncher {
             if (selftest) {
                 info.FileName = INTERPRETER;
                 info.Arguments = Quote(SCRIPT) + " " + String.Join(" ", args.Select(Quote).ToArray());
+            } else if (System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "data", "update-transaction.json")) &&
+                       System.IO.File.Exists(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "data", "update-supervisor.py"))) {
+                info.FileName = INTERPRETER;
+                info.Arguments = Quote(System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "data", "update-supervisor.py"))
+                    + " --recover " + Quote(System.IO.Path.GetDirectoryName(SCRIPT)) + " " + Quote(INTERPRETER);
             } else {
                 info.FileName = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "WindowsPowerShell", "v1.0", "powershell.exe");
                 string bootstrap = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(SCRIPT), "Starta-FolderForge.ps1");
@@ -943,7 +1175,13 @@ try {
     $env:FOLDERFORGE_RUNTIME_POLICY = 'system-python'
     $Start = New-Object Diagnostics.ProcessStartInfo
     $Start.FileName = $Windowless
-    $Start.Arguments = (Quote-Argument (Join-Path $Root 'folder.pyw')) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    $Target = Join-Path $Root 'folder.pyw'
+    $Supervisor = Join-Path $Root 'data/update-supervisor.py'
+    if ((Test-Path -LiteralPath (Join-Path $Root 'data/update-transaction.json')) -and (Test-Path -LiteralPath $Supervisor)) {
+        $Target = $Supervisor
+        $AppArgs = @('--recover',$Root,$Windowless)
+    }
+    $Start.Arguments = (Quote-Argument $Target) + ' ' + (($AppArgs | ForEach-Object { Quote-Argument $_ }) -join ' ')
     $Start.WorkingDirectory = $Root
     $Start.UseShellExecute = $false
     $Start.CreateNoWindow = $true
