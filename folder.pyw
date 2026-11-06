@@ -546,6 +546,7 @@ class SingleInstanceLock:
         self._trigger_init: bool = False
         self._poll_job: Optional[str] = None
         self._atexit_registered: bool = False
+        self.check_trigger()  # Baseline before acquisition; do not lose a startup focus request.
 
     # ------------------------------------------------------------------
     # Status
@@ -580,7 +581,7 @@ class SingleInstanceLock:
             self.lock_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             logger.error("Kan inte skapa låskatalog %s: %s", self.lock_dir, exc)
-            return True          # hellre två instanser än en app som inte startar
+            return False         # Utan verifierat lås får ingen ny instans starta.
 
         if IS_WINDOWS:
             try:
@@ -593,9 +594,13 @@ class SingleInstanceLock:
                             self._backend, os.getpid())
                 return ok
             except ImportError:
-                logger.warning("pywin32 saknas — faller tillbaka på flock/pidfil.")
+                logger.error("Windows-instanslåset är otillgängligt — start stoppad.")
+                self._backend = "unavailable"
+                return False
             except Exception as exc:
-                logger.warning("Win32-mutex misslyckades (%s) — fallback.", exc)
+                logger.error("Win32-instanslåset kunde inte verifieras (%s) — start stoppad.", exc)
+                self._backend = "unavailable"
+                return False
 
         try:
             import fcntl  # noqa: F401
@@ -825,7 +830,7 @@ class SingleInstanceLock:
         if not self._is_primary:
             return False
 
-        self.check_trigger()               # sätt baslinje direkt
+        pending_focus = self.check_trigger()  # Preserve requests received while GUI initialized.
         from updater import service_instance_health
         try:
             service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
@@ -833,11 +838,14 @@ class SingleInstanceLock:
             logger.warning("Hälsosignalen kunde inte startas", exc_info=True)
 
         def _loop() -> None:
+            nonlocal pending_focus
             if not self._is_primary:
                 return
             try:
                 service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
-                if self.check_trigger():
+                requested = self.check_trigger()
+                if pending_focus or requested:
+                    pending_focus = False
                     logger.info("Trigger mottagen — fokuserar fönster.")
                     on_trigger()
             except Exception:
@@ -7766,13 +7774,14 @@ if __name__ == "__main__":
     # instanserna skrev till settings.json/history.json med varsin kopia av
     # datat i minnet (sista skrivning vann → tyst dataförlust).
     #
-    # En andra start avslutar sig själv utan att visa ett dolt huvudfönster. Låset frigörs i finally OCH via atexit, och
+    # En andra start ber den befintliga instansen öppnas och avslutar sig själv.
+    # Låset frigörs i finally OCH via atexit, och
     # release() är idempotent — en krasch lämnar alltså aldrig ett zombielås.
     _instance_lock = SingleInstanceLock(APP_NAME)
     if not _instance_lock.acquire():
         from updater import recover_unresponsive_instance
         if not recover_unresponsive_instance(_instance_lock, BASE_DIR / "folder.pyw"):
-            logger.info("FolderForge körs redan — ingen ny instans eller fönstervisning.")
+            logger.info("FolderForge körs redan — befintlig instans ombedd att öppnas; ingen ny instans.")
             sys.exit(0)
     if IS_WINDOWS and sys.prefix != sys.base_prefix:
         # Recovery of a legacy private instance must still migrate the new primary.

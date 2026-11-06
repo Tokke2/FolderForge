@@ -79,7 +79,7 @@ class StartupTests(unittest.TestCase):
         self.assertIn('info.CreateNoWindow = true', source)
         self.assertIn('info.UseShellExecute = false', source)
 
-    def test_second_start_does_not_restore_hidden_window(self):
+    def test_second_start_uses_health_handoff_instead_of_creating_another_gui(self):
         entry = ast.unparse(self.tree)
         self.assertNotIn('_instance_lock.request_focus()', entry)
         self.assertIn('_start_minimerad = True', entry)

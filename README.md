@@ -2,6 +2,27 @@
 
 © 2026 Rickard Längkvist
 
+## Gemensam appikon och en enda instans
+
+Den guldfärgade mappen med turkos mappstruktur är appens gemensamma ikon.
+`Icon/folderforge-master.png` är förlagan. Samma bild finns som 256px-PNG och
+som `projektmapp.ico` med 16/24/32/48/64/128/256px-storlekar. Fönster, dialoger,
+apphuvud, systemfält, genvägar och det lokalt byggda startprogrammet använder
+bilden. Startprogrammet byggs om när ikonens innehåll ändras.
+
+**Första start är fortfarande minimerad. En andra start öppnar den befintliga
+instansen i stället för att skapa en ny.** En upptagen app tvångsavslutas inte
+automatiskt; tidigare säkra återställningskontroll finns kvar.
+
+**Begränsning:** appen kör fortfarande via gemensam `pythonw.exe`. Egen fönsterikon,
+AppUserModelID och ett startprogram med inbäddad ikon ändrar inte Python-programfilens
+processikon under Aktivitetshanterarens Detaljer. Där kan Python fortfarande visas.
+Det krävs ett riktigt Windows-programbygge för att ersätta även processidentiteten;
+den här ändringen utger sig inte för att göra det. Ändra inte eller ersätt den
+installerade Python-programfilen, eftersom andra program använder den.
+Gamla fästa Python-genvägar behöver lossas och ersättas med FolderForge-genvägen.
+Windows kan också behålla en äldre ikon i sitt cacheminne.
+
 ## Tillgänglighet: tangentbord, textstorlek och hög kontrast
 
 Under **Inställningar → Tillgänglighet** väljer du **100, 110, 125 eller
@@ -105,7 +126,7 @@ behöver verifieras på Windows; tester och syntaxkontroll ersätter inte det.
 Appen startar alltid minimerad i systemfältet utan att huvudfönstret
 blinkar till. Öppna via tray-ikonen eller snabbtangenten. Det finns inte
 längre någon inställning för att starta med synligt huvudfönster. En andra
-start visar inte automatiskt en redan körande app.
+start öppnar och fokuserar den redan körande appen, utan en ny instans.
 
 ## Automatiska release-uppdateringar
 
@@ -500,8 +521,11 @@ med synlig förklaring. Gamla varningar ligger kvar tills du kvitterar dem.
 En extra start skickar en unik hälsoförfrågan till den befintliga instansen.
 Svaret hanteras i Tk-huvudtrådens poll-loop, även när appen är minimerad.
 En gammal heartbeat eller enbart ett levande PID räknas inte som ett svar.
-En svarande instans lämnas orörd och den extra starten avslutas dold, utan
-att visa eller fokusera huvudfönstret.
+En svarande instans ombeds öppna och fokusera sitt befintliga huvudfönster,
+även från systemfältet. Den extra processen avslutas utan att skapa en andra
+app eller tray-ikon. Förfrågningar under GUI-starten sparas till första pollningen.
+Om Windows-instanslåset inte kan verifieras avbryts starten i stället för att
+släppa igenom en olåst instans.
 
 Om svar saknas (normalt efter åtta sekunder) kan Windows erbjuda återstart.
 Det bevisar inte att appen har hängt sig: långvarigt arbete eller en äldre
