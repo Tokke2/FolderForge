@@ -1,5 +1,6 @@
 """Startup acknowledgement and rollback protect only the app, not user files."""
 import os
+import ast
 from pathlib import Path
 import tempfile
 import unittest
@@ -161,6 +162,25 @@ class TrialTests(unittest.TestCase):
             updater.supervise_update(self.base, Path('pythonw.exe'), recover=True, offer=offer)
         offer.assert_not_called()
         spawn.assert_not_called()
+
+    def test_tk_acknowledgement_retries_until_supervisor_publishes_pid(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_confirm_update_start')
+        ns = dict(os=os, BASE_DIR=self.base, logger=Mock())
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'tk-confirm', 'exec'), ns)
+        app = Mock()
+        app.winfo_exists.return_value = True
+        app.systray_icon.visible = True
+        with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN='trial'), \
+             patch.object(updater, 'confirm_startup', return_value=False):
+            ns['_confirm_update_start'](app)
+        app.after.assert_called_once_with(250, app._confirm_update_start)
+        app.after.reset_mock()
+        with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN='trial'), \
+             patch.object(updater, 'confirm_startup', return_value=True):
+            ns['_confirm_update_start'](app)
+        app.after.assert_not_called()
 
     def test_direct_rollback_refuses_a_running_app(self):
         self.install()

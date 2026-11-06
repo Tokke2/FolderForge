@@ -4831,15 +4831,19 @@ class FolderForgeApp(_DnDCTkBase):
     # Fönster
     # ============================================================
     def _confirm_update_start(self):
-        if self.winfo_exists() and ((self.systray_icon is not None and self.systray_icon.visible)
-                                   or self.state() in ("normal", "zoomed")):
+        if not os.environ.get("FOLDERFORGE_UPDATE_TOKEN") or not self.winfo_exists():
+            return
+        if ((self.systray_icon is not None and self.systray_icon.visible)
+                or self.state() in ("normal", "zoomed")):
             try:
                 from updater import confirm_startup
-                confirm_startup(BASE_DIR)
+                if confirm_startup(BASE_DIR):
+                    return
             except Exception:
                 logger.exception("Kunde inte bekräfta uppdaterad start; säkerhetskopian behålls")
-        else:
-            self.after(250, self._confirm_update_start)
+                return
+        # A very fast child can reach Tk before the supervisor saves its PID.
+        self.after(250, self._confirm_update_start)
 
     def _service_windows_smoke(self):
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":

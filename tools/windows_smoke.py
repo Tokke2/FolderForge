@@ -161,6 +161,31 @@ def main():
         assert not (base / 'data/update-transaction.json').exists()
         command('exit', 4)
         psutil.Process(recovered['pid']).wait(timeout=15)
+        # Now a valid candidate must acknowledge itself from its own Tk loop.
+        pending.mkdir()
+        for name in updater.FILES:
+            shutil.copy2(base / name, pending / name)
+        updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',
+                                     pending_hashes=updater.content_manifest(pending)))
+        updater.apply_pending(base)
+        previous_smoke = os.environ.get('FOLDERFORGE_WINDOWS_SMOKE')
+        os.environ['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
+        try:
+            valid_worker = updater.launch_update_trial(base, pythonw)
+        finally:
+            if previous_smoke is None:
+                os.environ.pop('FOLDERFORGE_WINDOWS_SMOKE', None)
+            else:
+                os.environ['FOLDERFORGE_WINDOWS_SMOKE'] = previous_smoke
+        valid = wait(lambda s: s.get('pid') != recovered['pid'] and s.get('state') == 'withdrawn' and s.get('tray'),
+                     'Valid candidate did not start hidden')
+        assert valid_worker.wait(timeout=30) == 0, 'Valid candidate was not acknowledged'
+        assert not updater.read_state(base).get('startup_pending'), 'Startup acknowledgement was not saved'
+        assert not (base / 'data/update-transaction.json').exists()
+        assert (base / 'data/update-backup/folder.pyw').exists(), 'Known-good backup was removed too soon'
+        assert sentinel.read_text() == 'user data must survive'
+        command('exit', 5)
+        psutil.Process(valid['pid']).wait(timeout=15)
         assert not violations, violations
     finally:
         stop.set()
