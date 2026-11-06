@@ -72,13 +72,13 @@ class FocusTests(unittest.TestCase):
         self.assertFalse(lock.acquire())
         lock._acquire_pidfile.assert_not_called()
 
-    def test_healthy_existing_instance_gets_restore_request_without_termination(self):
+    def test_healthy_existing_instance_stays_minimized_without_termination(self):
         lock = Mock(lock_dir=self.folder)
         lock.read_owner_pid.return_value = os.getpid()
         with patch.object(updater, 'probe_instance', return_value=True), \
              patch.object(updater, 'VerifiedFolderForgeProcess') as verified:
             self.assertFalse(updater.recover_unresponsive_instance(lock, self.folder / 'folder.pyw'))
-        lock.request_focus.assert_called_once()
+        lock.request_focus.assert_not_called()
         lock.acquire.assert_not_called()
         verified.assert_not_called()
 

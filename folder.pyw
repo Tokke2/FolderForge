@@ -7774,14 +7774,14 @@ if __name__ == "__main__":
     # instanserna skrev till settings.json/history.json med varsin kopia av
     # datat i minnet (sista skrivning vann → tyst dataförlust).
     #
-    # En andra start ber den befintliga instansen öppnas och avslutar sig själv.
+    # En andra start avslutas utan att öppna eller fokusera den befintliga instansen.
     # Låset frigörs i finally OCH via atexit, och
     # release() är idempotent — en krasch lämnar alltså aldrig ett zombielås.
     _instance_lock = SingleInstanceLock(APP_NAME)
     if not _instance_lock.acquire():
         from updater import recover_unresponsive_instance
         if not recover_unresponsive_instance(_instance_lock, BASE_DIR / "folder.pyw"):
-            logger.info("FolderForge körs redan — befintlig instans ombedd att öppnas; ingen ny instans.")
+            logger.info("FolderForge körs redan — ingen ny instans eller automatisk fönstervisning.")
             sys.exit(0)
     if IS_WINDOWS and sys.prefix != sys.base_prefix:
         # Recovery of a legacy private instance must still migrate the new primary.

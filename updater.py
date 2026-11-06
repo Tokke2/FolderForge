@@ -760,22 +760,8 @@ class VerifiedFolderForgeProcess:
             self.handle = None
 
 
-def request_existing_window(lock, pid):
-    """Ask the primary Tk loop to restore; no second GUI and no process termination."""
-    if os.name == 'nt' and isinstance(pid, int) and pid > 0:
-        try:
-            import ctypes
-            ctypes.windll.user32.AllowSetForegroundWindow(pid)
-        except Exception:
-            logger.debug('Could not grant foreground permission', exc_info=True)
-    if not lock.request_focus():
-        logger.error('Could not request the existing FolderForge window')
-        return False
-    return True
-
-
 def recover_unresponsive_instance(lock, script):
-    """Show a responsive primary on double start; never terminate automatically."""
+    """Keep startup minimized, including double starts; never terminate automatically."""
     try:
         pid = lock.read_owner_pid()
         deadline = time.monotonic() + 2
@@ -788,8 +774,7 @@ def recover_unresponsive_instance(lock, script):
             pid = current_owner
             responding = probe_instance(lock.lock_dir, pid, timeout=2)
         if responding:
-            request_existing_window(lock, pid)
-            logger.info('Befintlig FolderForge-instans svarar (pid=%s); öppning begärd', pid)
+            logger.info('Befintlig FolderForge-instans svarar (pid=%s); extra start avslutas utan fönstervisning', pid)
             return False
         logger.warning('Hälsokontrollen fick inget svar (pid=%s); kan vara upptagen eller ha hängt sig', pid)
         if os.name != 'nt':
@@ -806,7 +791,6 @@ def recover_unresponsive_instance(lock, script):
             if dialog(None, text, 'FolderForge — återställning', 0x134) != 6:
                 return False
             if probe_instance(lock.lock_dir, pid, timeout=2):
-                request_existing_window(lock, pid)
                 dialog(None, 'Appen svarar igen. Ingen process avslutades.', 'FolderForge', 0x40)
                 return False
             process.terminate_and_wait()

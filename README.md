@@ -4,14 +4,14 @@
 
 ## Gemensam appikon och en enda instans
 
-Den guldfärgade mappen med turkos mappstruktur är appens gemensamma ikon.
+En ren guldfärgad mapp med turkos mappstruktur, utan bakgrundsplatta, är appens gemensamma ikon.
 `Icon/folderforge-master.png` är förlagan. Samma bild finns som 256px-PNG och
 som `projektmapp.ico` med 16/24/32/48/64/128/256px-storlekar. Fönster, dialoger,
 apphuvud, systemfält, genvägar och det lokalt byggda startprogrammet använder
 bilden. Startprogrammet byggs om när ikonens innehåll ändras.
 
-**Första start är fortfarande minimerad. En andra start öppnar den befintliga
-instansen i stället för att skapa en ny.** En upptagen app tvångsavslutas inte
+**Appen startar alltid minimerad. En andra start skapar ingen ny instans
+och öppnar eller fokuserar inte den befintliga appen.** En upptagen app tvångsavslutas inte
 automatiskt; tidigare säkra återställningskontroll finns kvar.
 
 **Begränsning:** appen kör fortfarande via gemensam `pythonw.exe`. Egen fönsterikon,
@@ -126,7 +126,7 @@ behöver verifieras på Windows; tester och syntaxkontroll ersätter inte det.
 Appen startar alltid minimerad i systemfältet utan att huvudfönstret
 blinkar till. Öppna via tray-ikonen eller snabbtangenten. Det finns inte
 längre någon inställning för att starta med synligt huvudfönster. En andra
-start öppnar och fokuserar den redan körande appen, utan en ny instans.
+start lämnar den redan körande appens fönster oförändrat och skapar ingen ny instans.
 
 ## Automatiska release-uppdateringar
 
@@ -521,9 +521,9 @@ med synlig förklaring. Gamla varningar ligger kvar tills du kvitterar dem.
 En extra start skickar en unik hälsoförfrågan till den befintliga instansen.
 Svaret hanteras i Tk-huvudtrådens poll-loop, även när appen är minimerad.
 En gammal heartbeat eller enbart ett levande PID räknas inte som ett svar.
-En svarande instans ombeds öppna och fokusera sitt befintliga huvudfönster,
-även från systemfältet. Den extra processen avslutas utan att skapa en andra
-app eller tray-ikon. Förfrågningar under GUI-starten sparas till första pollningen.
+En svarande instans lämnas oförändrad. Den extra processen avslutas utan att
+öppna något fönster eller skapa en andra app/tray-ikon. Öppna appen uttryckligen
+via systemfältet eller snabbtangenten.
 Om Windows-instanslåset inte kan verifieras avbryts starten i stället för att
 släppa igenom en olåst instans.
 

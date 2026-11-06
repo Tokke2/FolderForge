@@ -1,8 +1,8 @@
 # FolderForge v0.0.2
 
 ## Ändringar
-- Ny enhetlig FolderForge-ikon: guldfärgad mapp med turkos mappstruktur, transparenta hörn och ICO i sju storlekar. Samma motiv i app, dialoger, systemfält, genvägar och native startprogram. Python-processikonen i Aktivitetshanterarens Detaljer kan kvarstå eftersom detta inte är ett fristående Windows-programbygge.
-- En andra start öppnar den redan körande instansen via Tk-loopen, utan ny app/tray-ikon. Fokusförfrågan under uppstart tappas inte. Windows-låsfel stoppar ny start i stället för osäker reserv; hälsokontroll och uttryckligt godkänd återställning behålls.
+- Renare gemensam ikon: guldfärgad mapp med turkos struktur utan bakgrundsplatta, transparent bakgrund och sju ICO-storlekar. Samma motiv i app, dialoger, systemfält, genvägar och startprogram. Begränsningen för Python-processikonen i Aktivitetshanteraren kvarstår.
+- Alltid minimerad start. Även extra starter lämnar befintligt fönster oförändrat och öppnar ingen ny instans. Öppna uttryckligen via systemfält/snabbtangent. Windows-låsfel stoppar ny start; säker hälsokontroll behålls.
 - Tangentbordsnavigering med Tab/Skift+Tab i visuell ordning, synlig fokusmarkering, Enter/mellanslag för åtgärder och Alt+ned för vallistor. Fokus hålls i modala dialoger och rullas fram; Ctrl+Page Up/Down byter synlig sida och Skift+F10 öppnar sidomenyns snabbmeny.
 - Tillgänglighet i Inställningar: 100/110/125/150 % text- och gränssnittsstorlek samt reversibel hög kontrast, direkt tillämpning och sparade val. Radbrytning/växande knappar, rullbar sidomeny och läsbara namn på infällda sidoknappar. Windows egna dialoger följer systeminställningarna.
 - Python-/paketkontroll en gång i veckan, måndagar kl. 08.00 lokalt, via konsolfri Windows-uppgift. Missad körning tas igen när möjligt; normal start gör ingen versions-/uppdateringssökning. Befintlig Python uppgraderas inom samma serie; installation bara om Python saknas.
@@ -24,7 +24,7 @@
 - Ny uppdateringsvy med arbetssteg, förloppsindikator, hämtade KiB/procent när storleken är känd, separat ändringslista och snabbåtkomst till felloggen.
 - Strömmad hämtning med begränsade återförsök vid tillfälliga fel, tydligare GitHub-fel, atomisk tillståndsskrivning och återställning av tidigare verifierat uppdateringspaket vid avbruten förberedelse.
 - Samlad beständig fellogg för varningar, fel och kraschspår från appmoduler, GUI-callbacks och startprogram; engångsimport av gamla appfel. Hjälp → Öppna fellogg ger snabb åtkomst.
-- Alltid dold start i systemfältet, även med gammalt start_minimized=false. Alternativet för synlig start är borttaget. En andra start öppnar den befintliga instansens huvudfönster.
+- Alltid dold start i systemfältet, även med gammalt start_minimized=false. Alternativet för synlig start är borttaget. En andra start visar inte huvudfönstret.
 - Konsolfri Windows-start är obligatorisk: koppla loss appens konsol och avbryt om fönsterfri omstart inte kan göras. Native launcher tvingar --tray.
 - Uppdateraren kontrollerar både release-commit och SHA-256 för appfiler/ikoner. Samma versionsnummer tillåts; även saknade eller ändrade filer vid oförändrad commit återställs från releasen. Hämtade filer verifieras före installation.
 - Ny gemensam gul/turkos mappstrukturikon i fönster, dialoger, systemfält, rubrik och Windows-genvägar.
