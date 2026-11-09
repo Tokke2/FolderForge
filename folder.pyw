@@ -7322,6 +7322,10 @@ class FolderForgeApp(_DnDCTkBase):
                 default=True,
             ),
             pystray.MenuItem(
+                "Öppna appens mapp",
+                lambda *args: ui_call(self, self._open_path, BASE_DIR),
+            ),
+            pystray.MenuItem(
                 "Sök uppdatering nu",
                 lambda *args: ui_call(self, self._check_updates_now),
             ),

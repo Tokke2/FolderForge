@@ -41,6 +41,20 @@ class LayoutTests(unittest.TestCase):
         self.assertIn("location_menu.grid(row=1, column=0", code)
         self.assertIn("year_menu.grid(row=1, column=1", code)
 
+    def test_tray_opens_installation_folder_on_ui_thread_without_restoring(self):
+        app_class = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app_class.body if isinstance(n, ast.FunctionDef) and n.name == '_minimize_to_systray')
+        item = next(n for n in ast.walk(method) if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute) and n.func.attr == 'MenuItem'
+                    and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == 'Öppna appens mapp')
+        app, dispatch = Mock(), Mock()
+        base = Path('installation with spaces')
+        ns = dict(self=app, ui_call=dispatch, BASE_DIR=base)
+        callback = eval(compile(ast.Expression(body=item.args[1]), 'tray-folder', 'eval'), ns)
+        callback(Mock(), Mock())  # pystray supplies both icon and item.
+        dispatch.assert_called_once_with(app, app._open_path, base)
+        app._restore_from_tray.assert_not_called()
+
     def test_manual_update_available_in_app_and_tray(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         code = ast.unparse(app)

@@ -69,6 +69,7 @@ systemfältet/menyraden. En extra start skapar inte en ny instans och visar
 inte automatiskt huvudfönstret.
 
 - **Öppna FolderForge** i ikonens meny visar fönstret.
+- **Öppna appens mapp** öppnar installationsmappen utan att visa appfönstret.
 - **Stäng/minimera** döljer fönstret igen.
 - **Avsluta** i ikonens meny eller **Arkiv → Avsluta FolderForge** stänger appen helt.
 - Linux X11 utan stöd för ikonmenyer: klicka på ikonen för att öppna, avsluta via Arkiv.
@@ -86,7 +87,7 @@ inte automatiskt huvudfönstret.
 
 **Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
-311 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+312 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
