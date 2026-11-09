@@ -71,14 +71,14 @@ Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
 317 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
-Windows-CI godkänd för Python 3.11 och 3.13; macOS/Cocoa och Linux/X11
+Windows-CI godkänd för Python 3.11, 3.13 och 3.14; macOS/Cocoa och Linux/X11
 med Python 3.13 också godkända. Linux-testet använder Xvfb och stalonetray.
 Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,
 fungerande uppdatering med Tk-bekräftelse och trasig uppdatering med återställning.
 Användardata bevaras. Windows-testet övervakar synliga konsoler/Tk-fönster.
 Wayland, alla OS-versioner och företagens IT-policyer är inte fullständigt verifierade.
-Windows: https://github.com/Tokke2/FolderForge/actions/runs/42581781600
-macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42581781613
+Windows: https://github.com/Tokke2/FolderForge/actions/runs/42605683978
+macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42605683881
 Publicerad från arbetsgrenen; main är orörd.
 
 ---

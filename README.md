@@ -85,14 +85,14 @@ inte automatiskt huvudfönstret.
 | Inbyggd autostart-inställning | Ja | Använd OS inloggningsobjekt | Använd skrivbordets autostart |
 | Global snabbtangent | Beror på policy | Kan kräva Hjälpmedel/Input Monitoring | X11; Wayland kan begränsa |
 
-**Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
+**Verifierat i CI:** Windows med Python 3.11/3.13/3.14, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
 317 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
-[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42581781600) ·
-[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42581781613)
+[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42605683978) ·
+[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42605683881)
 
 Detta verifierar inte alla macOS-versioner, Linux-skrivbord eller IT-policyer.
 
