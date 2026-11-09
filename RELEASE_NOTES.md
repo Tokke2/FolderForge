@@ -74,8 +74,8 @@ Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,
 fungerande uppdatering med Tk-bekräftelse och trasig uppdatering med återställning.
 Användardata bevaras. Windows-testet övervakar synliga konsoler/Tk-fönster.
 Wayland, alla OS-versioner och företagens IT-policyer är inte fullständigt verifierade.
-Windows: https://github.com/Tokke2/FolderForge/actions/runs/42209164965
-macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42209165020
+Windows: https://github.com/Tokke2/FolderForge/actions/runs/42581781600
+macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42581781613
 Publicerad från arbetsgrenen; main är orörd.
 
 ---
