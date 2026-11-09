@@ -1,6 +1,8 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Windows väljer en fungerande installerad Python: aktuell PATH-tolk först, 3.14 som första reserv och därefter andra installerade Python 3.11+. Ett kort lokalt GUI-prov hoppar över exempelvis 3.15 utan customtkinter. Upptäckt via PATH, Python-launchern och Windows Python-register. Inga nedladdningar, installationer eller uppgraderingar; ingen konsolreserv. Val och avvisningsorsaker loggas.
+- Native startprogram går även vid uppdateringsåterställning via samma tolkval, så en gammal inbyggd Python-sökväg inte kringgår reserven.
 - Rättat konstruktionsrace i tillgänglighetskoden: Map-händelser skjuts upp med timer och halvbyggda textrutor färgsätts inte via sina föräldrar innan båda rullningslisterna finns. Regressionstest provocerar felet under riktig CTkTextbox-konstruktion.
 - Startloggen visar exakt Python-tolk, version och miljö. Normala importfel ger ett manuellt installationskommando för samma tolk; ingenting installeras, kontrolleras eller uppgraderas automatiskt. Saknat Tkinter förväxlas inte med ett pip-paket.
 - Windows-testmatrisen utökad med Python 3.14, utöver 3.11 och 3.13.
@@ -70,7 +72,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-317 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+318 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-CI godkänd för Python 3.11, 3.13 och 3.14; macOS/Cocoa och Linux/X11
 med Python 3.13 också godkända. Linux-testet använder Xvfb och stalonetray.
 Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,

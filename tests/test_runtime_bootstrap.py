@@ -105,9 +105,18 @@ class RuntimeBootstrapTests(unittest.TestCase):
         self.assertLess(self.ps.index("Get-Command $Name -All"), self.ps.index('if ($PreferredPython)'))
         self.assertNotIn('python-runtime.json', self.ps)
 
-    def test_no_python_or_dependency_versions_are_checked(self):
-        for token in ('sys.version_info', 'importlib.metadata', 'Test-Environment', 'REQUIRED_PACKAGES', 'Get-LatestStableSeries'):
+    def test_no_package_version_checks_or_runtime_maintenance(self):
+        for token in ('importlib.metadata', 'Test-Environment', 'REQUIRED_PACKAGES', 'Get-LatestStableSeries'):
             self.assertNotIn(token, self.ps)
+
+    def test_existing_interpreters_are_functionally_probed_with_314_fallback(self):
+        self.assertIn('sys.version_info[:2]', self.ps)
+        self.assertIn('function Test-ExistingPythonGui', self.ps)
+        self.assertIn('r.withdraw(); r.update_idletasks(); r.destroy()', self.ps)
+        self.assertIn("$_.Version -eq '3.14'", self.ps)
+        self.assertIn('$_.Windowless -eq $Primary', self.ps)
+        self.assertIn('WaitForExit(15000)', self.ps)
+        self.assertIn('HKCU:\\Software\\Python\\PythonCore', self.ps)
 
     def test_no_install_upgrade_network_or_virtual_environment(self):
         for token in ('winget', 'pypi.org', 'Invoke-RestMethod', 'ensurepip', "'-m','pip'", "'-m','venv'", 'https://'):

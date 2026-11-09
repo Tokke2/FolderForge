@@ -33,6 +33,12 @@
 4. Starta enligt ditt operativsystem nedan.
 
 **FolderForge installerar eller uppgraderar aldrig Python eller paket automatiskt.**
+På Windows provas systemets aktuella Python först (även 3.15). Om dess lokala
+GUI-prov misslyckas väljs i första hand en redan installerad **3.14**, därefter
+andra installerade Python 3.11+. Provet kontrollerar nödvändiga GUI-importer
+samt en dold Tk-start, inte paketversioner eller tillgängliga uppgraderingar.
+Vald och överhoppad tolk med orsak skrivs i `logs/folderforge.log`.
+Om ingen fungerar avbryts starten utan konsolreserv eller installation.
 Detta är ett Python-källkodspaket, inte en fristående signerad app.
 På en arbetsdator: låt IT hantera installation och behörigheter.
 
@@ -87,7 +93,7 @@ inte automatiskt huvudfönstret.
 
 **Verifierat i CI:** Windows med Python 3.11/3.13/3.14, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
-317 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+318 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
@@ -124,7 +130,8 @@ En annan Python kan ha paketet utan att det hjälper den här starten.
    `requirements.txt`. Kör det bara om din IT-policy tillåter det, annars be IT.
 3. Starta sedan med `Starta-FolderForge.vbs` på Windows.
 
-Ingen kontroll, nedladdning eller paketinstallation körs automatiskt.
+Det lokala GUI-provet väljer bara bland redan installerade tolkar. Ingen
+nedladdning, paketinstallation eller uppgradering körs automatiskt.
 Tkinter/Tk är en del av Python-installationen och ska inte installeras med pip.
 Om appen inte kan öppnas kan dess uppdateringsknapp inte användas:
 packa i så fall upp appfilerna från v0.0.2 manuellt och **behåll `data/`**.
