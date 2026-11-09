@@ -162,7 +162,7 @@ from settings import (  # noqa: F401
     UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY,
 )
 from historik import ProjectHistory, atomic_write_json, read_json_safe  # noqa: E402
-from logg import ERROR_LOG_FILE, init_logging  # noqa: E402
+from logg import ERROR_LOG_FILE, init_logging, report_import_failure  # noqa: E402
 
 
 # ============================================================
@@ -361,7 +361,7 @@ try:
     if IS_WINDOWS:
         import winreg
 except ImportError as e:
-    logger.error("Import misslyckades: %s", e)
+    report_import_failure(e, BASE_DIR)
     sys.exit(1)
 
 # Global hotkeys are optional: Wayland/macOS policy must not prevent startup.
@@ -1948,8 +1948,35 @@ class AccessibilityController:
             parent = getattr(parent, "master", None)
 
     def on_map(self, event):
-        # Covers later-created dialogs, refreshed history rows and sidebar buttons.
-        self.prepare(event.widget)
+        # Map may fire inside a CustomTkinter constructor's update_idletasks().
+        # Do not redraw its parent (and therefore its unfinished children) here.
+        self._defer_prepare(event.widget)
+
+    def _defer_prepare(self, widget):
+        if getattr(widget, "_ff_prepare_pending", False):
+            return
+        widget._ff_prepare_pending = True
+        reference = weakref.ref(widget)
+        def later():
+            target = reference()
+            if target is None:
+                return
+            target._ff_prepare_pending = False
+            if target.winfo_exists():
+                self.prepare(target)
+        # A timer, not after_idle: update_idletasks runs idle callbacks while a
+        # CTkTextbox can still be missing its scrollbars.
+        self.root.after(25, later)
+
+    def _subtree_ready(self, widget):
+        try:
+            for child in self.walk(widget):
+                if widget_kind(child) == "CTkTextbox" and not all(
+                        hasattr(child, name) for name in ("_textbox", "_x_scrollbar", "_y_scrollbar")):
+                    return False
+            return True
+        except tk.TclError:
+            return False
 
     def colorful(self, widget, value):
         try:
@@ -1961,6 +1988,9 @@ class AccessibilityController:
             return False
 
     def prepare(self, widget):
+        if not self._subtree_ready(widget):
+            self._defer_prepare(widget)
+            return
         kind = widget_kind(widget)
         if self.owner(widget) is not None and kind != "DropdownMenu" and not any(cls.__name__ == "Menu" for cls in type(widget).__mro__):
             tags = widget.bindtags()
@@ -4901,6 +4931,8 @@ class FolderForgeApp(_DnDCTkBase):
                 self._restore_from_tray()
             elif action == "hide":
                 self._minimize_to_systray()
+            elif action == "accessibility-regression":
+                self.after(0, self._exercise_accessibility_constructor)
             elif action == "project-dialog":
                 self.after(0, self._create_folder_dialog)
             elif action == "close-project-dialog":
@@ -4916,6 +4948,41 @@ class FolderForgeApp(_DnDCTkBase):
             "icon": self._icon_method,
         })
         self.after(100, self._service_windows_smoke)
+
+    def _exercise_accessibility_constructor(self):
+        """CI-only: reproduce a Map event before CTkTextbox assigns x-scrollbar."""
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            return
+        popup = ctk.CTkToplevel(self)
+        popup.title("Accessibility construction regression")
+        popup.geometry("360x240")
+        frame = ctk.CTkScrollableFrame(popup)
+        frame.pack(fill="both", expand=True)
+        original = ctk.CTkScrollbar.__init__
+        report = {"injected": False, "styled": False, "error": None}
+        def constructor(scrollbar, *args, **kwargs):
+            original(scrollbar, *args, **kwargs)
+            parent = scrollbar.master
+            if isinstance(parent, ctk.CTkTextbox) and hasattr(parent, "_y_scrollbar") and not hasattr(parent, "_x_scrollbar"):
+                report["injected"] = True
+                self._accessibility.on_map(SimpleNamespace(widget=frame))
+                self._accessibility.prepare(frame)
+                # This runs idle callbacks while the constructor is incomplete.
+                popup.update_idletasks()
+        try:
+            ctk.CTkScrollbar.__init__ = constructor
+            textbox = ctk.CTkTextbox(frame)
+            textbox.pack(fill="both", expand=True)
+        except Exception as exc:
+            report["error"] = repr(exc)
+            textbox = None
+        finally:
+            ctk.CTkScrollbar.__init__ = original
+        def finish():
+            report["styled"] = bool(textbox and hasattr(textbox, "_ff_accessible_colors"))
+            atomic_write_json(DATA_DIR / "accessibility-construction.json", report)
+            popup.destroy()
+        self.after(250, finish)
 
     def _configure_window(self) -> None:
         self.configure(fg_color=UI_BACKGROUND)

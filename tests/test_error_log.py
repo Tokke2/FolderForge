@@ -311,6 +311,31 @@ class ErrorLogTests(unittest.TestCase):
                 pass
         self.assertEqual([call.args[1:] for call in fake.locking.call_args_list], [(1, 1), (0, 1)])
 
+    def test_import_error_reports_exact_python_and_manual_command_without_installing(self):
+        import subprocess
+        requirements = self.folder / 'requirements.txt'
+        requirements.write_text('customtkinter')
+        executable = "C:\\Users\\Rickard's folder\\Python314\\pythonw.exe"
+        with patch.object(sys, 'executable', executable), patch.object(sys, 'platform', 'win32'), \
+             patch.object(subprocess, 'run') as run, patch.object(subprocess, 'Popen') as popen, \
+             self.assertLogs(logg._logger, 'ERROR') as captured:
+            logg.report_import_failure(ModuleNotFoundError("No module named 'customtkinter'", name='customtkinter'), self.folder)
+        text = '\n'.join(captured.output)
+        self.assertIn('Python=' + executable, text)
+        self.assertIn("Rickard''s folder", text)
+        self.assertIn('python.exe', text)
+        self.assertIn('-m pip install -r', text)
+        self.assertIn('Ingen installation körs', text)
+        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_tkinter_failure_is_not_treated_as_a_pip_package(self):
+        with self.assertLogs(logg._logger, 'ERROR') as captured:
+            logg.report_import_failure(ModuleNotFoundError('missing Tk', name='_tkinter'), self.folder)
+        text = '\n'.join(captured.output)
+        self.assertIn('Tk-stöd', text)
+        self.assertNotIn('-m pip install', text)
+
     def test_redirected_stderr_does_not_duplicate_errors_or_copy_info(self):
         import io
         redirected = io.StringIO()

@@ -87,7 +87,7 @@ inte automatiskt huvudfönstret.
 
 **Verifierat i CI:** Windows med Python 3.11/3.13, macOS med Python 3.13
 samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
-312 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
+317 automatiserade tester och riktiga GUI-tester kontrollerar dold start,
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
@@ -113,6 +113,21 @@ vid misslyckande erbjuds återställning. Ingen upptagen process tvångsavslutas
 **Projekt, inställningar och historik återställs inte eller raderas.**
 
 Vid manuell uppdatering: stäng appen, ersätt appfilerna och **behåll `data/`**.
+
+## Om starten säger `No module named 'customtkinter'`
+
+Det saknade paketet finns inte i **den Python som startaren använder**.
+En annan Python kan ha paketet utan att det hjälper den här starten.
+
+1. Läs **Starttolk** och **Python=** i `logs/`. Där står den fullständiga sökvägen.
+2. Vid importfel loggas ett manuellt kommando för just den tolken och appens
+   `requirements.txt`. Kör det bara om din IT-policy tillåter det, annars be IT.
+3. Starta sedan med `Starta-FolderForge.vbs` på Windows.
+
+Ingen kontroll, nedladdning eller paketinstallation körs automatiskt.
+Tkinter/Tk är en del av Python-installationen och ska inte installeras med pip.
+Om appen inte kan öppnas kan dess uppdateringsknapp inte användas:
+packa i så fall upp appfilerna från v0.0.2 manuellt och **behåll `data/`**.
 
 ## Felsökning
 

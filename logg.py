@@ -275,6 +275,35 @@ _initierad: bool = False
 _logger = logging.getLogger(__name__)
 
 
+def report_import_failure(error, base):
+    """Explain a normal import failure; never execute a check or an installer."""
+    import shlex
+    executable = str(sys.executable)
+    if executable.lower().endswith(('\\pythonw.exe', '/pythonw.exe')):
+        executable = executable[:-len('pythonw.exe')] + 'python.exe'
+    _logger.error('Import misslyckades: %s | Python=%s | Version=%s | prefix=%s',
+                  error, sys.executable, sys.version.split()[0], sys.prefix)
+    if getattr(error, 'name', None) in {'tkinter', '_tkinter'}:
+        _logger.error('Tkinter saknas i denna Python. Be IT aktivera/installera Tk-stöd för samma tolk; '
+                      'Tkinter installeras inte med pip. Ingen automatisk installation görs.')
+        return
+    requirements = Path(base) / 'requirements.txt'
+    arguments = ['-m', 'pip', 'install']
+    if requirements.is_file():
+        arguments += ['-r', str(requirements)]
+    else:
+        arguments += ['customtkinter', 'Pillow', 'pystray', 'pynput', 'tkinterdnd2']
+    if sys.platform == 'win32':
+        def quote(value):
+            return "'" + value.replace("'", "''") + "'"
+        command = '& ' + quote(executable) + ' -m pip install '
+        command += '-r ' + quote(str(requirements)) if requirements.is_file() else ' '.join(arguments[3:])
+    else:
+        command = ' '.join(shlex.quote(value) for value in [executable] + arguments)
+    _logger.error('Manuell åtgärd, endast om IT-policy tillåter: %s | '
+                  'Använd samma Python som ovan. Ingen installation körs av FolderForge.', command)
+
+
 def init_logging() -> None:
     """
     Koppla in dagsarkiverad loggfil, beständig fellogg + konsoll (om någon finns). Idempotent —
@@ -341,6 +370,8 @@ def init_logging() -> None:
     koppla_kraschloggning()
     _logger.info("──── %s %s startar — pid=%d argv=%s — loggfil: %s ────",
                  APP_NAME, APP_VERSION, os.getpid(), sys.argv, LOG_FILE)
+    _logger.info('Starttolk: %s | Python %s | prefix=%s | base_prefix=%s',
+                 sys.executable, sys.version.split()[0], sys.prefix, sys.base_prefix)
 
 
 def _import_existing_errors(handler) -> None:

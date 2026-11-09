@@ -1,6 +1,9 @@
 # FolderForge v0.0.2
 
 ## Ändringar
+- Rättat konstruktionsrace i tillgänglighetskoden: Map-händelser skjuts upp med timer och halvbyggda textrutor färgsätts inte via sina föräldrar innan båda rullningslisterna finns. Regressionstest provocerar felet under riktig CTkTextbox-konstruktion.
+- Startloggen visar exakt Python-tolk, version och miljö. Normala importfel ger ett manuellt installationskommando för samma tolk; ingenting installeras, kontrolleras eller uppgraderas automatiskt. Saknat Tkinter förväxlas inte med ett pip-paket.
+- Windows-testmatrisen utökad med Python 3.14, utöver 3.11 och 3.13.
 - Högerklick på tray-ikonen → Öppna appens mapp öppnar installationsmappen i operativsystemets filhanterare utan att återställa huvudfönstret.
 - Tydligare tray-ikon: mörk marinblå bakgrund, kraftig guldkontur och större turkos struktur. Anpassad för liten storlek och ljusa/mörka aktivitetsfält; appens logotyp är oförändrad.
 - Omgjord dialog för nytt standardprojekt: breda etiketter utan smal vertikal radbrytning, kompakt formulär, lokal och år på samma rad samt alltid synligt slutnamn med Skapa/Avbryt direkt under. Formuläret kan rullas utan att åtgärderna försvinner.
@@ -67,7 +70,7 @@ upp till en skrivbar plats. Starta Starta-FolderForge.vbs på Windows. Befintlig
 Detta är ett källkodspaket, inte en fristående Windows-exe.
 
 ## Verifiering
-312 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
+317 automatiserade tester godkända lokalt och Python-syntax kontrollerad. Tangentbord, stor text och hög kontrast behöver också provas visuellt på Windows.
 Windows-CI godkänd för Python 3.11 och 3.13; macOS/Cocoa och Linux/X11
 med Python 3.13 också godkända. Linux-testet använder Xvfb och stalonetray.
 Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,

@@ -46,6 +46,13 @@ class Widget:
         if tags is not None: self.tags = tags
         return self.tags
     def winfo_children(self): return self.children
+    def winfo_exists(self): return True
+    def after(self, milliseconds, callback):
+        if not hasattr(self, 'timers'): self.timers = []
+        self.timers.append(callback)
+    def run_timers(self):
+        callbacks, self.timers = getattr(self, 'timers', []), []
+        for callback in callbacks: callback()
     def winfo_toplevel(self):
         return self if self.master is None or isinstance(self, CTkToplevel) else self.master.winfo_toplevel()
     def winfo_viewable(self): return self.visible
@@ -69,7 +76,10 @@ class CTkFrame(Widget): pass
 class CTkToplevel(Widget): pass
 class CTkButton(Widget): pass
 class CTkEntry(Widget): pass
-class CTkTextbox(Widget): pass
+class CTkTextbox(Widget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._textbox = self._x_scrollbar = self._y_scrollbar = object()
 class CTkCheckBox(Widget): pass
 class CTkRadioButton(Widget): pass
 class CTkOptionMenu(Widget): pass
@@ -84,6 +94,38 @@ class AccessibilityTests(unittest.TestCase):
 
     def event(self, widget, key='Return'):
         return SimpleNamespace(widget=widget, keysym=key)
+
+    def test_partial_textbox_prevents_parent_redraw_until_construction_finishes(self):
+        parent = CTkFrame(self.root, fg_color='#222222')
+        box = CTkTextbox(parent)
+        del box._x_scrollbar
+        self.controller.on_map(self.event(parent))
+        self.assertFalse(hasattr(parent, '_ff_accessible_colors'))
+        self.root.run_timers()
+        self.assertFalse(hasattr(parent, '_ff_accessible_colors'))
+        self.assertTrue(getattr(self.root, 'timers', []))
+        box._x_scrollbar = object()
+        self.root.run_timers()
+        self.assertTrue(hasattr(parent, '_ff_accessible_colors'))
+
+    def test_repeated_map_events_are_coalesced_and_destroyed_widgets_ignored(self):
+        parent = CTkFrame(self.root, fg_color='#222222')
+        self.controller.on_map(self.event(parent))
+        self.controller.on_map(self.event(parent))
+        self.assertEqual(len(self.root.timers), 1)
+        parent.winfo_exists = lambda: False
+        self.root.run_timers()
+        self.assertFalse(hasattr(parent, '_ff_accessible_colors'))
+
+    def test_refresh_also_defers_incomplete_textbox_subtrees(self):
+        parent = CTkFrame(self.root, fg_color='#222222')
+        box = CTkTextbox(parent)
+        del box._y_scrollbar
+        self.controller.prepare(parent)
+        self.assertFalse(hasattr(parent, '_ff_accessible_colors'))
+        box._y_scrollbar = object()
+        self.root.run_timers()
+        self.assertTrue(hasattr(parent, '_ff_accessible_colors'))
 
     def test_missing_x11_keysym_does_not_break_windows_startup(self):
         bind = self.root.bind_class
@@ -238,6 +280,7 @@ class AccessibilityTests(unittest.TestCase):
         dialog = CTkToplevel(self.root)
         entry = CTkEntry(dialog, fg_color='#EEEEEE', text_color='#111111')
         self.controller.on_map(self.event(entry))
+        self.root.run_timers()
         self.assertEqual(entry.cget('fg_color'), '#000000')
         self.assertEqual(entry.cget('text_color'), '#FFFFFF')
         self.assertIn(NS['FOCUS_TAG'], entry.tags)

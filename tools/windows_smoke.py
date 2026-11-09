@@ -113,6 +113,18 @@ def main():
         allow_window.set()
         command('restore', 1)
         wait(lambda s: s.get('state') == 'normal', 'Explicit tray restore failed')
+        command('accessibility-regression', 31)
+        report_path = base / 'data/accessibility-construction.json'
+        deadline = time.monotonic() + 20
+        report = None
+        while time.monotonic() < deadline:
+            try:
+                report = json.loads(report_path.read_text())
+                break
+            except (OSError, ValueError):
+                time.sleep(0.1)
+        assert report and report['injected'] and report['styled'] and not report['error'], report
+        (evidence / 'accessibility-construction.json').write_text(json.dumps(report, indent=2))
         command('project-dialog', 21)
         layout_path = base / 'data/project-dialog-layout.json'
         deadline = time.monotonic() + 20
