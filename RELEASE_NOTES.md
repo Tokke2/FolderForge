@@ -4,7 +4,7 @@
 - Windows väljer en fungerande installerad Python: aktuell PATH-tolk först, 3.14 som första reserv och därefter andra installerade Python 3.11+. Ett kort lokalt GUI-prov hoppar över exempelvis 3.15 utan customtkinter. Upptäckt via PATH, Python-launchern och Windows Python-register. Inga nedladdningar, installationer eller uppgraderingar; ingen konsolreserv. Val och avvisningsorsaker loggas.
 - Native startprogram går även vid uppdateringsåterställning via samma tolkval, så en gammal inbyggd Python-sökväg inte kringgår reserven.
 - Rättat konstruktionsrace i tillgänglighetskoden: Map-händelser skjuts upp med timer och halvbyggda textrutor färgsätts inte via sina föräldrar innan båda rullningslisterna finns. Regressionstest provocerar felet under riktig CTkTextbox-konstruktion.
-- Startloggen visar exakt Python-tolk, version och miljö. Normala importfel ger ett manuellt installationskommando för samma tolk; ingenting installeras, kontrolleras eller uppgraderas automatiskt. Saknat Tkinter förväxlas inte med ett pip-paket.
+- Startloggen visar exakt Python-tolk, version och miljö. Normala importfel ger ett manuellt installationskommando för samma tolk; ingenting installeras eller uppgraderas automatiskt. Saknat Tkinter förväxlas inte med ett pip-paket.
 - Windows-testmatrisen utökad med Python 3.14, utöver 3.11 och 3.13.
 - Högerklick på tray-ikonen → Öppna appens mapp öppnar installationsmappen i operativsystemets filhanterare utan att återställa huvudfönstret.
 - Tydligare tray-ikon: mörk marinblå bakgrund, kraftig guldkontur och större turkos struktur. Anpassad för liten storlek och ljusa/mörka aktivitetsfält; appens logotyp är oförändrad.
@@ -20,7 +20,7 @@
 - Alltid minimerad start. Även extra starter lämnar befintligt fönster oförändrat och öppnar ingen ny instans. Öppna uttryckligen via systemfält/snabbtangent. Windows-låsfel stoppar ny start; säker hälsokontroll behålls.
 - Tangentbordsnavigering med Tab/Skift+Tab i visuell ordning, synlig fokusmarkering, Enter/mellanslag för åtgärder och Alt+ned för vallistor. Fokus hålls i modala dialoger och rullas fram; Ctrl+Page Up/Down byter synlig sida och Skift+F10 öppnar sidomenyns snabbmeny.
 - Tillgänglighet i Inställningar: 100/110/125/150 % text- och gränssnittsstorlek samt reversibel hög kontrast, direkt tillämpning och sparade val. Radbrytning/växande knappar, rullbar sidomeny och läsbara namn på infällda sidoknappar. Windows egna dialoger följer systeminställningarna.
-- Python-/paketkontrollen och veckounderhållet borttagna. Systemets befintliga Python används utan versionsval, nyinstallation, pip eller uppgradering. Saknade paket installeras inte vid start.
+- Python-/paketkontrollen och veckounderhållet borttagna. Systemets befintliga Python används utan nyinstallation, pip eller uppgradering; fungerande installerad tolk väljs lokalt. Saknade paket installeras inte vid start.
 - Den felande Python check-rutan och runtime-state-skrivningen används inte längre. Gamla veckouppgiften för aktuell appmapp tas bort när tillåtet; kvarvarande underhållsanrop är verkningslösa och öppnar ingen app.
 - Start sker konsolfritt med befintlig pythonw.exe och alltid minimerat. Systemmiljön måste redan ha Python 3.11+ och nödvändiga paket. Biblioteks-/startfel loggas i logs/. Appens egna releasekontroller är oförändrade.
 - Maskin tillagd bredvid Husbil och Lastbil i projektdialogen, med samma valfria enkelval och direkt förhandsvisning av mappnamnet.
@@ -79,8 +79,8 @@ Riktiga GUI-tester verifierar dold start, tray, dubbelstart, visa/dölj/avsluta,
 fungerande uppdatering med Tk-bekräftelse och trasig uppdatering med återställning.
 Användardata bevaras. Windows-testet övervakar synliga konsoler/Tk-fönster.
 Wayland, alla OS-versioner och företagens IT-policyer är inte fullständigt verifierade.
-Windows: https://github.com/Tokke2/FolderForge/actions/runs/42605683978
-macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42605683881
+Windows: https://github.com/Tokke2/FolderForge/actions/runs/42612238314
+macOS/Linux: https://github.com/Tokke2/FolderForge/actions/runs/42612237680
 Publicerad från arbetsgrenen; main är orörd.
 
 ---

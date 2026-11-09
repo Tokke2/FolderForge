@@ -60,16 +60,18 @@ Tangentbordslogik, inställningar och kontraståterställning testas automatiskt
 utan bildskärm; faktisk layout/fokus på Windows behöver fortfarande verifieras,
 särskilt med stor text, olika DPI och små fönster.
 
-## Systemets Python — ingen Python-/paketkontroll
+## Systemets Python — lokalt tolkval utan underhåll eller installation
 
 Appen använder datorns **befintliga Python**, med PATH först och därefter
 Windows Python-launcherns lokala standardval. En tidigare starttolk används
 bara som reserv om ingen systemtolk hittas. Den skapar ingen egen miljö och
-väljer inte en viss Python-version åt användaren.
+installerar aldrig en viss Python-version åt användaren. Windows provar först
+PATH-tolken och väljer sedan installerad 3.14 som första reserv om GUI-provet
+misslyckas, därefter andra installerade Python 3.11+. Se README för aktuellt beteende.
 
 Den tidigare Python-/paketkontrollen och veckouppdateringen är borttagna.
 Ingen Python eller några paket installeras eller uppgraderas automatiskt,
-inte heller vid första start. Ingen versionskontroll, pip-kontroll, nätverkskontroll
+inte heller vid första start. Ingen kontroll av nya versioner, pip-kontroll, nätverkskontroll
 eller `python-runtime.json`-skrivning görs av startprogrammet. Den gamla rutan
 **FolderForge - Python check** används inte längre.
 

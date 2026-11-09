@@ -97,8 +97,8 @@ samt Linux/X11 med Python 3.13, Xvfb och ett riktigt systemfält (stalonetray).
 dubbelstart, visa/dölj/avsluta samt fungerande och avsiktligt trasiga uppdateringar
 med återställning och bevarade användardata.
 
-[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42605683978) ·
-[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42605683881)
+[Windows-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42612238314) ·
+[macOS- och Linux-resultat](https://github.com/Tokke2/FolderForge/actions/runs/42612237680)
 
 Detta verifierar inte alla macOS-versioner, Linux-skrivbord eller IT-policyer.
 
