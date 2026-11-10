@@ -6363,10 +6363,12 @@ class FolderForgeApp(_DnDCTkBase):
         details_row.pack(fill="x", padx=scaled(15, s), pady=(scaled(10, s), scaled(8, s)))
         for column in (0, 1):
             details_row.grid_columnconfigure(column, weight=1, uniform="details")
+        detail_labels = []
         for column, caption in enumerate(("LOKAL  ·  valfritt", "ÅR  ·  välj eller skriv")):
-            ctk.CTkLabel(details_row, text=caption, anchor="w", text_color=UI_MUTED,
-                         font=ctk.CTkFont(size=scaled_font(11, s), weight="bold")).grid(
-                             row=0, column=column, sticky="ew", padx=(0, 10) if column == 0 else (10, 0), pady=(0, 5))
+            label = ctk.CTkLabel(details_row, text=caption, anchor="w", text_color=UI_MUTED,
+                                 font=ctk.CTkFont(size=scaled_font(11, s), weight="bold"))
+            label.grid(row=0, column=column, sticky="ew", padx=6, pady=(0, 5))
+            detail_labels.append(label)
         location_menu = ctk.CTkOptionMenu(
             details_row, values=["—"] + list(LOKAL_CHOICES), variable=lokal_var,
             command=lambda _v: _förnya_utseende(), width=1,
@@ -6430,12 +6432,56 @@ class FolderForgeApp(_DnDCTkBase):
             fg_color=UI_PRIMARY, hover_color=ACCENT_BLUE, height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
-        skapa_knapp.pack(side="right")
-        ctk.CTkButton(
+        skapa_knapp.grid(row=0, column=1, sticky="ew", padx=4)
+        cancel_button = ctk.CTkButton(
             btn_row, text="Avbryt", command=win.destroy,
-            fg_color=("gray70", "gray30"), height=scaled(34, s), corner_radius=8,
+            fg_color=("gray70", "gray30"), height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s)),
-        ).pack(side="right", padx=(0, scaled(8, s)))
+        )
+        cancel_button.grid(row=0, column=0, sticky="ew", padx=4)
+
+        def responsive_buttons(frame, buttons, max_columns):
+            previous = [None]
+            def reflow(event):
+                if event.widget is not frame:
+                    return
+                available = frame.winfo_width() / frame._get_widget_scaling()
+                minimum = max(button.cget("font").measure(button.cget("text").replace("✓ ", ""))
+                              + scaled(40, s) for button in buttons)
+                columns = max(1, min(max_columns, int(available / max(1, minimum))))
+                if columns == previous[0]:
+                    return
+                previous[0] = columns
+                for col in range(max_columns):
+                    frame.grid_columnconfigure(col, weight=1 if col < columns else 0,
+                                               minsize=0, uniform="responsive")
+                for index, button in enumerate(buttons):
+                    button.configure(width=1)
+                    button.grid(row=index // columns, column=index % columns,
+                                sticky="ew", padx=3, pady=3)
+            frame.bind("<Configure>", reflow, add="+")
+
+        responsive_buttons(vehicle_row, list(vehicle_buttons.values()), len(vehicle_buttons))
+        responsive_buttons(chips_row, list(chip_knappar.values()), 2)
+        responsive_buttons(btn_row, [cancel_button, skapa_knapp], 2)
+
+        detail_columns = [None]
+        def reflow_details(event):
+            if event.widget is not details_row:
+                return
+            available = details_row.winfo_width() / details_row._get_widget_scaling()
+            minimum = max(label.cget("font").measure(label.cget("text")) for label in detail_labels) + 40
+            columns = 2 if available >= minimum * 2 else 1
+            if detail_columns[0] == columns:
+                return
+            detail_columns[0] = columns
+            for col in (0, 1):
+                details_row.grid_columnconfigure(col, weight=1 if col < columns else 0, minsize=0)
+            for index, (label, field) in enumerate(zip(detail_labels, (location_menu, year_menu))):
+                row, col = (0, index) if columns == 2 else (index * 2, 0)
+                label.grid(row=row, column=col, sticky="ew", padx=6, pady=(4, 3))
+                field.grid(row=row + 1, column=col, sticky="ew", padx=6, pady=(0, 4))
+        details_row.bind("<Configure>", reflow_details, add="+")
 
         def _förnya_utseende(*_a) -> None:
             """Synkar chips-lägen, förhandsvisning och Skapa-knappens

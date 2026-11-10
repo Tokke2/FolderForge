@@ -90,6 +90,28 @@ class LayoutTests(unittest.TestCase):
         self.assertIn('self.winfo_x(), self.winfo_y()', code)
         self.assertIn('sw, sh = (monitor.width, monitor.height)', code)
 
+    def test_project_buttons_reflow_for_available_width(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        dialog = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        helper = next(n for n in dialog.body if isinstance(n, ast.FunctionDef) and n.name == 'responsive_buttons')
+        for width, columns in ((600, 3), (300, 2), (140, 1)):
+            with self.subTest(width=width):
+                frame = Mock()
+                frame.winfo_width.return_value = width
+                frame._get_widget_scaling.return_value = 1
+                font = Mock()
+                font.measure.return_value = 100
+                buttons = [Mock() for _ in range(3)]
+                for button in buttons:
+                    button.cget.side_effect = lambda key: font if key == 'font' else 'Button'
+                ns = dict(s=1, scaled=lambda value, scale: value)
+                exec(compile(ast.Module(body=[helper], type_ignores=[]), 'responsive', 'exec'), ns)
+                ns['responsive_buttons'](frame, buttons, 3)
+                frame.bind.call_args.args[1](SimpleNamespace(widget=frame))
+                for index, button in enumerate(buttons):
+                    self.assertEqual(button.grid.call_args.kwargs['row'], index // columns)
+                    self.assertEqual(button.grid.call_args.kwargs['column'], index % columns)
+
     def test_project_actions_follow_final_name_without_footer_gap(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
