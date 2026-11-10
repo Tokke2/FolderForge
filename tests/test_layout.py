@@ -53,10 +53,35 @@ class LayoutTests(unittest.TestCase):
                 ns['fit_content']()
                 win.geometry.assert_called_once_with(f'{round(1888 / factor)}x{round(1000 / factor)}+0+0')
 
+    def test_dialog_fit_never_uses_provisional_width_and_has_readable_minimum(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        fit = next(n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == 'fit_content')
+        for initial, factor, expected in ((1, 1, None), (80, 1, 560), (80, 1.5, 560), (80, 2, 560)):
+            with self.subTest(initial=initial, factor=factor):
+                win, body, footer = Mock(), Mock(), Mock()
+                win.winfo_exists.return_value = True
+                win.winfo_width.return_value = initial
+                win.winfo_height.return_value = 700
+                win.winfo_x.return_value = 0
+                win.winfo_y.return_value = 0
+                win.winfo_screenwidth.return_value = 1920
+                win.winfo_screenheight.return_value = 1080
+                win._get_window_scaling.return_value = factor
+                body.winfo_reqheight.return_value = 600
+                footer.winfo_height.return_value = 100
+                ns = dict(win=win, body=body, footer=footer, pending=[None],
+                          enumerate_monitors=lambda: [], pick_monitor_for_point=lambda *args: None)
+                exec(compile(ast.Module(body=[fit], type_ignores=[]), 'fit', 'exec'), ns)
+                ns['fit_content']()
+                if expected is None:
+                    win.geometry.assert_not_called()
+                else:
+                    self.assertTrue(win.geometry.call_args.args[0].startswith(f'{expected}x'))
+
     def test_dialog_tracks_one_monitor_when_moved(self):
         node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
         code = ast.unparse(node)
-        self.assertIn("win.bind('<Configure>', schedule_fit", code)
+        self.assertIn("win.bind('<Configure>', window_resized", code)
         self.assertIn('width_limit = monitor.width - 32', code)
         self.assertIn('left, top = (monitor.left, monitor.top)', code)
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')

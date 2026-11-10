@@ -4810,6 +4810,10 @@ def dialog_layout(win):
         pending[0] = None
         if not win.winfo_exists():
             return
+        # Tk may still report 1x1 while the dialog is being constructed.
+        # Never feed that provisional width back into CTk.geometry.
+        if win.winfo_width() <= 1 or win.winfo_height() <= 1:
+            return
         needed = body.winfo_reqheight() + footer.winfo_height() + 32
         x, y = win.winfo_x(), win.winfo_y()
         left, top = 0, 0
@@ -4823,7 +4827,10 @@ def dialog_layout(win):
                 limit = monitor.height - 80
         except Exception:
             pass
-        width = min(win.winfo_width(), max(160, width_limit))
+        factor = win._get_window_scaling()
+        # Keep controls readable; only use a narrower dialog on small screens.
+        readable_width = round(560 * factor)
+        width = min(max(win.winfo_width(), readable_width), max(160, width_limit))
         height = min(max(win.winfo_height(), needed), max(160, limit))
         x = max(left, min(x, left + width_limit - width))
         y = max(top, min(y, top + limit - height))
@@ -4839,7 +4846,12 @@ def dialog_layout(win):
 
     body.bind("<Configure>", schedule_fit, add="+")
     footer.bind("<Configure>", schedule_fit, add="+")
-    win.bind("<Configure>", schedule_fit, add="+")
+    def window_resized(event):
+        # Toplevel bindings also receive descendant Configure events.
+        if event.widget is win:
+            schedule_fit()
+
+    win.bind("<Configure>", window_resized, add="+")
     win.after_idle(schedule_fit)
     return body, footer
 
