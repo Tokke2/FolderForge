@@ -4291,8 +4291,15 @@ class DynamicTabView(ctk.CTkFrame):
                 self, fg_color=("gray85", "gray20"), corner_radius=12,
             )
             self._tab_bar.pack(fill="x", padx=0, pady=(0, scaled(8, scale)))
-            self._tab_bar.bind("<Configure>", lambda event: self._rebuild_tab_bar()
-                               if event.widget is self._tab_bar else None, add="+")
+            self._tab_reflow_timer = None
+            def schedule_tab_reflow(event):
+                if event.widget is self._tab_bar and self._tab_reflow_timer is None:
+                    def reflow():
+                        self._tab_reflow_timer = None
+                        if self.winfo_exists():
+                            self._rebuild_tab_bar()
+                    self._tab_reflow_timer = self.after(25, reflow)
+            self._tab_bar.bind("<Configure>", schedule_tab_reflow, add="+")
 
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.pack(fill="both", expand=True)
