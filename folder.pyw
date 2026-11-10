@@ -5051,6 +5051,9 @@ class FolderForgeApp(_DnDCTkBase):
         """CI-only: reproduce a Map event before CTkTextbox assigns x-scrollbar."""
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
             return
+        import faulthandler
+        diagnostic = open(BASE_DIR / "logs" / "gui-construction-stack.log", "w", encoding="utf-8")
+        faulthandler.dump_traceback_later(5, file=diagnostic)
         popup = ctk.CTkToplevel(self)
         popup.title("Accessibility construction regression")
         popup.geometry("360x240")
@@ -5077,6 +5080,8 @@ class FolderForgeApp(_DnDCTkBase):
         finally:
             ctk.CTkScrollbar.__init__ = original
         def finish():
+            faulthandler.cancel_dump_traceback_later()
+            diagnostic.close()
             report["styled"] = bool(textbox and hasattr(textbox, "_ff_accessible_colors"))
             atomic_write_json(DATA_DIR / "accessibility-construction.json", report)
             popup.destroy()
