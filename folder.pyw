@@ -2074,6 +2074,8 @@ class AccessibilityController:
             accessibility_logger.debug("Could not wrap toggle caption", exc_info=True)
 
     def wrap_button(self, widget):
+        if getattr(widget, "_ff_navigation", False):
+            return  # Navigation reflows whole tabs; do not resize captions independently.
         try:
             label = widget._text_label
             if label is None:
@@ -4498,6 +4500,7 @@ class DynamicTabView(ctk.CTkFrame):
             **self._button_kwargs(name, selected=False),
         )
         btn._ff_nav_image = nav_image
+        btn._ff_navigation = True
         # I kollapsat läge är ikonen enda ledtråden, därför verktygstips.
         # Bindningen är ofarlig i utfällt läge eftersom tipset blir tomt.
         btn.bind("<Enter>", lambda e, n=name: self._visa_tip(n))
@@ -4818,47 +4821,11 @@ class DropZone(ctk.CTkFrame):
 # ============================================================
 # CustomTkinter + TkinterDnD root-fönster
 # ============================================================
-def guard_scrollbar_redraw(ctk_module):
-    """Coalesce recursive idle-draining CTk scrollbar draws, notably on X11."""
-    scrollbar = ctk_module.CTkScrollbar
-    original = scrollbar._draw
-    if getattr(original, "_ff_guarded", False):
-        return
-
-    def draw(self, *args, **kwargs):
-        if getattr(self, "_ff_drawing", False):
-            if not getattr(self, "_ff_redraw_pending", False):
-                self._ff_redraw_pending = True
-                def later():
-                    self._ff_redraw_pending = False
-                    if self.winfo_exists():
-                        self._draw()
-                self.after(25, later)
-            return
-        self._ff_drawing = True
-        # CTkScrollbar drains Tk's entire idle queue from inside a draw. Multiple
-        # scrollable pages plus wrapping tabs can keep that drain alive forever.
-        # Let the normal mainloop flush drawing instead, only for this canvas.
-        canvas = getattr(self, "_canvas", None)
-        flush = canvas.update_idletasks if canvas is not None else None
-        if canvas is not None:
-            canvas.update_idletasks = lambda: None
-        try:
-            return original(self, *args, **kwargs)
-        finally:
-            if canvas is not None:
-                canvas.update_idletasks = flush
-            self._ff_drawing = False
-    draw._ff_guarded = True
-    scrollbar._draw = draw
-
-
 class _DnDCTkBase(ctk.CTk):
     """CTk-root med officiellt tkdnd-stöd via TkinterDnD.require(self)."""
 
     def __init__(self, *args, **kwargs):
         global DND_AVAILABLE
-        guard_scrollbar_redraw(ctk)
         super().__init__(*args, **kwargs)
         if not DND_AVAILABLE:
             return
