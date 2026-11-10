@@ -94,7 +94,7 @@ class IssueFilterTests(unittest.TestCase):
         tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_show_error_issues')
-        self.ns = dict(ctk=ctk, apply_icon_to_window=Mock(), APP_ICON=Path('icon'),
+        self.ns = dict(ctk=ctk, adapt_control_row=Mock(), apply_icon_to_window=Mock(), APP_ICON=Path('icon'),
                        UI_PRIMARY='primary', UI_BACKGROUND='background', UI_TEXT='text', UI_BORDER='border',
                        messagebox=Mock(), dialog_layout=lambda win: (Widget(win), Widget(win)))
         exec(compile(ast.Module(body=[node], type_ignores=[]), 'issues', 'exec'), self.ns)

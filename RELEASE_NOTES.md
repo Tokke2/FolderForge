@@ -123,3 +123,8 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 ### Flikar i ovankant
 - Huvudnavigeringen är nu namngivna flikar ovanför innehållet i stället för vänsterställd sidomeny. Flikarna får flera rader vid liten bredd; inga automatiskt dolda namn eller sidomenyrullning. Användarens val av synliga flikar bevaras.
 - 330 lokala tester godkända, inklusive radbrytning av alla sex flikar vid olika bredder.
+
+### Gemensam anpassning av knapprader
+- Knappgrupper får en gemensam breddstyrd layout: lika breda kolumner och fler rader när knapptexter eller textskalning kräver mer plats. Befintliga specialanpassade rutnät lämnas orörda.
+- Historikens rubrik/åtgärder, inställningarnas sparplats och fellistans filter anpassas också. Snabbtangentens inspelningsknappar får använda tillgänglig bredd. Dialogers knappgrupper anpassas via samma tillgänglighetskontroll.
+- 334 lokala tester godkända, inklusive smal/bred layout, textskalning, oförändrade rutnät och skydd mot upprepade layoutuppdateringar.

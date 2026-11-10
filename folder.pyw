@@ -1794,6 +1794,53 @@ def contrast_colors(kind, baseline, colorful=False):
     return colors
 
 
+def adapt_control_row(frame):
+    """Convert an opt-in packed control row to a width-aware, wrapping grid."""
+    if getattr(frame, "_ff_responsive_row", False):
+        return
+    controls = list(frame.winfo_children())
+    if not controls or any(control.winfo_manager() != "pack" for control in controls):
+        return
+    frame._ff_responsive_row = True
+    state = {"signature": None, "timer": None}
+
+    def reflow():
+        state["timer"] = None
+        if not frame.winfo_exists() or frame.winfo_width() <= 1:
+            return
+        scale = frame._get_widget_scaling()
+        available = frame.winfo_width() / scale
+        minimum = 100
+        for control in controls:
+            try:
+                text, font = str(control.cget("text")), control.cget("font")
+                minimum = max(minimum, min(260, font.measure(text) + 40))
+            except (AttributeError, ValueError, TypeError):
+                minimum = max(minimum, 160)
+        columns = max(1, min(len(controls), int(available / (minimum + 8))))
+        signature = (columns, round(minimum))
+        if state["signature"] == signature:
+            return
+        state["signature"] = signature
+        for control in controls:
+            control.pack_forget()
+        for column in range(len(controls)):
+            frame.grid_columnconfigure(column, weight=1 if column < columns else 0,
+                                       minsize=0, uniform="controls")
+        for index, control in enumerate(controls):
+            control.configure(width=1)
+            control.grid(row=index // columns, column=index % columns,
+                         sticky="ew", padx=4, pady=4)
+
+    def schedule(event=None):
+        if event is not None and event.widget is not frame:
+            return
+        if state["timer"] is None:
+            state["timer"] = frame.after(25, reflow)
+    frame.bind("<Configure>", schedule, add="+")
+    schedule()
+
+
 class AccessibilityController:
     def __init__(self, root, ctk, high_contrast=False, size="100%"):
         self.root, self.ctk = root, ctk
@@ -1992,6 +2039,10 @@ class AccessibilityController:
             self._defer_prepare(widget)
             return
         kind = widget_kind(widget)
+        if kind == "CTkFrame" and not getattr(widget, "_ff_responsive_row", False):
+            children = widget.winfo_children()
+            if len(children) > 1 and all(widget_kind(child) == "CTkButton" for child in children):
+                adapt_control_row(widget)
         if self.owner(widget) is not None and kind != "DropdownMenu" and not any(cls.__name__ == "Menu" for cls in type(widget).__mro__):
             tags = widget.bindtags()
             if FOCUS_TAG not in tags:
@@ -5493,6 +5544,8 @@ class FolderForgeApp(_DnDCTkBase):
             font=ctk.CTkFont(size=scaled_font(11, s)),
         ).pack(side="right")
 
+        adapt_control_row(header_row)
+
         self._history_scroll = ctk.CTkScrollableFrame(
             parent, fg_color="transparent",
         )
@@ -5775,6 +5828,8 @@ class FolderForgeApp(_DnDCTkBase):
             font=ctk.CTkFont(size=scaled_font(12, s)),
         ).pack(side="right")
 
+        adapt_control_row(path_row)
+
         # Tema
         self._card(scroll, title="🎨  Utseende", color=ACCENT_PURPLE)
         self.theme_var = ctk.StringVar(value=self.settings.theme)
@@ -5940,7 +5995,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.hk_rec_lbl.pack(pady=scaled(10, s))
 
         rec_btns = ctk.CTkFrame(self.hk_rec_frame, fg_color="transparent")
-        rec_btns.pack(pady=(0, scaled(10, s)))
+        rec_btns.pack(fill="x", padx=scaled(10, s), pady=(0, scaled(10, s)))
 
         ctk.CTkButton(
             rec_btns, text="✅ Spara",
@@ -7363,6 +7418,7 @@ class FolderForgeApp(_DnDCTkBase):
         ctk.CTkOptionMenu(filters, variable=level, values=["Alla nivåer", "Varningar", "Fel", "Kritiska"]).pack(side="left", padx=(0, 8))
         module_menu = ctk.CTkOptionMenu(filters, variable=module, values=["Alla moduler"])
         module_menu.pack(side="left")
+        adapt_control_row(filters)
         listing = ctk.CTkScrollableFrame(body, height=190)
         listing.pack(fill="both", expand=True, padx=15)
         details = ctk.CTkTextbox(body, height=160)
