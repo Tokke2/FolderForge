@@ -4836,9 +4836,18 @@ def guard_scrollbar_redraw(ctk_module):
                 self.after(25, later)
             return
         self._ff_drawing = True
+        # CTkScrollbar drains Tk's entire idle queue from inside a draw. Multiple
+        # scrollable pages plus wrapping tabs can keep that drain alive forever.
+        # Let the normal mainloop flush drawing instead, only for this canvas.
+        canvas = getattr(self, "_canvas", None)
+        flush = canvas.update_idletasks if canvas is not None else None
+        if canvas is not None:
+            canvas.update_idletasks = lambda: None
         try:
             return original(self, *args, **kwargs)
         finally:
+            if canvas is not None:
+                canvas.update_idletasks = flush
             self._ff_drawing = False
     draw._ff_guarded = True
     scrollbar._draw = draw
