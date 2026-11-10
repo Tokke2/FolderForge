@@ -152,3 +152,5 @@ packa i så fall upp appfilerna från v0.0.2 manuellt och **behåll `data/`**.
 
 ### Fönster på flera skärmar
 På Windows anpassas fönstren till en skärms arbetsyta i taget, inklusive utrymmet som aktivitetsfältet tar. Huvudfönstrets normala storlek och läge sparas automatiskt och justeras om en skärm kopplats bort. Appen startar fortfarande minimerad. På små fönster finns scrollning som reserv; text och knappar radbryts. Sparat läge kan nollställas genom att radera `data/window-placement.json` och dess eventuella `.bak`-/`.bak2`-kopior när appen är avslutad.
+
+Placeringen sparas först när huvudfönstret är synligt i normalläge; minimerad start ändrar inte det sparade läget.
