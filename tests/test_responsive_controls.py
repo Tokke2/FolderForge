@@ -67,3 +67,11 @@ class ResponsiveControlTests(unittest.TestCase):
         frame.after.reset_mock()
         frame.bind.call_args.args[1](SimpleNamespace(widget=object()))
         frame.after.assert_not_called()
+
+    def test_customtkinter_canvas_configure_schedules_row_update(self):
+        frame, _controls = self.row(700)
+        self.helper()(frame)
+        frame.after.call_args.args[1]()
+        frame.after.reset_mock()
+        frame.bind.call_args.args[1](SimpleNamespace(widget=frame._canvas))
+        frame.after.assert_called_once()

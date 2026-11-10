@@ -96,6 +96,15 @@ def main():
             x, y, w, h = layout[key]
             assert y >= 0 and y + h <= height + 2, ('Footer clipped', key, layout)
         assert layout['actions'][1] >= layout['preview'][1] + layout['preview'][3], layout
+        # Validate the real controls, not merely their containing frame.
+        assert layout['create'][2] >= layout['button_text_width'] + 12, layout
+        for name in ('create', 'cancel'):
+            x, y, width, height = layout[name]
+            assert width >= 60 and height < layout['window'][1] / 4, layout
+            assert x >= 0 and x + width <= layout['window'][0], layout
+            assert y >= 0 and y + height <= layout['window'][1], layout
+        for name in ('location', 'year'):
+            assert layout[name][2] >= 90, layout
         (evidence / 'project-dialog.json').write_text(json.dumps(layout, indent=2))
         command('close-project-dialog', 22)
         time.sleep(0.3)

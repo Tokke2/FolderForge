@@ -1833,7 +1833,7 @@ def adapt_control_row(frame):
                          sticky="ew", padx=4, pady=4)
 
     def schedule(event=None):
-        if event is not None and event.widget is not frame:
+        if event is not None and event.widget not in (frame, getattr(frame, "_canvas", None)):
             return
         if state["timer"] is None:
             state["timer"] = frame.after(25, reflow)
@@ -4346,7 +4346,7 @@ class DynamicTabView(ctk.CTkFrame):
             self._tab_bar.pack(fill="x", padx=0, pady=(0, scaled(8, scale)))
             self._tab_reflow_timer = None
             def schedule_tab_reflow(event):
-                if event.widget is self._tab_bar and self._tab_reflow_timer is None:
+                if event.widget in (self._tab_bar, self._tab_bar._canvas) and self._tab_reflow_timer is None:
                     def reflow():
                         self._tab_reflow_timer = None
                         if self.winfo_exists():
@@ -6573,8 +6573,11 @@ class FolderForgeApp(_DnDCTkBase):
 
         def responsive_buttons(frame, buttons, max_columns):
             previous = [None]
+            # Establish stretch before accessibility can measure a 1px button.
+            for col in range(max_columns):
+                frame.grid_columnconfigure(col, weight=1, uniform="responsive")
             def reflow(event):
-                if event.widget is not frame:
+                if event.widget not in (frame, getattr(frame, "_canvas", None)) or frame.winfo_width() <= 1:
                     return
                 available = frame.winfo_width() / frame._get_widget_scaling()
                 minimum = max(button.cget("font").measure(button.cget("text").replace("✓ ", ""))
@@ -6591,6 +6594,7 @@ class FolderForgeApp(_DnDCTkBase):
                     button.grid(row=index // columns, column=index % columns,
                                 sticky="ew", padx=3, pady=3)
             frame.bind("<Configure>", reflow, add="+")
+            win.after(25, lambda: reflow(SimpleNamespace(widget=frame)))
 
         responsive_buttons(vehicle_row, list(vehicle_buttons.values()), len(vehicle_buttons))
         responsive_buttons(chips_row, list(chip_knappar.values()), 2)
@@ -6598,7 +6602,7 @@ class FolderForgeApp(_DnDCTkBase):
 
         detail_columns = [None]
         def reflow_details(event):
-            if event.widget is not details_row:
+            if event.widget not in (details_row, details_row._canvas) or details_row.winfo_width() <= 1:
                 return
             available = details_row.winfo_width() / details_row._get_widget_scaling()
             minimum = max(label.cget("font").measure(label.cget("text")) for label in detail_labels) + 40
@@ -6607,12 +6611,14 @@ class FolderForgeApp(_DnDCTkBase):
                 return
             detail_columns[0] = columns
             for col in (0, 1):
-                details_row.grid_columnconfigure(col, weight=1 if col < columns else 0, minsize=0)
+                details_row.grid_columnconfigure(col, weight=1 if col < columns else 0, minsize=0,
+                                                 uniform="details" if col < columns else "")
             for index, (label, field) in enumerate(zip(detail_labels, (location_menu, year_menu))):
                 row, col = (0, index) if columns == 2 else (index * 2, 0)
                 label.grid(row=row, column=col, sticky="ew", padx=6, pady=(4, 3))
                 field.grid(row=row + 1, column=col, sticky="ew", padx=6, pady=(0, 4))
         details_row.bind("<Configure>", reflow_details, add="+")
+        win.after(25, lambda: reflow_details(SimpleNamespace(widget=details_row)))
 
         def _förnya_utseende(*_a) -> None:
             """Synkar chips-lägen, förhandsvisning och Skapa-knappens
@@ -6659,6 +6665,9 @@ class FolderForgeApp(_DnDCTkBase):
                     "window": [win.winfo_width(), win.winfo_height()],
                     "subtitle": box(subtitle_label), "preview": box(preview_ram),
                     "actions": box(btn_row), "location": box(location_menu), "year": box(year_menu),
+                    "create": box(skapa_knapp), "cancel": box(cancel_button),
+                    "button_text_width": skapa_knapp.cget("font").measure(skapa_knapp.cget("text"))
+                                         * skapa_knapp._get_widget_scaling(),
                 })
             win.after(900, report_layout)
 

@@ -104,10 +104,10 @@ class LayoutTests(unittest.TestCase):
                 buttons = [Mock() for _ in range(3)]
                 for button in buttons:
                     button.cget.side_effect = lambda key: font if key == 'font' else 'Button'
-                ns = dict(s=1, scaled=lambda value, scale: value)
+                ns = dict(s=1, win=Mock(), SimpleNamespace=SimpleNamespace, scaled=lambda value, scale: value)
                 exec(compile(ast.Module(body=[helper], type_ignores=[]), 'responsive', 'exec'), ns)
                 ns['responsive_buttons'](frame, buttons, 3)
-                frame.bind.call_args.args[1](SimpleNamespace(widget=frame))
+                frame.bind.call_args.args[1](SimpleNamespace(widget=frame._canvas))
                 for index, button in enumerate(buttons):
                     self.assertEqual(button.grid.call_args.kwargs['row'], index // columns)
                     self.assertEqual(button.grid.call_args.kwargs['column'], index % columns)

@@ -133,3 +133,8 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Toppflikarna har större 24px-ikoner, fet 14px-text, 44px grundhöjd, centrerat innehåll och tydlig kant/markerad vald flik. Textstorleksval och DPI-skalning tillämpas fortfarande.
 - Tomma/dolda rutnätskolumner tas ur uniform-gruppen så att de inte reserverar utrymme. Samma korrigering gäller gemensamma knappgrupper och projektval. Synliga flikar delar hela radens tillgängliga bredd och får fler rader när det behövs.
 - 335 lokala tester godkända, inklusive tre synliga och tre dolda flikar utan reserverade tomkolumner.
+
+### Rättad faktisk storleksanpassning av kontroller
+- CustomTkinter skickar ramens Configure-händelser via sin interna canvas. Layoutvakterna accepterar nu både ramen och dess canvas; tidigare kunde omplaceringen utebli trots att dialogens bredd ändrades. Detta gäller toppflikar, gemensamma knapprader, projektval och lokal/år.
+- Skapa/Avbryt får stretchande kolumner redan när de skapas och en extra första layoutpassering. Det hindrar att tillgänglighetskoden mäter knapparna som smala remsor och radbryter varje bokstav.
+- GUI-testerna kontrollerar nu verklig bredd/höjd och placering för Skapa/Avbryt samt bredden för lokal/år, inte bara knappområdets ram. 336 lokala tester godkända.
