@@ -4802,6 +4802,37 @@ def dialog_layout(win):
     body.grid(row=0, column=0, sticky="nsew")
     footer = ctk.CTkFrame(win, fg_color="transparent")
     footer.grid(row=1, column=0, sticky="ew", padx=12, pady=10)
+    # Väx efter verkligt innehåll, inte en fast uppskattad dialoghöjd.
+    # Scrollning finns kvar som reserv när skärmen faktiskt är för liten.
+    pending = [None]
+
+    def fit_content():
+        pending[0] = None
+        if not win.winfo_exists():
+            return
+        needed = body.winfo_reqheight() + footer.winfo_height() + 32
+        x, y = win.winfo_x(), win.winfo_y()
+        limit = win.winfo_screenheight() - 80
+        top = 0
+        try:
+            monitor = pick_monitor_for_point(enumerate_monitors(), x, y)
+            if monitor is not None:
+                top = monitor.top
+                limit = monitor.height - 80
+        except Exception:
+            pass
+        height = min(max(win.winfo_height(), needed), max(160, limit))
+        y = max(top, min(y, top + limit - height))
+        if height != win.winfo_height() or y != win.winfo_y():
+            win.geometry(f"{win.winfo_width()}x{height}+{x}+{y}")
+
+    def schedule_fit(_event=None):
+        if pending[0] is None:
+            pending[0] = win.after_idle(fit_content)
+
+    body.bind("<Configure>", schedule_fit, add="+")
+    footer.bind("<Configure>", schedule_fit, add="+")
+    win.after_idle(schedule_fit)
     return body, footer
 
 
@@ -6204,6 +6235,10 @@ class FolderForgeApp(_DnDCTkBase):
             text_color=("gray40", "gray55"), anchor="w",
         )
         subtitle_label.pack(fill="x", padx=scaled(18, s), pady=(0, scaled(10, s)))
+        for label in (heading_label, subtitle_label):
+            label.configure(justify="left")
+            label.bind("<Configure>", lambda _e, widget=label: widget.configure(
+                wraplength=max(80, widget.winfo_width() / widget._get_widget_scaling() - 8)), add="+")
 
         resultat: Dict[str, Optional[str]] = {"namn": None}
         namn_var = ctk.StringVar()

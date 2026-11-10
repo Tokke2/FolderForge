@@ -22,6 +22,15 @@ class LayoutTests(unittest.TestCase):
         self.assertEqual(footer.grid.call_args.kwargs['row'], 1)
         self.assertEqual(footer.grid.call_args.kwargs['sticky'], 'ew')
 
+    def test_dialog_grows_to_content_with_screen_bounded_scroll_fallback(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        code = ast.unparse(node)
+        self.assertIn('body.winfo_reqheight()', code)
+        self.assertIn('footer.winfo_height()', code)
+        self.assertIn('monitor.height - 80', code)
+        self.assertIn('win.after_idle(fit_content)', code)
+        self.assertIn('CTkScrollableFrame', code)
+
     def test_project_actions_follow_final_name_without_footer_gap(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
