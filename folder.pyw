@@ -4818,11 +4818,38 @@ class DropZone(ctk.CTkFrame):
 # ============================================================
 # CustomTkinter + TkinterDnD root-fönster
 # ============================================================
+def guard_scrollbar_redraw(ctk_module):
+    """Coalesce recursive idle-draining CTk scrollbar draws, notably on X11."""
+    scrollbar = ctk_module.CTkScrollbar
+    original = scrollbar._draw
+    if getattr(original, "_ff_guarded", False):
+        return
+
+    def draw(self, *args, **kwargs):
+        if getattr(self, "_ff_drawing", False):
+            if not getattr(self, "_ff_redraw_pending", False):
+                self._ff_redraw_pending = True
+                def later():
+                    self._ff_redraw_pending = False
+                    if self.winfo_exists():
+                        self._draw()
+                self.after(25, later)
+            return
+        self._ff_drawing = True
+        try:
+            return original(self, *args, **kwargs)
+        finally:
+            self._ff_drawing = False
+    draw._ff_guarded = True
+    scrollbar._draw = draw
+
+
 class _DnDCTkBase(ctk.CTk):
     """CTk-root med officiellt tkdnd-stöd via TkinterDnD.require(self)."""
 
     def __init__(self, *args, **kwargs):
         global DND_AVAILABLE
+        guard_scrollbar_redraw(ctk)
         super().__init__(*args, **kwargs)
         if not DND_AVAILABLE:
             return
@@ -5051,9 +5078,6 @@ class FolderForgeApp(_DnDCTkBase):
         """CI-only: reproduce a Map event before CTkTextbox assigns x-scrollbar."""
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
             return
-        import faulthandler
-        diagnostic = open(BASE_DIR / "logs" / "gui-construction-stack.log", "w", encoding="utf-8")
-        faulthandler.dump_traceback_later(5, file=diagnostic)
         popup = ctk.CTkToplevel(self)
         popup.title("Accessibility construction regression")
         popup.geometry("360x240")
@@ -5080,8 +5104,6 @@ class FolderForgeApp(_DnDCTkBase):
         finally:
             ctk.CTkScrollbar.__init__ = original
         def finish():
-            faulthandler.cancel_dump_traceback_later()
-            diagnostic.close()
             report["styled"] = bool(textbox and hasattr(textbox, "_ff_accessible_colors"))
             atomic_write_json(DATA_DIR / "accessibility-construction.json", report)
             popup.destroy()
@@ -7638,10 +7660,6 @@ class FolderForgeApp(_DnDCTkBase):
         self._tray_stopping = False
 
     def _restore_from_tray(self, *_) -> None:
-        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
-            import faulthandler
-            self._restore_stack = open(BASE_DIR / "logs" / "gui-restore-stack.log", "w")
-            faulthandler.dump_traceback_later(5, file=self._restore_stack)
         self._stop_tray_icon()
         self._restore_window_placement()
         self.deiconify()

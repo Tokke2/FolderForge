@@ -39,3 +39,28 @@ class TopTabsTests(unittest.TestCase):
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         create = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_gui')
         self.assertIn("layout='tabs'", ast.unparse(create))
+
+    def test_scrollbar_recursive_idle_draw_is_coalesced(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        helper = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'guard_scrollbar_redraw')
+        class Scrollbar:
+            calls = 0
+            after = Mock()
+            def _draw(self):
+                self.calls += 1
+                self._draw()  # A nested Configure while update_idletasks drains.
+            def winfo_exists(self):
+                return True
+        module = SimpleNamespace(CTkScrollbar=Scrollbar)
+        ns = {}
+        exec(compile(ast.Module(body=[helper], type_ignores=[]), 'guard', 'exec'), ns)
+        ns['guard_scrollbar_redraw'](module)
+        guarded = Scrollbar._draw
+        ns['guard_scrollbar_redraw'](module)
+        self.assertIs(guarded, Scrollbar._draw)
+        scrollbar = Scrollbar()
+        scrollbar._draw()
+        self.assertEqual(scrollbar.calls, 1)
+        self.assertFalse(scrollbar._ff_drawing)
+        self.assertTrue(scrollbar._ff_redraw_pending)
+        scrollbar.after.assert_called_once()

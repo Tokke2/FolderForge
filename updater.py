@@ -947,6 +947,8 @@ def service_instance_health(lock_dir, script):
                 continue
             data = json.loads(request.read_text(encoding='utf-8'))
             if data.get('pid') == pid and data.get('nonce') == request.stem.removeprefix('folderforge-probe-'):
+                # Consume before answering so another UI tick cannot recreate the reply.
+                request.unlink(missing_ok=True)
                 _health_write(request.with_suffix('.reply'), dict(pid=pid, nonce=data['nonce']))
         except (OSError, ValueError, TypeError, AttributeError, RecursionError):
             continue
