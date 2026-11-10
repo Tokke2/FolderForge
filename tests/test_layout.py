@@ -31,6 +31,28 @@ class LayoutTests(unittest.TestCase):
         self.assertIn('win.after_idle(fit_content)', code)
         self.assertIn('CTkScrollableFrame', code)
 
+    def test_high_dpi_fit_uses_logical_geometry_and_clamps_both_axes(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        fit = next(n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == 'fit_content')
+        for factor in (1.0, 1.5, 2.0):
+            with self.subTest(factor=factor):
+                win, body, footer = Mock(), Mock(), Mock()
+                win.winfo_exists.return_value = True
+                win.winfo_width.return_value = 2200
+                win.winfo_height.return_value = 1500
+                win.winfo_x.return_value = 900
+                win.winfo_y.return_value = 100
+                win.winfo_screenwidth.return_value = 1920
+                win.winfo_screenheight.return_value = 1080
+                win._get_window_scaling.return_value = factor
+                body.winfo_reqheight.return_value = 800
+                footer.winfo_height.return_value = 120
+                ns = dict(win=win, body=body, footer=footer, pending=[None],
+                          enumerate_monitors=lambda: [], pick_monitor_for_point=lambda *args: None)
+                exec(compile(ast.Module(body=[fit], type_ignores=[]), 'fit', 'exec'), ns)
+                ns['fit_content']()
+                win.geometry.assert_called_once_with(f'{round(1888 / factor)}x{round(1000 / factor)}+0+0')
+
     def test_project_actions_follow_final_name_without_footer_gap(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')

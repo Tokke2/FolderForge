@@ -4812,19 +4812,26 @@ def dialog_layout(win):
             return
         needed = body.winfo_reqheight() + footer.winfo_height() + 32
         x, y = win.winfo_x(), win.winfo_y()
+        left, top = 0, 0
+        width_limit = win.winfo_screenwidth() - 32
         limit = win.winfo_screenheight() - 80
-        top = 0
         try:
             monitor = pick_monitor_for_point(enumerate_monitors(), x, y)
             if monitor is not None:
-                top = monitor.top
+                left, top = monitor.left, monitor.top
+                width_limit = monitor.width - 32
                 limit = monitor.height - 80
         except Exception:
             pass
+        width = min(win.winfo_width(), max(160, width_limit))
         height = min(max(win.winfo_height(), needed), max(160, limit))
+        x = max(left, min(x, left + width_limit - width))
         y = max(top, min(y, top + limit - height))
-        if height != win.winfo_height() or y != win.winfo_y():
-            win.geometry(f"{win.winfo_width()}x{height}+{x}+{y}")
+        if (width, height, x, y) != (win.winfo_width(), win.winfo_height(), win.winfo_x(), win.winfo_y()):
+            # winfo returns physical pixels; CTk.geometry expects logical units.
+            # Passing physical pixels back caused repeated growth at high DPI.
+            factor = win._get_window_scaling()
+            win.geometry(f"{round(width / factor)}x{round(height / factor)}+{x}+{y}")
 
     def schedule_fit(_event=None):
         if pending[0] is None:
