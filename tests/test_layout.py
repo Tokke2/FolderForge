@@ -53,6 +53,18 @@ class LayoutTests(unittest.TestCase):
                 ns['fit_content']()
                 win.geometry.assert_called_once_with(f'{round(1888 / factor)}x{round(1000 / factor)}+0+0')
 
+    def test_dialog_tracks_one_monitor_when_moved(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        code = ast.unparse(node)
+        self.assertIn("win.bind('<Configure>', schedule_fit", code)
+        self.assertIn('width_limit = monitor.width - 32', code)
+        self.assertIn('left, top = (monitor.left, monitor.top)', code)
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        dialog = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(dialog)
+        self.assertIn('self.winfo_x(), self.winfo_y()', code)
+        self.assertIn('sw, sh = (monitor.width, monitor.height)', code)
+
     def test_project_actions_follow_final_name_without_footer_gap(self):
         app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')

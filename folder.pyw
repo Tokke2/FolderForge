@@ -4839,6 +4839,7 @@ def dialog_layout(win):
 
     body.bind("<Configure>", schedule_fit, add="+")
     footer.bind("<Configure>", schedule_fit, add="+")
+    win.bind("<Configure>", schedule_fit, add="+")
     win.after_idle(schedule_fit)
     return body, footer
 
@@ -6222,9 +6223,21 @@ class FolderForgeApp(_DnDCTkBase):
         win.resizable(True, True)
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        bredd = min(scaled(640, s), max(320, sw - 80))
-        höjd = min(scaled(620, s), max(240, sh - 100))
-        win.geometry(f"{bredd}x{höjd}+{(sw - bredd) // 2}+{(sh - höjd) // 2}")
+        left, top = 0, 0
+        try:
+            monitor = pick_monitor_for_point(enumerate_monitors(),
+                                             self.winfo_x(), self.winfo_y())
+            if monitor is not None:
+                left, top = monitor.left, monitor.top
+                sw, sh = monitor.width, monitor.height
+        except Exception:
+            logger.debug("Kunde inte välja dialogens bildskärm", exc_info=True)
+        factor = win._get_window_scaling()
+        bredd = min(scaled(640, s), max(160, int((sw - 80) / factor)))
+        höjd = min(scaled(620, s), max(160, int((sh - 100) / factor)))
+        x = left + max(0, int((sw - bredd * factor) / 2))
+        y = top + max(0, int((sh - höjd * factor) / 2))
+        win.geometry(f"{bredd}x{höjd}+{x}+{y}")
         body, footer = dialog_layout(win)
         # Slutnamn och knappar sitter ihop, utanför det rullbara formuläret.
         footer.configure(fg_color=UI_SURFACE)
