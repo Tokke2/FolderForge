@@ -128,3 +128,8 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Knappgrupper får en gemensam breddstyrd layout: lika breda kolumner och fler rader när knapptexter eller textskalning kräver mer plats. Befintliga specialanpassade rutnät lämnas orörda.
 - Historikens rubrik/åtgärder, inställningarnas sparplats och fellistans filter anpassas också. Snabbtangentens inspelningsknappar får använda tillgänglig bredd. Dialogers knappgrupper anpassas via samma tillgänglighetskontroll.
 - 334 lokala tester godkända, inklusive smal/bred layout, textskalning, oförändrade rutnät och skydd mot upprepade layoutuppdateringar.
+
+### Läsbara flikar, text och ikoner
+- Toppflikarna har större 24px-ikoner, fet 14px-text, 44px grundhöjd, centrerat innehåll och tydlig kant/markerad vald flik. Textstorleksval och DPI-skalning tillämpas fortfarande.
+- Tomma/dolda rutnätskolumner tas ur uniform-gruppen så att de inte reserverar utrymme. Samma korrigering gäller gemensamma knappgrupper och projektval. Synliga flikar delar hela radens tillgängliga bredd och får fler rader när det behövs.
+- 335 lokala tester godkända, inklusive tre synliga och tre dolda flikar utan reserverade tomkolumner.

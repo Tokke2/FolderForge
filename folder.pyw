@@ -1826,7 +1826,7 @@ def adapt_control_row(frame):
             control.pack_forget()
         for column in range(len(controls)):
             frame.grid_columnconfigure(column, weight=1 if column < columns else 0,
-                                       minsize=0, uniform="controls")
+                                       minsize=0, uniform="controls" if column < columns else "")
         for index, control in enumerate(controls):
             control.configure(width=1)
             control.grid(row=index // columns, column=index % columns,
@@ -4341,7 +4341,7 @@ class DynamicTabView(ctk.CTkFrame):
             self._content.pack(side="left", fill="both", expand=True)
         else:
             self._tab_bar = ctk.CTkFrame(
-                self, fg_color=("gray85", "gray20"), corner_radius=12,
+                self, fg_color=UI_SURFACE, corner_radius=12,
             )
             self._tab_bar.pack(fill="x", padx=0, pady=(0, scaled(8, scale)))
             self._tab_reflow_timer = None
@@ -4499,26 +4499,16 @@ class DynamicTabView(ctk.CTkFrame):
                     weight="bold" if selected else "normal",
                 ),
             }
-        if selected:
-            return {
-                "fg_color": (ACCENT_BLUE, ACCENT_BLUE),
-                "text_color": "white",
-                "hover_color": ("gray75", "gray30"),
-                "corner_radius": 10,
-                "height": scaled(36, self._scale),
-                "font": ctk.CTkFont(
-                    size=scaled_font(13, self._scale), weight="bold",
-                ),
-            }
         return {
-            "fg_color": "transparent",
-            "text_color": ("gray30", "gray70"),
-            "hover_color": ("gray75", "gray30"),
-            "corner_radius": 10,
-            "height": scaled(36, self._scale),
-            "font": ctk.CTkFont(
-                size=scaled_font(13, self._scale), weight="normal",
-            ),
+            "fg_color": UI_PRIMARY if selected else UI_BACKGROUND,
+            "text_color": "white" if selected else UI_TEXT,
+            "hover_color": ACCENT_BLUE if selected else UI_BORDER,
+            "corner_radius": 8,
+            "height": scaled(44, self._scale),
+            "border_width": 1,
+            "border_color": UI_PRIMARY if selected else UI_BORDER,
+            "anchor": "center",
+            "font": ctk.CTkFont(size=scaled_font(14, self._scale), weight="bold"),
         }
 
     def add_tab(self, name: str) -> ctk.CTkFrame:
@@ -4541,7 +4531,7 @@ class DynamicTabView(ctk.CTkFrame):
             icon = TAB_ICONS.get(name, "")
             btn_text = f"{icon} {name}"
 
-        nav_image = load_ui_icon(name, scaled(22, self._scale))
+        nav_image = load_ui_icon(name, scaled(24 if self._layout == "tabs" else 22, self._scale))
         if nav_image:
             btn_text = "" if self._layout == "sidebar" and self._collapsed else name
         btn = ctk.CTkButton(
@@ -4578,7 +4568,7 @@ class DynamicTabView(ctk.CTkFrame):
             self._tab_grid_signature = signature
             for column in range(len(self._tab_buttons)):
                 self._tab_bar.grid_columnconfigure(column, weight=1 if column < columns else 0,
-                                                   minsize=0, uniform="tabs")
+                                                   minsize=0, uniform="tabs" if column < columns else "")
             for button in self._tab_buttons.values():
                 button.grid_forget()
             for index, (_name, button) in enumerate(visible):
@@ -6595,7 +6585,7 @@ class FolderForgeApp(_DnDCTkBase):
                 previous[0] = columns
                 for col in range(max_columns):
                     frame.grid_columnconfigure(col, weight=1 if col < columns else 0,
-                                               minsize=0, uniform="responsive")
+                                               minsize=0, uniform="responsive" if col < columns else "")
                 for index, button in enumerate(buttons):
                     button.configure(width=1)
                     button.grid(row=index // columns, column=index % columns,

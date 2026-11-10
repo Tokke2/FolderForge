@@ -40,3 +40,28 @@ class TopTabsTests(unittest.TestCase):
         create = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_gui')
         self.assertIn("layout='tabs'", ast.unparse(create))
 
+
+    def test_hidden_tab_columns_do_not_reserve_uniform_space(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+                   and any(isinstance(m, ast.FunctionDef) and m.name == '_rebuild_tab_bar' for m in n.body))
+        method = next(n for n in cls.body if isinstance(n, ast.FunctionDef) and n.name == '_rebuild_tab_bar')
+        font = Mock()
+        font.measure.return_value = 70
+        buttons = {str(i): Mock() for i in range(6)}
+        for button in buttons.values():
+            button.cget.return_value = font
+        bar = Mock()
+        bar.winfo_width.return_value = 700
+        bar._get_widget_scaling.return_value = 1
+        view = SimpleNamespace(_layout='tabs', _tab_bar=bar, _tab_buttons=buttons, _scale=1,
+                               _settings=SimpleNamespace(visible_tabs={str(i): i < 3 for i in range(6)}))
+        ns = dict(scaled=lambda value, scale: value)
+        exec(compile(ast.Module(body=[method], type_ignores=[]), 'tabs', 'exec'), ns)
+        ns['_rebuild_tab_bar'](view)
+        for call in bar.grid_columnconfigure.call_args_list:
+            column = call.args[0]
+            self.assertEqual(call.kwargs['uniform'], 'tabs' if column < 3 else '')
+            self.assertEqual(call.kwargs['weight'], 1 if column < 3 else 0)
+        for index, button in enumerate(buttons.values()):
+            self.assertEqual(button.grid.call_count, 1 if index < 3 else 0)
