@@ -104,11 +104,16 @@ def main():
         launch()
         time.sleep(3)
         second = wait(lambda s: s.get('pid') == first['pid'] and s.get('state') == 'withdrawn' and s.get('tray'), 'Double start changed primary')
-        active = []
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            command_line = ' '.join(proc.info['cmdline'] or [])
-            if proc.info['name'].lower() == 'pythonw.exe' and str(base / 'folder.pyw').lower() in command_line.lower():
-                active.append(proc.pid)
+        deadline = time.monotonic() + 15
+        while True:
+            active = []
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                command_line = ' '.join(proc.info['cmdline'] or [])
+                if proc.info['name'].lower() == 'pythonw.exe' and str(base / 'folder.pyw').lower() in command_line.lower():
+                    active.append(proc.pid)
+            if active == [first['pid']] or time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
         assert active == [first['pid']], ('Duplicate GUI processes', active)
         allow_window.set()
         command('restore', 1)

@@ -6048,6 +6048,8 @@ class FolderForgeApp(_DnDCTkBase):
         self.geometry(f"{round(width / factor)}x{round(height / factor)}+{x}+{y}")
 
     def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
         if event.widget is self:
             pending = getattr(self, "_placement_save_timer", None)
             if pending is not None:
