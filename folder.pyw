@@ -7638,6 +7638,10 @@ class FolderForgeApp(_DnDCTkBase):
         self._tray_stopping = False
 
     def _restore_from_tray(self, *_) -> None:
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
+            import faulthandler
+            self._restore_stack = open(BASE_DIR / "logs" / "gui-restore-stack.log", "w")
+            faulthandler.dump_traceback_later(5, file=self._restore_stack)
         self._stop_tray_icon()
         self._restore_window_placement()
         self.deiconify()
