@@ -4291,6 +4291,8 @@ class DynamicTabView(ctk.CTkFrame):
                 self, fg_color=("gray85", "gray20"), corner_radius=12,
             )
             self._tab_bar.pack(fill="x", padx=0, pady=(0, scaled(8, scale)))
+            self._tab_bar.bind("<Configure>", lambda event: self._rebuild_tab_bar()
+                               if event.widget is self._tab_bar else None, add="+")
 
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.pack(fill="both", expand=True)
@@ -4502,6 +4504,27 @@ class DynamicTabView(ctk.CTkFrame):
         return frame
 
     def _rebuild_tab_bar(self) -> None:
+        if self._layout == "tabs":
+            visible = [(name, button) for name, button in self._tab_buttons.items()
+                       if self._settings.visible_tabs.get(name, True)]
+            available = self._tab_bar.winfo_width() / self._tab_bar._get_widget_scaling()
+            minimum = max((button.cget("font").measure(name) + scaled(60, self._scale)
+                           for name, button in visible), default=120)
+            columns = max(1, min(len(visible) or 1, int(available / max(1, minimum))))
+            signature = (tuple(name for name, _button in visible), columns)
+            if getattr(self, "_tab_grid_signature", None) == signature:
+                return
+            self._tab_grid_signature = signature
+            for column in range(len(self._tab_buttons)):
+                self._tab_bar.grid_columnconfigure(column, weight=1 if column < columns else 0,
+                                                   minsize=0, uniform="tabs")
+            for button in self._tab_buttons.values():
+                button.grid_forget()
+            for index, (_name, button) in enumerate(visible):
+                button.configure(width=1)
+                button.grid(row=index // columns, column=index % columns, sticky="ew",
+                            padx=scaled(3, self._scale), pady=scaled(3, self._scale))
+            return
         for btn in self._tab_buttons.values():
             btn.pack_forget()
         sida = "top" if self._layout == "sidebar" else "left"
@@ -5193,10 +5216,11 @@ class FolderForgeApp(_DnDCTkBase):
         self._visa_menu.add_separator()
         _tab_view = getattr(self, "_tab_view", None)
         _kollapsad = bool(getattr(_tab_view, "_collapsed", False))
-        self._visa_menu.add_command(
-            label=("Fäll ut sidomenyn" if _kollapsad else "Fäll in sidomenyn"),
-            command=self._toggle_sidebar,
-        )
+        if _tab_view is not None and _tab_view.is_sidebar():
+            self._visa_menu.add_command(
+                label=("Fäll ut sidomenyn" if _kollapsad else "Fäll in sidomenyn"),
+                command=self._toggle_sidebar,
+            )
         self._visa_menu.add_separator()
         for name in TAB_ICONS:
             vis = self.settings.visible_tabs.get(name, True)
@@ -5340,7 +5364,7 @@ class FolderForgeApp(_DnDCTkBase):
         self._tab_view = DynamicTabView(
             self, settings=self.settings, scale=s,
             on_visibility_change=self._on_tab_visibility_changed,
-            layout="sidebar",
+            layout="tabs",
             collapsed=should_collapse_sidebar(_bredd / text_scale(self.settings.text_size) if _bredd else None, s),
         )
         # Ökat andrum runt innehållet: 15→20 px i sidled och 6→12 px uppåt.
