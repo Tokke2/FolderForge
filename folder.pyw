@@ -2056,7 +2056,7 @@ class AccessibilityController:
 
     def wrap_label(self, widget):
         try:
-            if len(str(widget.cget("text"))) > 40:
+            if str(widget.cget("text")):
                 if widget.winfo_width() < 24:
                     return  # Wait for actual allocation instead of wrapping to 60px.
                 width = max(60, widget.winfo_width() / widget._get_widget_scaling() - 12)
@@ -2628,6 +2628,23 @@ def enumerate_monitors(windll: Any = None) -> List[MonitorInfo]:
         try:
             rect = lprc.contents
             left, top, right, bottom = rect[0], rect[1], rect[2], rect[3]
+            # rcWork excludes taskbars on any edge, separately for each monitor.
+            try:
+                from ctypes import wintypes
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(info)
+                get_info = user32.GetMonitorInfoW
+                get_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+                get_info.restype = wintypes.BOOL
+                if get_info(hmon, ctypes.byref(info)):
+                    work = info.rcWork
+                    if work.right > work.left and work.bottom > work.top:
+                        left, top, right, bottom = work.left, work.top, work.right, work.bottom
+            except Exception:
+                pass  # Keep the full monitor rectangle if work-area lookup fails.
             dpi = 96.0
             if shcore is not None:
                 try:
@@ -5073,7 +5090,15 @@ class FolderForgeApp(_DnDCTkBase):
                 "Multiskärmsplacering misslyckades — använder primärskärmen",
                 exc_info=True)
 
+        factor = self._get_window_scaling()
+        target = pick_monitor_for_point(enumerate_monitors(), x, y)
+        if target is not None:
+            w = min(w, int((target.width - 32) / factor))
+            h = min(h, int((target.height - 64) / factor))
+            x, y = clamp_window_into_monitor(x, y, round(w * factor), round(h * factor), target)
+        self.minsize(min(scaled(500, self._scale), w), min(scaled(400, self._scale), h))
         self.geometry(f"{w}x{h}+{x}+{y}")
+        self._restore_window_placement()
         self.resizable(True, True)
 
         # M28/v5.0 — ikonen överallt, med procedurell reserv.
@@ -5349,36 +5374,20 @@ class FolderForgeApp(_DnDCTkBase):
 
         self._tab_view.show_first_visible()
 
-        # Footer
-        footer = ctk.CTkFrame(
-            self, fg_color=UI_SURFACE,
-            corner_radius=0, height=scaled(42, s),
-        )
+        # Content-driven footer: never clip text inside a fixed 42px frame.
+        footer = ctk.CTkFrame(self, fg_color=UI_SURFACE, corner_radius=0)
         footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
-
-        ctk.CTkLabel(
-            footer, text=COPYRIGHT_OWNER,
-            font=ctk.CTkFont(size=scaled_font(11, s)),
-            text_color=UI_MUTED,
-        ).pack(side="left", padx=scaled(15, s), pady=scaled(5, s))
-
-        dnd_status = "✅ Drag & Drop aktiv" if DND_AVAILABLE else ""
-        if dnd_status:
-            ctk.CTkLabel(
-                footer, text=dnd_status,
-                font=ctk.CTkFont(size=scaled_font(10, s)),
-                text_color=UI_MUTED,
-            ).pack(side="left", padx=scaled(10, s))
-
-        ctk.CTkButton(
-            footer, text="Minimera till fältet",
-            command=self._minimize_to_systray,
-            fg_color="transparent",
-            hover_color=UI_BORDER,
-            text_color=UI_TEXT, height=scaled(28, s),
-            font=ctk.CTkFont(size=scaled_font(11, s)),
-        ).pack(side="right", padx=scaled(15, s), pady=scaled(5, s))
+        footer.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(footer, text=COPYRIGHT_OWNER, anchor="w",
+                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).grid(
+                         row=0, column=0, sticky="ew", padx=12, pady=4)
+        ctk.CTkButton(footer, text="Minimera till fältet", command=self._minimize_to_systray,
+                      fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
+                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).grid(
+                          row=1, column=0, sticky="ew", padx=12, pady=(0, 4))
+        if DND_AVAILABLE:
+            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).grid(
+                row=2, column=0, sticky="ew", padx=12, pady=(0, 4))
 
     # ============================================================
     # Tabb: Skapa
@@ -5545,7 +5554,7 @@ class FolderForgeApp(_DnDCTkBase):
 
             left = ctk.CTkFrame(card, fg_color="transparent")
             left.pack(
-                side="left", fill="both", expand=True,
+                fill="both", expand=True,
                 padx=scaled(12, s), pady=scaled(8, s),
             )
 
@@ -5568,8 +5577,6 @@ class FolderForgeApp(_DnDCTkBase):
             ).pack(fill="x")
 
             display_path = str(path.parent)
-            if len(display_path) > 45:
-                display_path = "..." + display_path[-42:]
 
             ctk.CTkLabel(
                 left, text=display_path,
@@ -5578,7 +5585,7 @@ class FolderForgeApp(_DnDCTkBase):
             ).pack(fill="x")
 
             btn_col = ctk.CTkFrame(card, fg_color="transparent")
-            btn_col.pack(side="right", padx=scaled(8, s), pady=scaled(6, s))
+            btn_col.pack(fill="x", padx=scaled(8, s), pady=scaled(6, s))
 
             ctk.CTkButton(
                 btn_col, text="📂 Öppna",
@@ -5656,6 +5663,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_mallar(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
         self._card(parent, title="📋  Projektmallar", color=ACCENT_GREEN)
         ctk.CTkLabel(
             parent,
@@ -5677,6 +5687,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_exportera(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
 
         self._card(parent, title="📤  Exportera Mappstruktur", color=ACCENT_ORANGE)
 
@@ -5844,6 +5857,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_hotkey(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
 
         self._card(parent, title="⌨️  Global Snabbtangent", color=ACCENT_PURPLE)
 
@@ -5971,7 +5987,41 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Resize
     # ============================================================
+    def _remember_window_placement(self):
+        if self.state() != "normal" or not self.winfo_viewable():
+            return
+        rectangle = [self.winfo_x(), self.winfo_y(), self.winfo_width(), self.winfo_height()]
+        if min(rectangle[2:]) > 100:
+            atomic_write_json(DATA_DIR / "window-placement.json", rectangle)
+
+    def _restore_window_placement(self):
+        rectangle = read_json_safe(DATA_DIR / "window-placement.json", None)
+        if not (isinstance(rectangle, list) and len(rectangle) == 4
+                and all(type(value) is int for value in rectangle)
+                and all(100 < value < 20000 for value in rectangle[2:])):
+            return
+        x, y, width, height = rectangle
+        monitors = enumerate_monitors()
+        monitor = pick_monitor_for_point(monitors, x, y)
+        if monitor is not None:
+            width, height = min(width, monitor.width - 32), min(height, monitor.height - 64)
+            x, y = clamp_window_into_monitor(x, y, width, height, monitor)
+        else:
+            width = min(width, self.winfo_screenwidth() - 32)
+            height = min(height, self.winfo_screenheight() - 80)
+            x = max(0, min(x, self.winfo_screenwidth() - width))
+            y = max(0, min(y, self.winfo_screenheight() - height - 40))
+        factor = self._get_window_scaling()
+        self.minsize(min(round(width / factor), scaled(500, self._scale)),
+                     min(round(height / factor), scaled(400, self._scale)))
+        self.geometry(f"{round(width / factor)}x{round(height / factor)}+{x}+{y}")
+
     def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is self:
+            pending = getattr(self, "_placement_save_timer", None)
+            if pending is not None:
+                self.after_cancel(pending)
+            self._placement_save_timer = self.after(600, self._remember_window_placement)
         try:
             w = self.winfo_width()
             self.result_label.configure(
@@ -7463,6 +7513,7 @@ class FolderForgeApp(_DnDCTkBase):
             self._minimize_to_systray()
 
     def _minimize_to_systray(self) -> None:
+        self._remember_window_placement()
         if hasattr(self, "_tab_view"):
             self._tab_view._dolj_tip()
         self.withdraw()
@@ -7550,6 +7601,7 @@ class FolderForgeApp(_DnDCTkBase):
 
     def _restore_from_tray(self, *_) -> None:
         self._stop_tray_icon()
+        self._restore_window_placement()
         self.deiconify()
         self.lift()
         self.focus_force()
@@ -7571,6 +7623,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.quit()
 
     def _quit_app(self, *_) -> None:
+        self._remember_window_placement()
         self._shutdown_background_services()
         sys.exit(0)
 

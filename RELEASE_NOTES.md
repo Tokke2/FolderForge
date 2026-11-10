@@ -113,3 +113,9 @@ GitHubs automatiska källkodsarkiv fungerar också för installation.
 ikonformat verifierade. GUI-layoutens struktur testas utan skärm;
 visuell kontroll, Windows-tray och uppdateringsinstallation måste fortfarande
 verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
+
+### Skärmanpassning och sparad placering
+- Windows använder varje skärms arbetsyta (`rcWork`), så aktivitetsfält på valfri kant undantas. Full skärm används som reserv om arbetsytan inte kan läsas.
+- Även Mallar, Exportera och Snabbtangent har rullbar reserv för små fönster. Gemensam radbrytning omfattar även korta etiketter; historiknamn får hela kortbredden och sökvägar förkortas inte längre. Sidfoten växer med innehållet i stället för att klippa det vid fast höjd.
+- Huvudfönstrets normala storlek och placering sparas lokalt i data/window-placement.json. Dolda/maximerade fönster skriver inte över normalstorleken. Sparad placering begränsas till ansluten skärms arbetsyta vid start och återställning från tray. Starten är fortfarande minimerad.
+- 328 lokala tester godkända, inklusive ogiltig placering, frånkopplad skärm, DPI-omräkning och dolt/maximerat fönster. Visuell kontroll på användarens skärmar återstår.
