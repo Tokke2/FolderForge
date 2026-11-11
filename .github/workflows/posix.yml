@@ -13,10 +13,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            screen: 1366x768
+            text_size: '100%'
+          - os: ubuntu-latest
+            screen: 1920x1080
+            text_size: '100%'
+          - os: ubuntu-latest
+            screen: 1366x768
+            text_size: '150%'
+          - os: macos-latest
+            screen: native
+            text_size: '100%'
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: 1
+      FOLDERFORGE_TEST_TEXT_SIZE: ${{ matrix.text_size }}
+      FOLDERFORGE_TEST_SCREEN: ${{ matrix.screen }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,7 +48,7 @@ jobs:
         env:
           PYSTRAY_BACKEND: xorg
         run: |
-          xvfb-run -a bash -c '
+          xvfb-run -a -s "-screen 0 ${{ matrix.screen }}x24" bash -c '
             stalonetray --geometry 1x1+0+0 &
             tray_pid=$!
             trap "kill $tray_pid 2>/dev/null || true" EXIT
@@ -48,5 +62,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: desktop-evidence-${{ matrix.os }}
+          name: desktop-evidence-${{ matrix.os }}-${{ matrix.screen }}-${{ matrix.text_size }}
           path: windows-evidence/

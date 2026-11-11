@@ -520,7 +520,7 @@ def resolve_error_issue(issue_id, expected_digest):
         return target
 
 
-def export_diagnostic_package(destination):
+def export_diagnostic_package(destination, display_info=None):
     """Endast utvalda loggar/status, inga inställningar, projekt eller miljövariabler."""
     import json
     import platform
@@ -537,6 +537,8 @@ def export_diagnostic_package(destination):
         with zipfile.ZipFile(temporary, 'w', compression=zipfile.ZIP_DEFLATED) as output:
             report = dict(app=APP_NAME, version=APP_VERSION, python=platform.python_version(),
                           system=platform.system(), update=get_update_status(BASE_DIR, APP_VERSION), files=[])
+            if display_info is not None:
+                report['display'] = display_info
             with _locked_logs(LOG_DIR):
                 def safe_log(path):
                     return (path.is_file() and not path.is_symlink()

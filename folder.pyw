@@ -5424,7 +5424,7 @@ class FolderForgeApp(_DnDCTkBase):
         # fönsterkanten som i v4.3.
         self._tab_view.pack(
             fill="both", expand=True,
-            padx=scaled(20, s), pady=(scaled(12, s), scaled(12, s)),
+            padx=scaled(14, s), pady=(scaled(8, s), scaled(8, s)),
         )
         # Responsiv kollaps: fönstret ändrar storlek → sidebarn följer med.
         # VIKTIGT: add="+" — utan den ERSÄTTER denna bindning den tidigare
@@ -5452,17 +5452,14 @@ class FolderForgeApp(_DnDCTkBase):
         # Content-driven footer: never clip text inside a fixed 42px frame.
         footer = ctk.CTkFrame(self, fg_color=UI_SURFACE, corner_radius=0)
         footer.pack(fill="x", side="bottom")
-        footer.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(footer, text=COPYRIGHT_OWNER, anchor="w",
-                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).grid(
-                         row=0, column=0, sticky="ew", padx=12, pady=4)
+                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).pack(side="left", padx=8)
         ctk.CTkButton(footer, text="Minimera till fältet", command=self._minimize_to_systray,
                       fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
-                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).grid(
-                          row=1, column=0, sticky="ew", padx=12, pady=(0, 4))
+                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).pack(side="left", padx=8)
         if DND_AVAILABLE:
-            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).grid(
-                row=2, column=0, sticky="ew", padx=12, pady=(0, 4))
+            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).pack(side="left", padx=8)
+        adapt_control_row(footer)
 
     # ============================================================
     # Tabb: Skapa
@@ -6377,7 +6374,7 @@ class FolderForgeApp(_DnDCTkBase):
             logger.debug("Kunde inte välja dialogens bildskärm", exc_info=True)
         factor = win._get_window_scaling()
         bredd = min(scaled(640, s), max(160, int((sw - 80) / factor)))
-        höjd = min(scaled(620, s), max(160, int((sh - 100) / factor)))
+        höjd = min(scaled(550, s), max(160, int((sh - 100) / factor)))
         x = left + max(0, int((sw - bredd * factor) / 2))
         y = top + max(0, int((sh - höjd * factor) / 2))
         win.geometry(f"{bredd}x{höjd}+{x}+{y}")
@@ -6663,6 +6660,8 @@ class FolderForgeApp(_DnDCTkBase):
                             widget.winfo_width(), widget.winfo_height()]
                 atomic_write_json(DATA_DIR / "project-dialog-layout.json", {
                     "window": [win.winfo_width(), win.winfo_height()],
+                    "screen": [win.winfo_screenwidth(), win.winfo_screenheight()],
+                    "text_size": self.settings.text_size,
                     "subtitle": box(subtitle_label), "preview": box(preview_ram),
                     "actions": box(btn_row), "location": box(location_menu), "year": box(year_menu),
                     "create": box(skapa_knapp), "cancel": box(cancel_button),
@@ -7382,16 +7381,34 @@ class FolderForgeApp(_DnDCTkBase):
         logger.info(text)
         messagebox.showinfo("Loggning", text, parent=self)
 
+    def _display_diagnostics(self):
+        """Geometry only: never titles, entered text, screenshots or project paths."""
+        def rectangle(window):
+            return [window.winfo_x(), window.winfo_y(), window.winfo_width(), window.winfo_height()]
+        info = {"screen_pixels": [self.winfo_screenwidth(), self.winfo_screenheight()],
+                "text_size": self.settings.text_size,
+                "widget_scaling": self._get_widget_scaling(),
+                "window_scaling": self._get_window_scaling(),
+                "main_window": rectangle(self), "dialogs": [], "work_areas": []}
+        for child in self.winfo_children():
+            if isinstance(child, tk.Toplevel) and child.winfo_exists():
+                info["dialogs"].append(rectangle(child))
+        for monitor in enumerate_monitors():
+            info["work_areas"].append({"rectangle": [monitor.left, monitor.top, monitor.width, monitor.height],
+                                       "dpi": monitor.dpi, "primary": monitor.is_primary})
+        info["work_area_source"] = "windows-monitor-api" if info["work_areas"] else "unavailable"
+        return info
+
     def _export_diagnostics(self):
         from logg import export_diagnostic_package
-        if not messagebox.askyesno("Granska innan delning", "Paketet innehåller loggar och uppdateringsstatus. Loggar kan innehålla personliga sökvägar och felmeddelanden. Inställningsfiler och projekt tas inte med.\n\nVill du skapa ett ZIP-paket? Granska innehållet innan du delar det.", parent=self):
+        if not messagebox.askyesno("Granska innan delning", "Paketet innehåller loggar, uppdateringsstatus och skärmmått/DPI/textskalning. Skärmbilder och fönstertitlar tas inte med. Loggar kan innehålla personliga sökvägar och felmeddelanden. Inställningsfiler och projekt tas inte med.\n\nVill du skapa ett ZIP-paket? Granska innehållet innan du delar det.", parent=self):
             return
         target = filedialog.asksaveasfilename(parent=self, title="Spara felsökningspaket", defaultextension=".zip",
                                             filetypes=[("ZIP-paket", "*.zip")], initialfile="FolderForge-felsokning.zip")
         if not target:
             return
         try:
-            export_diagnostic_package(target)
+            export_diagnostic_package(target, display_info=self._display_diagnostics())
             messagebox.showinfo("Felsökningspaket", "Paketet sparades. Granska innan delning:\n" + target, parent=self)
         except Exception as exc:
             logger.exception("Kunde inte exportera felsökningspaket")

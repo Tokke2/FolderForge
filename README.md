@@ -156,3 +156,5 @@ På Windows anpassas fönstren till en skärms arbetsyta i taget, inklusive utry
 Placeringen sparas först när huvudfönstret är synligt i normalläge; minimerad start ändrar inte det sparade läget.
 
 Navigeringen ligger i namngivna flikar ovanför innehållet. Flikarna får fler rader när fönstret är smalt eller texten förstoras. Vilka flikar som visas väljs fortfarande via Visa-menyn eller Inställningar.
+
+Förslagsbank: [100 nya förbättringsförslag](docs/100_FORBATTRINGSFORSLAG.md). Förslag införs bara efter uttryckligt val. Felsökningspaketet innehåller även skärmmått, tillgängliga Windows-arbetsytor, DPI och textskalning, utan fönstertitlar eller skärmbilder.

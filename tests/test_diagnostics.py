@@ -204,6 +204,40 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertIn(token, code)
 
 
+    def test_display_geometry_is_in_export_when_supplied(self):
+        self.write('example')
+        target = self.base / 'display.zip'
+        display = {'screen_pixels': [1366, 768], 'text_size': '150%',
+                   'main_window': [30, 40, 800, 650], 'work_areas': []}
+        logg.export_diagnostic_package(target, display_info=display)
+        with zipfile.ZipFile(target) as archive:
+            report = json.loads(archive.read('diagnostic.json'))
+            self.assertEqual(report['display'], display)
+            self.assertNotIn('screenshot.png', archive.namelist())
+
+    def test_display_collection_contains_geometry_not_window_titles(self):
+        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_display_diagnostics')
+        window = Mock()
+        for key, value in dict(x=0, y=20, width=800, height=600).items():
+            getattr(window, 'winfo_' + key).return_value = value
+        window.winfo_screenwidth.return_value = 1366
+        window.winfo_screenheight.return_value = 768
+        window.winfo_children.return_value = []
+        window._get_widget_scaling.return_value = 1.5
+        window._get_window_scaling.return_value = 1
+        window.settings = SimpleNamespace(text_size='150%')
+        monitor = SimpleNamespace(left=0, top=40, width=1366, height=728, dpi=144, is_primary=True)
+        ns = dict(enumerate_monitors=lambda: [monitor], tk=SimpleNamespace(Toplevel=type(None)))
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'display', 'exec'), ns)
+        info = ns['_display_diagnostics'](window)
+        self.assertEqual(info['work_areas'][0]['rectangle'], [0, 40, 1366, 728])
+        self.assertEqual(info['text_size'], '150%')
+        self.assertNotIn('title', json.dumps(info))
+        window.title.assert_not_called()
+
+
 class HotkeyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

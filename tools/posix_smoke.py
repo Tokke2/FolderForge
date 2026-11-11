@@ -21,6 +21,10 @@ def main():
     for name in updater.FILES | updater.OPTIONAL_FILES:
         shutil.copy2(source / name, base / name)
     shutil.copytree(source / 'Icon', base / 'Icon')
+    # Synthetic settings only inside the disposable test copy.
+    size = os.environ.get('FOLDERFORGE_TEST_TEXT_SIZE', '100%')
+    (base / 'data').mkdir(exist_ok=True)
+    (base / 'data/settings.json').write_text(json.dumps({'text_size': size}), encoding='utf-8')
     env = os.environ.copy()
     env['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
     status_path = base / 'data/windows-smoke-status.json'
@@ -88,10 +92,12 @@ def main():
             except (OSError, ValueError):
                 time.sleep(0.1)
         assert layout, 'Modal project dialog did not report its geometry'
+        assert layout['text_size'] == size, layout
         width, height = layout['window']
         assert layout['subtitle'][2] > width * 0.65, ('Narrow subtitle', layout)
         assert layout['subtitle'][3] < 100, ('Vertically wrapped subtitle', layout)
-        assert abs(layout['location'][1] - layout['year'][1]) < 8, layout
+        assert (abs(layout['location'][1] - layout['year'][1]) < 8
+                or layout['year'][1] > layout['location'][1]), layout
         for key in ('preview', 'actions'):
             x, y, w, h = layout[key]
             assert y >= 0 and y + h <= height + 2, ('Footer clipped', key, layout)

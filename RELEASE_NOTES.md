@@ -138,3 +138,9 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - CustomTkinter skickar ramens Configure-händelser via sin interna canvas. Layoutvakterna accepterar nu både ramen och dess canvas; tidigare kunde omplaceringen utebli trots att dialogens bredd ändrades. Detta gäller toppflikar, gemensamma knapprader, projektval och lokal/år.
 - Skapa/Avbryt får stretchande kolumner redan när de skapas och en extra första layoutpassering. Det hindrar att tillgänglighetskoden mäter knapparna som smala remsor och radbryter varje bokstav.
 - GUI-testerna kontrollerar nu verklig bredd/höjd och placering för Skapa/Avbryt samt bredden för lokal/år, inte bara knappområdets ram. 336 lokala tester godkända.
+
+### Layoutmatris, höjd och skärmdiagnostik
+- Riktiga Linux/X11-GUI-tester vid 1366×768 och 1920×1080, inklusive 150 % textstorlek vid 1366×768. Windows 3.13 provar också 150 % textstorlek; övriga Windows-versioner och macOS behåller 100 %. Detta ersätter inte test av olika fysiska skärmar/DPI.
+- Sidfotens information delar rad när den ryms, mindre yttre marginaler och lägre initial standardprojektdialog. Innehållet får fortfarande öka dialoghöjden inom arbetsytan; scrollning finns kvar som reserv.
+- Felsökningspaketet får skärmstorlek, tillgängliga Windows-arbetsytor/DPI, skalningsfaktorer samt fönsterrektanglar utan titlar, inmatad text eller skärmbilder. Integritetsbekräftelsen beskriver tillägget.
+- Separat förslagsbank med exakt 100 ej automatiskt godkända förbättringsförslag. 338 lokala tester godkända.

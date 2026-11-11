@@ -13,10 +13,14 @@ jobs:
     env:
       PYTHONIOENCODING: utf-8
       PYTHONUTF8: 1
+      FOLDERFORGE_TEST_TEXT_SIZE: ${{ matrix.text_size || '100%' }}
     strategy:
       fail-fast: false
       matrix:
         python: ['3.11', '3.13', '3.14']
+        include:
+          - python: '3.13'
+            text_size: '150%'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,5 +38,5 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-evidence-${{ matrix.python }}
+          name: windows-evidence-${{ matrix.python }}-${{ matrix.text_size || '100%' }}
           path: windows-evidence/
