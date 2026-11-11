@@ -158,3 +158,5 @@ Placeringen sparas först när huvudfönstret är synligt i normalläge; minimer
 Navigeringen ligger i namngivna flikar ovanför innehållet. Flikarna får fler rader när fönstret är smalt eller texten förstoras. Vilka flikar som visas väljs fortfarande via Visa-menyn eller Inställningar.
 
 Förslagsbank: [100 nya förbättringsförslag](docs/100_FORBATTRINGSFORSLAG.md). Förslag införs bara efter uttryckligt val. Felsökningspaketet innehåller även skärmmått, tillgängliga Windows-arbetsytor, DPI och textskalning, utan fönstertitlar eller skärmbilder.
+
+Layoutmatrisen provar verkliga Xvfb-upplösningar 1366×768 och 1920×1080 samt 150 % textstorlek. Windows provar även 150 % textstorlek på runnerns skärm; test av fysisk flerskärms-DPI är fortfarande separat.

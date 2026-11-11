@@ -93,6 +93,9 @@ def main():
                 time.sleep(0.1)
         assert layout, 'Modal project dialog did not report its geometry'
         assert layout['text_size'] == size, layout
+        requested_screen = os.environ.get('FOLDERFORGE_TEST_SCREEN', 'native')
+        if requested_screen != 'native':
+            assert layout['screen'] == [int(value) for value in requested_screen.split('x')], layout
         width, height = layout['window']
         assert layout['subtitle'][2] > width * 0.65, ('Narrow subtitle', layout)
         assert layout['subtitle'][3] < 100, ('Vertically wrapped subtitle', layout)
