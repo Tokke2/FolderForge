@@ -5452,14 +5452,18 @@ class FolderForgeApp(_DnDCTkBase):
         # Content-driven footer: never clip text inside a fixed 42px frame.
         footer = ctk.CTkFrame(self, fg_color=UI_SURFACE, corner_radius=0)
         footer.pack(fill="x", side="bottom")
+        footer.grid_columnconfigure(0, weight=1)
+        footer.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(footer, text=COPYRIGHT_OWNER, anchor="w",
-                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).pack(side="left", padx=8)
+                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).grid(
+                         row=0, column=0, sticky="ew", padx=8, pady=4)
         ctk.CTkButton(footer, text="Minimera till fältet", command=self._minimize_to_systray,
                       fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
-                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).pack(side="left", padx=8)
+                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).grid(
+                          row=0, column=1, sticky="ew", padx=8, pady=4)
         if DND_AVAILABLE:
-            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).pack(side="left", padx=8)
-        adapt_control_row(footer)
+            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).grid(
+                row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 4))
 
     # ============================================================
     # Tabb: Skapa
