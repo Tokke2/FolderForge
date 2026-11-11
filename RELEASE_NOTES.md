@@ -141,6 +141,6 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 
 ### Layoutmatris, höjd och skärmdiagnostik
 - Riktiga Linux/X11-GUI-tester vid 1366×768 och 1920×1080, inklusive 150 % textstorlek vid 1366×768. Windows 3.13 provar också 150 % textstorlek; övriga Windows-versioner och macOS behåller 100 %. Detta ersätter inte test av olika fysiska skärmar/DPI.
-- Sidfotens information delar rad när den ryms, mindre yttre marginaler och lägre initial standardprojektdialog. Innehållet får fortfarande öka dialoghöjden inom arbetsytan; scrollning finns kvar som reserv.
+- Windows/Linux får kompaktare sidfot och mindre yttre marginaler; macOS behåller tidigare huvudfönsterlayout efter Cocoa-regressionstest. Standardprojektdialogen får lägre initial höjd på alla plattformar. Innehållet får fortfarande öka dialoghöjden inom arbetsytan; scrollning finns kvar som reserv.
 - Felsökningspaketet får skärmstorlek, tillgängliga Windows-arbetsytor/DPI, skalningsfaktorer samt fönsterrektanglar utan titlar, inmatad text eller skärmbilder. Integritetsbekräftelsen beskriver tillägget.
 - Separat förslagsbank med exakt 100 ej automatiskt godkända förbättringsförslag. 338 lokala tester godkända.
