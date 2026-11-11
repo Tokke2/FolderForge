@@ -5069,6 +5069,7 @@ class FolderForgeApp(_DnDCTkBase):
         if command.get("pid") == os.getpid() and command.get("id") != getattr(self, "_smoke_command_id", None):
             self._smoke_command_id = command.get("id")
             action = command.get("action")
+            logger.debug("GUI-testkommando: %s", action)
             if action == "restore":
                 self._restore_from_tray()
             elif action == "hide":
@@ -7712,11 +7713,15 @@ class FolderForgeApp(_DnDCTkBase):
         self._tray_stopping = False
 
     def _restore_from_tray(self, *_) -> None:
+        logger.debug("Återställning: stoppar tray")
         self._stop_tray_icon()
+        logger.debug("Återställning: anpassar placering")
         self._restore_window_placement()
+        logger.debug("Återställning: visar fönster")
         self.deiconify()
         self.lift()
         self.focus_force()
+        logger.debug("Återställning: klar")
 
     def _shutdown_background_services(self) -> None:
         if hasattr(self, "_log_archive_stop"):
