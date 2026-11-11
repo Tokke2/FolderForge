@@ -5425,7 +5425,8 @@ class FolderForgeApp(_DnDCTkBase):
         # fönsterkanten som i v4.3.
         self._tab_view.pack(
             fill="both", expand=True,
-            padx=scaled(14, s), pady=(scaled(8, s), scaled(8, s)),
+            padx=scaled(20 if sys.platform == "darwin" else 14, s),
+            pady=(scaled(12 if sys.platform == "darwin" else 8, s),) * 2,
         )
         # Responsiv kollaps: fönstret ändrar storlek → sidebarn följer med.
         # VIKTIGT: add="+" — utan den ERSÄTTER denna bindning den tidigare
@@ -5454,17 +5455,19 @@ class FolderForgeApp(_DnDCTkBase):
         footer = ctk.CTkFrame(self, fg_color=UI_SURFACE, corner_radius=0)
         footer.pack(fill="x", side="bottom")
         footer.grid_columnconfigure(0, weight=1)
-        footer.grid_columnconfigure(1, weight=1)
+        footer.grid_columnconfigure(1, weight=0 if sys.platform == "darwin" else 1)
         ctk.CTkLabel(footer, text=COPYRIGHT_OWNER, anchor="w",
                      font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).grid(
                          row=0, column=0, sticky="ew", padx=8, pady=4)
         ctk.CTkButton(footer, text="Minimera till fältet", command=self._minimize_to_systray,
                       fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
                       height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).grid(
-                          row=0, column=1, sticky="ew", padx=8, pady=4)
+                          row=1 if sys.platform == "darwin" else 0, column=0 if sys.platform == "darwin" else 1,
+                          sticky="ew", padx=8, pady=4)
         if DND_AVAILABLE:
             ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).grid(
-                row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(0, 4))
+                row=2 if sys.platform == "darwin" else 1, column=0,
+                columnspan=1 if sys.platform == "darwin" else 2, sticky="ew", padx=8, pady=(0, 4))
 
     # ============================================================
     # Tabb: Skapa
