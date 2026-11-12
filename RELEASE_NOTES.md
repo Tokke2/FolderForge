@@ -162,3 +162,8 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Tray-ikonen har en särskild förenklad variant med kraftiga former och mörk bakgrund, utan små högdagrar eller blixt.
 - Tryckoriginalen ingår i samma Source code (zip) som appen, under Icon/. Inget separat grafikpaket behövs. Ny RELEASE_INNEHALL.md i paketets rot beskriver app, ikoner, SVG-varianter och tryckguide. Inga separata tryckfiler publiceras som extra release-assets.
 - 345 lokala tester godkända, inklusive vektorbaserat färgdjup och innehållsguide för det samlade paketet.
+
+### Direkt skrivklart projektnamn
+- När Nytt Standardprojekt visas aktiveras namnfältet och eventuell befintlig text markeras, så användaren kan skriva direkt. Fokus sätts efter Map i stället för att bara förlita sig på en fast timer och focus_set.
+- Begränsade försök hanterar en dialog som inte hunnit visas. Fokuseringen sker en gång och skriver inte över ett annat fält som användaren redan valt. Stängda dialoger ignoreras.
+- 349 lokala tester godkända. De riktiga GUI-testerna kontrollerar nu också att tangentbordsfokus faktiskt ligger i projektnamnsfältet.

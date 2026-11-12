@@ -93,6 +93,7 @@ def main():
                 time.sleep(0.1)
         assert layout, 'Modal project dialog did not report its geometry'
         assert layout['text_size'] == size, layout
+        assert layout['project_name_focused'], ('Project name did not receive keyboard focus', layout)
         requested_screen = os.environ.get('FOLDERFORGE_TEST_SCREEN', 'native')
         if requested_screen != 'native':
             assert layout['screen'] == [int(value) for value in requested_screen.split('x')], layout

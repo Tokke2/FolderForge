@@ -53,8 +53,11 @@ class ProjectTests(unittest.TestCase):
     def test_project_name_focus_selects_existing_text(self):
         entry = Mock()
         entry.winfo_exists.return_value = True
+        entry._ff_initial_focus_done = False
+        entry.winfo_viewable.return_value = True
+        entry.winfo_toplevel.return_value.focus_get.return_value = None
         self.ns['focus_project_name'](entry)
-        entry.focus_set.assert_called_once()
+        entry.focus_force.assert_called_once()
         entry.select_range.assert_called_once_with(0, 'end')
         entry.icursor.assert_called_once_with('end')
 

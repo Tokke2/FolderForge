@@ -146,6 +146,7 @@ def main():
                 time.sleep(0.1)
         assert layout, 'Modal project dialog did not report its geometry'
         assert layout['text_size'] == size, layout
+        assert layout['project_name_focused'], ('Project name did not receive keyboard focus', layout)
         width, height = layout['window']
         assert layout['subtitle'][2] > width * 0.65, ('Narrow subtitle', layout)
         assert layout['subtitle'][3] < 100, ('Vertically wrapped subtitle', layout)

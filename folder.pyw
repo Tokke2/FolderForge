@@ -4970,12 +4970,30 @@ def project_year_choices(today=None):
     return [str(year - offset) for offset in range(4)]
 
 
-def focus_project_name(entry) -> None:
-    """Fokusera namn och markera befintlig text när dialogen har visats."""
-    if entry.winfo_exists():
-        entry.focus_set()
+def focus_project_name(entry, attempts=10) -> None:
+    """One-shot focus after mapping; do not override a user's field choice."""
+    try:
+        if not entry.winfo_exists() or getattr(entry, "_ff_initial_focus_done", False):
+            return
+        if not entry.winfo_viewable():
+            if attempts > 0:
+                entry.after(40, lambda: focus_project_name(entry, attempts - 1))
+            return
+        window = entry.winfo_toplevel()
+        current = window.focus_get()
+        target = getattr(entry, "_entry", entry)
+        if (current is not None and current not in (window, entry, target)
+                and current.winfo_toplevel() is window):
+            entry._ff_initial_focus_done = True
+            return
+        # focus_set only records Tk focus if the OS has not activated the new
+        # modal yet. Force activation once for this explicitly opened dialog.
+        entry.focus_force()
         entry.select_range(0, "end")
         entry.icursor("end")
+        entry._ff_initial_focus_done = True
+    except tk.TclError:
+        pass  # Dialog may have been closed while a retry was pending.
 
 
 # ============================================================
@@ -6663,6 +6681,8 @@ class FolderForgeApp(_DnDCTkBase):
         entry.bind("<Return>", ok)
         win.bind("<Escape>", lambda _e: win.destroy())
         win.protocol("WM_DELETE_WINDOW", win.destroy)
+        win.bind("<Map>", lambda event: win.after_idle(lambda: focus_project_name(entry))
+                 if event.widget is win else None, add="+")
         win.after(150, lambda: focus_project_name(entry))
 
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
@@ -6674,6 +6694,7 @@ class FolderForgeApp(_DnDCTkBase):
                     "window": [win.winfo_width(), win.winfo_height()],
                     "screen": [win.winfo_screenwidth(), win.winfo_screenheight()],
                     "text_size": self.settings.text_size,
+                    "project_name_focused": win.focus_get() is entry._entry,
                     "subtitle": box(subtitle_label), "preview": box(preview_ram),
                     "actions": box(btn_row), "location": box(location_menu), "year": box(year_menu),
                     "create": box(skapa_knapp), "cancel": box(cancel_button),
