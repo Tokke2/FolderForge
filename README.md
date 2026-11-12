@@ -163,10 +163,12 @@ Layoutmatrisen provar verkliga Xvfb-upplösningar 1366×768 och 1920×1080 samt 
 
 ## Ny ikon och trycklogotyp
 Samma vektormaster används i appen, systemfältet, Windows ICO och macOS ICNS.
-- [SVG-original för tryck](Icon/folderforge-logo.svg) · [vit text](Icon/folderforge-logo-inverse.svg) · [enfärgat](Icon/folderforge-logo-mono.svg) · [symbol](Icon/folderforge-symbol.svg)
+- **Tryckoriginalen ingår i samma release-ZIP som appen**, i `Icon/`: `folderforge-logo.svg`, `folderforge-logo-inverse.svg`, `folderforge-logo-mono.svg` och `folderforge-symbol.svg`. Inget separat grafikpaket behöver hämtas.
 - [Tryckguide, färger och begränsningar](docs/VARUMARKE_OCH_TRYCK.md)
 
 SVG-originalen har konturiserade bokstäver och inga rasterbilder eller externa typsnittsberoenden. Färgerna är sRGB; tryckeriet behöver göra eventuell CMYK-/ICC-konvertering.
 Huvudfönstrets X och minimera går till systemfält/menyrad på stödda skrivbord. Välj **Avsluta** för att stänga appen. Linux kräver kompatibel tray; Wayland stöds inte generellt.
 
 Den aktuella färgstarka profilen kombinerar klarblått, turkos och orange mot mörk marinblå botten. Ordmärket är tvåfärgat; tryckoriginal och appikoner kommer från samma vektormaster.
+
+Den senaste profilen använder vektorbaserat färgdjup, högdagrar och en orange blixt. Tray-varianten är avsiktligt enklare för liten storlek. Hela leveransen beskrivs i [RELEASE_INNEHALL.md](RELEASE_INNEHALL.md).

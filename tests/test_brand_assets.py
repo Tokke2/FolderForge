@@ -58,7 +58,22 @@ class BrandAssetTests(unittest.TestCase):
             self.assertIn(color, symbol)
         wordmark = next(node for node in logo if node.tag.endswith('g'))
         colors = {node.attrib.get('fill') for node in wordmark}
-        self.assertEqual(colors, {'#12223D', '#2864F0'})
+        self.assertEqual(colors, {'#12223D', 'url(#folder)'})
         mono = ET.parse('Icon/folderforge-logo-mono.svg').getroot()
         colors = {node.attrib[key] for node in mono.iter() for key in ('fill', 'stroke') if key in node.attrib}
         self.assertTrue(colors <= {'#000000', 'none'})
+
+    def test_release_bundle_documents_all_print_originals(self):
+        guide = Path('RELEASE_INNEHALL.md').read_text(encoding='utf-8')
+        for name in ('folderforge-logo.svg', 'folderforge-logo-inverse.svg', 'folderforge-logo-mono.svg', 'folderforge-symbol.svg'):
+            self.assertTrue((Path('Icon') / name).is_file())
+            self.assertIn(name, guide)
+        self.assertIn('Source code (zip)', guide)
+        self.assertIn('Inget separat grafikpaket', guide)
+
+    def test_colour_original_has_vector_depth_without_raster_effects(self):
+        root = ET.parse('Icon/folderforge-logo.svg').getroot()
+        tags = {element.tag.split('}')[-1] for element in root.iter()}
+        self.assertIn('linearGradient', tags)
+        self.assertNotIn('filter', tags)
+        self.assertNotIn('image', tags)

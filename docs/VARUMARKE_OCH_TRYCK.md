@@ -1,5 +1,9 @@
 # FolderForge – ikon, logotyp och tryckoriginal
 
+## Ingår i samma release som appen
+
+Hämta **Source code (zip)** från befintliga v0.0.2 under Assets. Tryckoriginalen ligger redan i `Icon/` i samma ZIP som appen. **Inget separat grafikpaket eller någon extra SVG-nedladdning behövs.** Efter uppackning öppnar du rätt SVG-fil lokalt och lämnar den till tryckeriet. Se även `RELEASE_INNEHALL.md` i paketets rot.
+
 ## Levererade original
 
 | Fil i `Icon/` | Användning |
@@ -19,7 +23,7 @@ SVG-filerna är **äkta vektorer**: geometriska former och konturer för bokstä
 ## Tryck
 
 - Använd SVG-originalet, inte PNG, ICO eller ICNS. Skala proportionellt via dokumentets viewBox.
-- Originalen använder sRGB: marinblå `#12223D`, klarblå `#2864F0`, turkos `#21D4BF` och orange `#FF8040`, med en ljusblå accent `#3D7BFF`. Färgerna är platta; inga metallic-, neon- eller folieeffekter förutsätts i tryck.
+- Originalen använder sRGB: marinblå `#12223D`, klarblå `#2864F0`, turkos `#21D4BF` och orange `#FF8040`, med en ljusblå accent `#3D7BFF`. Färgoriginalet har vektorbaserade toningar och högdagrar. Detta är simulerat färgdjup, inte metallic, neonfärg eller folie i tryck. Enfärgsoriginalet är plant svart.
 - Be tryckeriet konvertera färgerna enligt sin CMYK-/ICC-profil och göra ett provtryck. SVG:n är inte ett färdigseparerat CMYK-/PDF-X-original.
 - Använd den enfärgade varianten för en färg, stämpel eller liknande. Invertering, skärlinjer, minsta linjebredd och material måste avtalas med leverantören.
 - Behåll luft runt logotypen och kontrollera läsbarheten i den faktiska tryckstorleken. Ingen generell garanti ges för mycket små tryck, gravyr eller brodyr.
@@ -45,4 +49,4 @@ Verktyget hämtar inga typsnitt och installerar ingenting självt. Samma SVG-mas
 Att stänga en separat dialog stänger fortfarande bara dialogen. Start förblir minimerad. En andra start öppnar inte ett extra appfönster. Vi ändrar inte systemets Python-installation eller den delade Python-processens ikon i Aktivitetshanterarens detaljvy.
 
 ## Färgstark profil
-Den aktuella symbolen använder överlappande mappformer, en kraftig strukturmarkering och en orange gnista. Ordmärket delar Folder och Forge i marinblått/klarblått med orange understreck. Den enfärgade varianten behåller konturer och negativa ytor i stället för att bara göra alla fyllningar svarta. Tray-ikonen använder samma mörka botten för tydliga färgytor på både ljusa och mörka skrivbord.
+Den aktuella symbolen använder överlappande mappformer, vektorbaserat färgdjup, ljusa kanter och en orange blixt. Ordmärket delar Folder och Forge i marinblått/klarblått med orange understreck. Den enfärgade varianten behåller konturer och negativa ytor i stället för att bara göra alla fyllningar svarta. Tray-ikonen är en förenklad, plan variant utan blixt och små högdagrar; den har samma mörka botten och färgpalett för tydliga färgytor på både ljusa och mörka skrivbord.

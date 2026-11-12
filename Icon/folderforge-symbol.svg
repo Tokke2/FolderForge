@@ -76,13 +76,26 @@ License: GPL-2+
  On Debian systems, the full text of the GNU General Public
  License version 2 can be found in the file
  /usr/share/common-licenses/GPL-2&#x27;.
-</metadata><rect x="8" y="8" width="240" height="240" rx="52" fill="#12223D"/>
-<path d="M32 77Q32 63 46 63H105L124 81H213Q226 81 226 94V180Q226 194 212 194H46Q32 194 32 180Z" fill="#21D4BF"/>
-<path d="M44 96V64Q44 52 56 52H105L129 79H185V112Z" fill="#FF8040"/>
-<path d="M32 103Q32 89 46 89H211Q225 89 225 103L211 201Q209 214 196 214H46Q32 214 32 200Z" fill="#2864F0"/>
-<path d="M45 102H210L207 118H42Z" fill="#3D7BFF"/>
-<path d="M81 132V181H175M127 151V181" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="69" y="120" width="24" height="24" rx="5" fill="#FFFFFF"/>
-<rect x="115" y="139" width="24" height="24" rx="5" fill="#21D4BF"/>
-<rect x="163" y="169" width="24" height="24" rx="5" fill="#FF8040"/>
-<path d="M203 37L210 49L224 52L212 59L209 73L202 61L188 58L200 51Z" fill="#FF8040"/></svg>
+</metadata><defs>
+<linearGradient id="badge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#263C67"/><stop offset="1" stop-color="#12223D"/></linearGradient>
+<linearGradient id="folder" x1="0" y1="0" x2="0.8" y2="1"><stop stop-color="#4F9DFF"/><stop offset="0.5" stop-color="#2864F0"/><stop offset="1" stop-color="#163EC4"/></linearGradient>
+<linearGradient id="edge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#9CFFF1"/><stop offset="1" stop-color="#21D4BF"/></linearGradient>
+<linearGradient id="ember" x1="0" y1="0" x2="0.8" y2="1"><stop stop-color="#FFD174"/><stop offset="0.55" stop-color="#FF8040"/><stop offset="1" stop-color="#FF453D"/></linearGradient>
+</defs>
+<rect x="8" y="8" width="240" height="240" rx="52" fill="url(#badge)"/>
+<path d="M30 74V53Q30 30 53 30H146" fill="none" stroke="#21D4BF" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+<path d="M230 177V203Q230 226 207 226H159" fill="none" stroke="#FF8040" stroke-width="4" stroke-linecap="round"/>
+<path d="M34 87Q34 72 49 72H102L126 91H216Q231 91 229 106L217 194Q215 207 201 207H46Q32 207 32 193Z" fill="url(#edge)"/>
+<path d="M45 97V63Q45 49 59 49H103L131 80H183V112Z" fill="url(#ember)"/>
+<path d="M36 110Q36 96 50 96H214Q228 96 225 111L208 205Q206 219 192 219H49Q35 219 35 205Z" fill="#071A3C" opacity="0.45"/>
+<path d="M29 103Q29 89 44 89H209Q224 89 221 104L204 199Q202 213 188 213H42Q28 213 28 199Z" fill="url(#folder)"/>
+<path d="M43 101H208L205 114H40Z" fill="#A5D7FF" opacity="0.62"/>
+<path d="M40 201H191L198 185" fill="none" stroke="#1948D6" stroke-width="5" stroke-linecap="round"/>
+<path d="M77 128V178H173M125 148V178" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="65" y="116" width="24" height="24" rx="5" fill="#FFFFFF"/>
+<rect x="113" y="136" width="24" height="24" rx="5" fill="url(#edge)"/>
+<rect x="161" y="166" width="24" height="24" rx="5" fill="url(#ember)"/>
+<path d="M198 30L174 68H194L183 96L223 51H203L216 30Z" fill="url(#ember)"/>
+<path d="M197 34L180 63H196" fill="none" stroke="#FFE9BC" stroke-width="2.5" stroke-linecap="round"/>
+<path d="M238 68L241 76L249 79L241 82L238 90L235 82L227 79L235 76Z" fill="#FFFFFF"/>
+</svg>

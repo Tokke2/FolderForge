@@ -156,3 +156,9 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Ny vald färgriktning: klarblått, turkos och orange med marinblå botten. Överlappande mappformer, kraftig strukturmarkering och orange gnista ger en tydligare och mer uttrycksfull symbol.
 - Tvåfärgat ordmärke Folder/Forge med orange understreck. Samma konturiserade bokstäver i primär, inverterad och enfärgad SVG; PNG, ICO, ICNS och tray byggs från vektormastern.
 - Tryckguiden beskriver aktuell sRGB-palett och begränsningar; inga inbäddade rasterbilder eller externa typsnittsberoenden. Appens beteende och minimerade start ändras inte.
+
+### Mer färgdjup och en samlad releaseleverans
+- Färgikonen/logotypen får vektortoningar, högdagrar, accentkanter och en kraftigare orange blixt. Alla effekter är vektorformer/toningar, utan rasterfilter; enfärgsoriginalet förblir plant svart.
+- Tray-ikonen har en särskild förenklad variant med kraftiga former och mörk bakgrund, utan små högdagrar eller blixt.
+- Tryckoriginalen ingår i samma Source code (zip) som appen, under Icon/. Inget separat grafikpaket behövs. Ny RELEASE_INNEHALL.md i paketets rot beskriver app, ikoner, SVG-varianter och tryckguide. Inga separata tryckfiler publiceras som extra release-assets.
+- 345 lokala tester godkända, inklusive vektorbaserat färgdjup och innehållsguide för det samlade paketet.
