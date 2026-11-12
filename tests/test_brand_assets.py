@@ -50,3 +50,15 @@ class BrandAssetTests(unittest.TestCase):
             ns['_send_iconic_window_to_tray'](window)
             self.assertEqual(window._minimize_to_systray.call_count, int(state == 'iconic'))
             window._quit_app.assert_not_called()
+
+    def test_bold_palette_and_two_tone_wordmark(self):
+        symbol = Path('Icon/folderforge-symbol.svg').read_text(encoding='utf-8')
+        logo = ET.parse('Icon/folderforge-logo.svg').getroot()
+        for color in ('#12223D', '#2864F0', '#21D4BF', '#FF8040'):
+            self.assertIn(color, symbol)
+        wordmark = next(node for node in logo if node.tag.endswith('g'))
+        colors = {node.attrib.get('fill') for node in wordmark}
+        self.assertEqual(colors, {'#12223D', '#2864F0'})
+        mono = ET.parse('Icon/folderforge-logo-mono.svg').getroot()
+        colors = {node.attrib[key] for node in mono.iter() for key in ('fill', 'stroke') if key in node.attrib}
+        self.assertTrue(colors <= {'#000000', 'none'})

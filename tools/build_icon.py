@@ -14,16 +14,17 @@ def build(font_path):
     from PIL import Image
     root = Path(__file__).resolve().parents[1] / 'Icon'
     root.mkdir(exist_ok=True)
-    navy, gold, teal = '#102A43', '#F4BF4F', '#52DCC4'
-    mark = f'''<rect x="10" y="10" width="236" height="236" rx="50" fill="{navy}"/>
-<rect x="13" y="13" width="230" height="230" rx="47" fill="none" stroke="{gold}" stroke-width="6"/>
-<path d="M45 103V73Q45 61 57 61H105L124 83H199Q211 83 211 95V110" fill="none" stroke="{gold}" stroke-width="12" stroke-linejoin="round"/>
-<path d="M40 103Q40 95 50 95H206Q216 95 216 105V191Q216 203 204 203H52Q40 203 40 191Z" fill="{gold}"/>
-<rect x="63" y="117" width="130" height="66" rx="12" fill="{navy}"/>
-<path d="M86 135V163H169M128 145V163" fill="none" stroke="{teal}" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="76" y="125" width="20" height="20" rx="4" fill="{teal}"/>
-<rect x="118" y="135" width="20" height="20" rx="4" fill="{teal}"/>
-<rect x="159" y="153" width="20" height="20" rx="4" fill="{teal}"/>'''
+    navy, blue, teal, orange = '#12223D', '#2864F0', '#21D4BF', '#FF8040'
+    mark = f'''<rect x="8" y="8" width="240" height="240" rx="52" fill="{navy}"/>
+<path d="M32 77Q32 63 46 63H105L124 81H213Q226 81 226 94V180Q226 194 212 194H46Q32 194 32 180Z" fill="{teal}"/>
+<path d="M44 96V64Q44 52 56 52H105L129 79H185V112Z" fill="{orange}"/>
+<path d="M32 103Q32 89 46 89H211Q225 89 225 103L211 201Q209 214 196 214H46Q32 214 32 200Z" fill="{blue}"/>
+<path d="M45 102H210L207 118H42Z" fill="#3D7BFF"/>
+<path d="M81 132V181H175M127 151V181" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="69" y="120" width="24" height="24" rx="5" fill="#FFFFFF"/>
+<rect x="115" y="139" width="24" height="24" rx="5" fill="{teal}"/>
+<rect x="163" y="169" width="24" height="24" rx="5" fill="{orange}"/>
+<path d="M203 37L210 49L224 52L212 59L209 73L202 61L188 58L200 51Z" fill="{orange}"/>'''
     from html import escape
     license_text = (root.parent / "docs" / "WORDMARK_FONT_LICENSE.txt").read_text(encoding="utf-8")
     def svg(body, width, title):
@@ -33,24 +34,28 @@ def build(font_path):
     font = TTFont(font_path)
     glyphs, cmap = font.getGlyphSet(), font.getBestCmap()
     scale = 132 / font['head'].unitsPerEm
-    cursor, paths = 0, []
-    for char in 'FolderForge':
+    cursor, forge_start, paths = 0, 0, []
+    for index, char in enumerate('FolderForge'):
+        if index == 6:
+            forge_start = cursor
         glyph_name = cmap[ord(char)]
         pen = SVGPathPen(glyphs)
         glyphs[glyph_name].draw(pen)
-        paths.append(f'<path transform="translate({cursor} 0)" d="{pen.getCommands()}"/>')
+        paths.append(f'<path fill="{navy if index < 6 else blue}" transform="translate({cursor} 0)" d="{pen.getCommands()}"/>')
         cursor += font['hmtx'][glyph_name][0]
     word = f'<g transform="translate(284 175) scale({scale} {-scale})" fill="{navy}">' + ''.join(paths) + '</g>'
     width = round(284 + cursor * scale + 24)
     symbol = svg(mark, 256, 'FolderForge symbol')
-    logo = svg(mark + word, width, 'FolderForge')
+    accent = f'<path d="M{284 + forge_start * scale} 202H{width - 24}L{width - 40} 214H{284 + forge_start * scale}Z" fill="{orange}"/>'
+    logo = svg(mark + word + accent, width, 'FolderForge')
     # A separate one-ink version preserves the symbol's negative spaces.
-    mono_mark = '''<path d="M36 95V64Q36 52 48 52H106L128 77H207Q220 77 220 90V196Q220 208 208 208H48Q36 208 36 196Z" fill="none" stroke="#000000" stroke-width="12" stroke-linejoin="round"/>
-<path d="M83 121V173H175M129 141V173" fill="none" stroke="#000000" stroke-width="11" stroke-linecap="round"/>
-<rect x="72" y="110" width="22" height="22" rx="4"/><rect x="118" y="130" width="22" height="22" rx="4"/><rect x="164" y="162" width="22" height="22" rx="4"/>'''
+    mono_mark = '''<path d="M32 93V65Q32 52 45 52H103L128 80H211Q224 80 224 94L210 201Q208 214 195 214H46Q32 214 32 200Z" fill="none" stroke="#000000" stroke-width="12" stroke-linejoin="round"/>
+<path d="M81 128V181H175M127 151V181" fill="none" stroke="#000000" stroke-width="12" stroke-linecap="round"/>
+<rect x="69" y="116" width="24" height="24" rx="5"/><rect x="115" y="139" width="24" height="24" rx="5"/><rect x="163" y="169" width="24" height="24" rx="5"/>
+<path d="M203 37L210 49L224 52L212 59L209 73L202 61L188 58L200 51Z"/>'''
     assets = {'folderforge-symbol.svg': symbol, 'folderforge-logo.svg': logo,
-              'folderforge-logo-inverse.svg': svg(mark + word.replace(navy, '#FFFFFF'), width, 'FolderForge vit'),
-              'folderforge-logo-mono.svg': svg(mono_mark + word.replace(navy, '#000000'), width, 'FolderForge enfarg')}
+              'folderforge-logo-inverse.svg': svg(mark + word.replace(navy, '#FFFFFF').replace(blue, teal) + accent, width, 'FolderForge vit'),
+              'folderforge-logo-mono.svg': svg(mono_mark + word.replace(navy, '#000000').replace(blue, '#000000') + accent.replace(orange, '#000000'), width, 'FolderForge enfarg')}
     for name, content in assets.items():
         (root / name).write_text(content, encoding='utf-8')
     def raster(content, size):
@@ -62,7 +67,7 @@ def build(font_path):
         master.resize((size, size), Image.Resampling.LANCZOS).save(root / name)
     master.save(root / 'projektmapp.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
     master.save(root / 'folderforge.icns')
-    raster(svg(f'<rect width="{width}" height="256" fill="#FFFFFF"/>' + mark + word, width, 'FolderForge'), width * 2).save(root / 'folderforge-logo.png')
+    raster(svg(f'<rect width="{width}" height="256" fill="#FFFFFF"/>' + mark + word + accent, width, 'FolderForge'), width * 2).save(root / 'folderforge-logo.png')
     print('Built vector masters, outlined wordmark, PNG, ICO and ICNS in', root)
 
 

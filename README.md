@@ -168,3 +168,5 @@ Samma vektormaster används i appen, systemfältet, Windows ICO och macOS ICNS.
 
 SVG-originalen har konturiserade bokstäver och inga rasterbilder eller externa typsnittsberoenden. Färgerna är sRGB; tryckeriet behöver göra eventuell CMYK-/ICC-konvertering.
 Huvudfönstrets X och minimera går till systemfält/menyrad på stödda skrivbord. Välj **Avsluta** för att stänga appen. Linux kräver kompatibel tray; Wayland stöds inte generellt.
+
+Den aktuella färgstarka profilen kombinerar klarblått, turkos och orange mot mörk marinblå botten. Ordmärket är tvåfärgat; tryckoriginal och appikoner kommer från samma vektormaster.

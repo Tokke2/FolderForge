@@ -76,12 +76,13 @@ License: GPL-2+
  On Debian systems, the full text of the GNU General Public
  License version 2 can be found in the file
  /usr/share/common-licenses/GPL-2&#x27;.
-</metadata><rect x="10" y="10" width="236" height="236" rx="50" fill="#102A43"/>
-<rect x="13" y="13" width="230" height="230" rx="47" fill="none" stroke="#F4BF4F" stroke-width="6"/>
-<path d="M45 103V73Q45 61 57 61H105L124 83H199Q211 83 211 95V110" fill="none" stroke="#F4BF4F" stroke-width="12" stroke-linejoin="round"/>
-<path d="M40 103Q40 95 50 95H206Q216 95 216 105V191Q216 203 204 203H52Q40 203 40 191Z" fill="#F4BF4F"/>
-<rect x="63" y="117" width="130" height="66" rx="12" fill="#102A43"/>
-<path d="M86 135V163H169M128 145V163" fill="none" stroke="#52DCC4" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
-<rect x="76" y="125" width="20" height="20" rx="4" fill="#52DCC4"/>
-<rect x="118" y="135" width="20" height="20" rx="4" fill="#52DCC4"/>
-<rect x="159" y="153" width="20" height="20" rx="4" fill="#52DCC4"/></svg>
+</metadata><rect x="8" y="8" width="240" height="240" rx="52" fill="#12223D"/>
+<path d="M32 77Q32 63 46 63H105L124 81H213Q226 81 226 94V180Q226 194 212 194H46Q32 194 32 180Z" fill="#21D4BF"/>
+<path d="M44 96V64Q44 52 56 52H105L129 79H185V112Z" fill="#FF8040"/>
+<path d="M32 103Q32 89 46 89H211Q225 89 225 103L211 201Q209 214 196 214H46Q32 214 32 200Z" fill="#2864F0"/>
+<path d="M45 102H210L207 118H42Z" fill="#3D7BFF"/>
+<path d="M81 132V181H175M127 151V181" fill="none" stroke="#FFFFFF" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="69" y="120" width="24" height="24" rx="5" fill="#FFFFFF"/>
+<rect x="115" y="139" width="24" height="24" rx="5" fill="#21D4BF"/>
+<rect x="163" y="169" width="24" height="24" rx="5" fill="#FF8040"/>
+<path d="M203 37L210 49L224 52L212 59L209 73L202 61L188 58L200 51Z" fill="#FF8040"/></svg>

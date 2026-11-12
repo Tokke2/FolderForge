@@ -5,7 +5,7 @@
 | Fil i `Icon/` | Användning |
 |---|---|
 | `folderforge-logo.svg` | Primär logotyp med mörk text, transparent bakgrund. För ljusa underlag och tryck. |
-| `folderforge-logo-inverse.svg` | Vit text på transparent bakgrund, för mörka underlag. |
+| `folderforge-logo-inverse.svg` | Vit/turkos text på transparent bakgrund, för mörka underlag. |
 | `folderforge-logo-mono.svg` | Enfärgat svart original, med öppna negativa ytor i symbolen. |
 | `folderforge-symbol.svg` | Fristående symbol, samma original som appikonerna bygger på. |
 | `folderforge-logo.png` | Högupplöst skärmvariant på vit bakgrund, läsbar även i mörk GitHub-vy. |
@@ -19,7 +19,7 @@ SVG-filerna är **äkta vektorer**: geometriska former och konturer för bokstä
 ## Tryck
 
 - Använd SVG-originalet, inte PNG, ICO eller ICNS. Skala proportionellt via dokumentets viewBox.
-- Originalen använder sRGB: marinblå `#102A43`, guld `#F4BF4F`, turkos `#52DCC4`. Guldet är en platt färg, **inte metallic eller guldfolie**.
+- Originalen använder sRGB: marinblå `#12223D`, klarblå `#2864F0`, turkos `#21D4BF` och orange `#FF8040`, med en ljusblå accent `#3D7BFF`. Färgerna är platta; inga metallic-, neon- eller folieeffekter förutsätts i tryck.
 - Be tryckeriet konvertera färgerna enligt sin CMYK-/ICC-profil och göra ett provtryck. SVG:n är inte ett färdigseparerat CMYK-/PDF-X-original.
 - Använd den enfärgade varianten för en färg, stämpel eller liknande. Invertering, skärlinjer, minsta linjebredd och material måste avtalas med leverantören.
 - Behåll luft runt logotypen och kontrollera läsbarheten i den faktiska tryckstorleken. Ingen generell garanti ges för mycket små tryck, gravyr eller brodyr.
@@ -43,3 +43,6 @@ Verktyget hämtar inga typsnitt och installerar ingenting självt. Samma SVG-mas
 - **Linux:** ett kompatibelt systemfält behövs. X11 testas med en verklig tray-manager; CI:s Xvfb utan fönsterhanterare kan testa stängning till tray men inte ett riktigt OS-minimeringsklick. Wayland och skrivbord utan tray-stöd är inte universellt stödda.
 
 Att stänga en separat dialog stänger fortfarande bara dialogen. Start förblir minimerad. En andra start öppnar inte ett extra appfönster. Vi ändrar inte systemets Python-installation eller den delade Python-processens ikon i Aktivitetshanterarens detaljvy.
+
+## Färgstark profil
+Den aktuella symbolen använder överlappande mappformer, en kraftig strukturmarkering och en orange gnista. Ordmärket delar Folder och Forge i marinblått/klarblått med orange understreck. Den enfärgade varianten behåller konturer och negativa ytor i stället för att bara göra alla fyllningar svarta. Tray-ikonen använder samma mörka botten för tydliga färgytor på både ljusa och mörka skrivbord.

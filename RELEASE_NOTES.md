@@ -151,3 +151,8 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Uppdateraren tar även med SVG-filer i Icon/ med samma sökvägs- och hashkontroll som övriga tillgångar.
 - GUI-testerna aktiverar huvudfönstrets verkliga WM_DELETE_WINDOW-handler för stäng-till-tray. Windows/macOS testar också OS-minimering och återställning. Linux/Xvfb testar stängning med riktig tray-manager; riktig OS-minimering kräver fönsterhanterare och täcks där av enhetstestet för iconic-hanteringen.
 - 342 lokala tester godkända, inklusive vektororiginal, format/storlekar, SVG-manifest och minimeringsroutning.
+
+### Färgstarkare ikon och logotyp
+- Ny vald färgriktning: klarblått, turkos och orange med marinblå botten. Överlappande mappformer, kraftig strukturmarkering och orange gnista ger en tydligare och mer uttrycksfull symbol.
+- Tvåfärgat ordmärke Folder/Forge med orange understreck. Samma konturiserade bokstäver i primär, inverterad och enfärgad SVG; PNG, ICO, ICNS och tray byggs från vektormastern.
+- Tryckguiden beskriver aktuell sRGB-palett och begränsningar; inga inbäddade rasterbilder eller externa typsnittsberoenden. Appens beteende och minimerade start ändras inte.
