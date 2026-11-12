@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="FolderForge symbol"><title>FolderForge symbol</title><metadata>Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: DejaVu fonts
+Upstream-Author: Stepan Roh &lt;src@users.sourceforge.net&gt; (original author),
+                  see /usr/share/doc/fonts-dejavu-core/AUTHORS for full list
+Source: https://dejavu-fonts.github.io/
+
+Files: *
+Copyright: Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. 
+ Bitstream Vera is a trademark of Bitstream, Inc.
+ DejaVu changes are in public domain.
+License: bitstream-vera
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of the fonts accompanying this license (&quot;Fonts&quot;) and associated
+ documentation files (the &quot;Font Software&quot;), to reproduce and distribute the
+ Font Software, including without limitation the rights to use, copy, merge,
+ publish, distribute, and/or sell copies of the Font Software, and to permit
+ persons to whom the Font Software is furnished to do so, subject to the
+ following conditions:
+ .
+ The above copyright and trademark notices and this permission notice shall
+ be included in all copies of one or more of the Font Software typefaces.
+ .
+ The Font Software may be modified, altered, or added to, and in particular
+ the designs of glyphs or characters in the Fonts may be modified and
+ additional glyphs or characters may be added to the Fonts, only if the fonts
+ are renamed to names not containing either the words &quot;Bitstream&quot; or the word
+ &quot;Vera&quot;.
+ .
+ This License becomes null and void to the extent applicable to Fonts or Font
+ Software that has been modified and is distributed under the &quot;Bitstream
+ Vera&quot; names.
+ .
+ The Font Software may be sold as part of a larger software package but no
+ copy of one or more of the Font Software typefaces may be sold by itself.
+ .
+ THE FONT SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
+ TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME
+ FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
+ ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+ THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE
+ FONT SOFTWARE.
+ .
+ Except as contained in this notice, the names of Gnome, the Gnome
+ Foundation, and Bitstream Inc., shall not be used in advertising or
+ otherwise to promote the sale, use or other dealings in this Font Software
+ without prior written authorization from the Gnome Foundation or Bitstream
+ Inc., respectively. For further information, contact: fonts at gnome dot
+ org.
+
+Files: debian/*
+Copyright: (C) 2005-2006 Peter Cernak &lt;pce@users.sourceforge.net&gt; 
+           (C) 2006-2011 Davide Viti &lt;zinosat@tiscali.it&gt;
+           (C) 2011-2013 Christian Perrier &lt;bubulle@debian.org&gt;
+           (C) 2013 Fabian Greffrath &lt;fabian+debian@greffrath.com&gt;
+License: GPL-2+
+ This program is free software; you can redistribute it
+ and/or modify it under the terms of the GNU General Public
+ License as published by the Free Software Foundation; either
+ version 2 of the License, or (at your option) any later
+ version.
+ .
+ This program is distributed in the hope that it will be
+ useful, but WITHOUT ANY WARRANTY; without even the implied
+ warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ PURPOSE.  See the GNU General Public License for more
+ details.
+ .
+ You should have received a copy of the GNU General Public
+ License along with this package; if not, write to the Free
+ Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ Boston, MA  02110-1301 USA
+ .
+ On Debian systems, the full text of the GNU General Public
+ License version 2 can be found in the file
+ /usr/share/common-licenses/GPL-2&#x27;.
+</metadata><rect x="10" y="10" width="236" height="236" rx="50" fill="#102A43"/>
+<rect x="13" y="13" width="230" height="230" rx="47" fill="none" stroke="#F4BF4F" stroke-width="6"/>
+<path d="M45 103V73Q45 61 57 61H105L124 83H199Q211 83 211 95V110" fill="none" stroke="#F4BF4F" stroke-width="12" stroke-linejoin="round"/>
+<path d="M40 103Q40 95 50 95H206Q216 95 216 105V191Q216 203 204 203H52Q40 203 40 191Z" fill="#F4BF4F"/>
+<rect x="63" y="117" width="130" height="66" rx="12" fill="#102A43"/>
+<path d="M86 135V163H169M128 145V163" fill="none" stroke="#52DCC4" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="76" y="125" width="20" height="20" rx="4" fill="#52DCC4"/>
+<rect x="118" y="135" width="20" height="20" rx="4" fill="#52DCC4"/>
+<rect x="159" y="153" width="20" height="20" rx="4" fill="#52DCC4"/></svg>

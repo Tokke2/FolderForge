@@ -144,3 +144,10 @@ verifieras i Windows. Releasen publiceras från arbetsgrenen, inte från main.
 - Windows/Linux får kompaktare sidfot och mindre yttre marginaler; macOS behåller tidigare huvudfönsterlayout efter Cocoa-regressionstest. Standardprojektdialogen får lägre initial höjd på alla plattformar. Innehållet får fortfarande öka dialoghöjden inom arbetsytan; scrollning finns kvar som reserv.
 - Felsökningspaketet får skärmstorlek, tillgängliga Windows-arbetsytor/DPI, skalningsfaktorer samt fönsterrektanglar utan titlar, inmatad text eller skärmbilder. Integritetsbekräftelsen beskriver tillägget.
 - Separat förslagsbank med exakt 100 ej automatiskt godkända förbättringsförslag. 338 lokala tester godkända.
+
+### Ny grafisk profil och tray-verifiering
+- Ny sammanhängande marinblå/guld/turkos symbol och konturiserat ordmärke. Matchande app-, tray-, Windows ICO- och macOS ICNS-filer byggs från samma SVG-master. PNG-logotypen har vit läsbar bakgrund även på mörka GitHub-sidor.
+- Äkta SVG-original för tryck: primär, inverterad och enfärgad logotyp samt fristående symbol. Inga rasterbilder eller externa typsnittsberoenden; typsnittslicens följer i metadata och separat dokument. sRGB-original, inte färdigseparerad CMYK.
+- Uppdateraren tar även med SVG-filer i Icon/ med samma sökvägs- och hashkontroll som övriga tillgångar.
+- GUI-testerna aktiverar huvudfönstrets verkliga WM_DELETE_WINDOW-handler för stäng-till-tray. Windows/macOS testar också OS-minimering och återställning. Linux/Xvfb testar stängning med riktig tray-manager; riktig OS-minimering kräver fönsterhanterare och täcks där av enhetstestet för iconic-hanteringen.
+- 342 lokala tester godkända, inklusive vektororiginal, format/storlekar, SVG-manifest och minimeringsroutning.

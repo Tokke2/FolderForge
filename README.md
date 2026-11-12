@@ -160,3 +160,11 @@ Navigeringen ligger i namngivna flikar ovanför innehållet. Flikarna får fler 
 Förslagsbank: [100 nya förbättringsförslag](docs/100_FORBATTRINGSFORSLAG.md). Förslag införs bara efter uttryckligt val. Felsökningspaketet innehåller även skärmmått, tillgängliga Windows-arbetsytor, DPI och textskalning, utan fönstertitlar eller skärmbilder.
 
 Layoutmatrisen provar verkliga Xvfb-upplösningar 1366×768 och 1920×1080 samt 150 % textstorlek. Windows provar även 150 % textstorlek på runnerns skärm; test av fysisk flerskärms-DPI är fortfarande separat.
+
+## Ny ikon och trycklogotyp
+Samma vektormaster används i appen, systemfältet, Windows ICO och macOS ICNS.
+- [SVG-original för tryck](Icon/folderforge-logo.svg) · [vit text](Icon/folderforge-logo-inverse.svg) · [enfärgat](Icon/folderforge-logo-mono.svg) · [symbol](Icon/folderforge-symbol.svg)
+- [Tryckguide, färger och begränsningar](docs/VARUMARKE_OCH_TRYCK.md)
+
+SVG-originalen har konturiserade bokstäver och inga rasterbilder eller externa typsnittsberoenden. Färgerna är sRGB; tryckeriet behöver göra eventuell CMYK-/ICC-konvertering.
+Huvudfönstrets X och minimera går till systemfält/menyrad på stödda skrivbord. Välj **Avsluta** för att stänga appen. Linux kräver kompatibel tray; Wayland stöds inte generellt.

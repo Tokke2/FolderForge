@@ -118,7 +118,7 @@ def unpack(data, destination):
             relative = PurePosixPath(*parts[1:])
             name = str(relative)
             allowed = name in FILES | OPTIONAL_FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
-                       and relative.suffix.lower() in {".png", ".ico", ".icns"})
+                       and relative.suffix.lower() in {".png", ".ico", ".icns", ".svg"})
             if not allowed or member.is_dir():
                 continue
             if name in found:
@@ -144,7 +144,7 @@ def content_manifest(root):
             and (str(file.relative_to(root).as_posix()) in FILES | OPTIONAL_FILES
                  or (len(file.relative_to(root).parts) == 2
                      and file.relative_to(root).parts[0] == "Icon"
-                     and file.suffix.lower() in {".png", ".ico", ".icns"}))}
+                     and file.suffix.lower() in {".png", ".ico", ".icns", ".svg"}))}
 
 
 def matches_manifest(root, manifest):
@@ -155,7 +155,7 @@ def matches_manifest(root, manifest):
             relative = PurePosixPath(name)
             if (relative.is_absolute() or ".." in relative.parts or "\\" in name
                     or not (name in FILES | OPTIONAL_FILES or (len(relative.parts) == 2 and relative.parts[0] == "Icon"
-                                              and relative.suffix.lower() in {".png", ".ico", ".icns"}))):
+                                              and relative.suffix.lower() in {".png", ".ico", ".icns", ".svg"}))):
                 return False
             file = root / name
             if not file.is_file() or hashlib.sha256(file.read_bytes()).hexdigest() != digest:
@@ -515,7 +515,7 @@ def _app_relative(name):
     path = PurePosixPath(name)
     return (isinstance(name, str) and '\\' not in name and '..' not in path.parts
             and not path.is_absolute() and (name in FILES | OPTIONAL_FILES or
-            len(path.parts) == 2 and path.parts[0] == 'Icon' and path.suffix.lower() in {'.png', '.ico', '.icns'}))
+            len(path.parts) == 2 and path.parts[0] == 'Icon' and path.suffix.lower() in {'.png', '.ico', '.icns', '.svg'}))
 
 
 def _invalidate_app_bytecode(base):

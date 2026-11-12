@@ -117,8 +117,13 @@ def main():
         (evidence / 'project-dialog.json').write_text(json.dumps(layout, indent=2))
         command('close-project-dialog', 22)
         time.sleep(0.3)
-        command('hide', 2)
+        command('close-main', 2)
         wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Hide failed')
+        if sys.platform == 'darwin':
+            command('restore', 41)
+            wait(lambda s: s.get('state') in ('normal', 'zoomed'), 'Restore after close failed')
+            command('minimize-main', 42)
+            wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'OS minimize did not hide to tray')
         command('exit', 3)
         psutil.Process(first['pid']).wait(timeout=15)
         # A real healthy update must acknowledge its own Tk callback on this OS.

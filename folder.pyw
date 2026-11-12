@@ -5072,6 +5072,10 @@ class FolderForgeApp(_DnDCTkBase):
             logger.debug("GUI-testkommando: %s", action)
             if action == "restore":
                 self._restore_from_tray()
+            elif action == "close-main":
+                self.tk.call(self.protocol("WM_DELETE_WINDOW"))
+            elif action == "minimize-main":
+                self.iconify()
             elif action == "hide":
                 self._minimize_to_systray()
             elif action == "accessibility-regression":
@@ -7654,7 +7658,7 @@ class FolderForgeApp(_DnDCTkBase):
         self._tray_start_attempts = 0
         # Dedicated, bold tray badge: dark backing remains visible on light
         # taskbars, gold edge separates it from dark taskbars. Other app icons
-        # and the wordmark are unchanged; older installs retain a fallback.
+        # share the same vector master; older installs retain a fallback.
         tray_path = BASE_DIR / "Icon" / "folderforge-tray.png"
         img = load_app_icon(
             tray_path if tray_path.is_file() else (APP_ICON_PNG if APP_ICON_PNG.exists() else APP_ICON), 64)
@@ -7665,7 +7669,7 @@ class FolderForgeApp(_DnDCTkBase):
         menu = pystray.Menu(
             pystray.MenuItem(
                 "Öppna FolderForge",
-                lambda *args: self.after(0, self._restore_from_tray),
+                lambda *args: ui_call(self, self._restore_from_tray),
                 default=True,
             ),
             pystray.MenuItem(
@@ -7678,7 +7682,7 @@ class FolderForgeApp(_DnDCTkBase):
             ),
             pystray.MenuItem(
                 "Avsluta",
-                lambda *args: self.after(0, self._quit_app),
+                lambda *args: ui_call(self, self._quit_app),
             ),
         )
         self.systray_icon = pystray.Icon(APP_NAME, img, APP_NAME, menu)

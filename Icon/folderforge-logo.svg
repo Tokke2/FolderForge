@@ -1,0 +1,87 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1213 256" width="1213" height="256" role="img" aria-label="FolderForge"><title>FolderForge</title><metadata>Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: DejaVu fonts
+Upstream-Author: Stepan Roh &lt;src@users.sourceforge.net&gt; (original author),
+                  see /usr/share/doc/fonts-dejavu-core/AUTHORS for full list
+Source: https://dejavu-fonts.github.io/
+
+Files: *
+Copyright: Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. 
+ Bitstream Vera is a trademark of Bitstream, Inc.
+ DejaVu changes are in public domain.
+License: bitstream-vera
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of the fonts accompanying this license (&quot;Fonts&quot;) and associated
+ documentation files (the &quot;Font Software&quot;), to reproduce and distribute the
+ Font Software, including without limitation the rights to use, copy, merge,
+ publish, distribute, and/or sell copies of the Font Software, and to permit
+ persons to whom the Font Software is furnished to do so, subject to the
+ following conditions:
+ .
+ The above copyright and trademark notices and this permission notice shall
+ be included in all copies of one or more of the Font Software typefaces.
+ .
+ The Font Software may be modified, altered, or added to, and in particular
+ the designs of glyphs or characters in the Fonts may be modified and
+ additional glyphs or characters may be added to the Fonts, only if the fonts
+ are renamed to names not containing either the words &quot;Bitstream&quot; or the word
+ &quot;Vera&quot;.
+ .
+ This License becomes null and void to the extent applicable to Fonts or Font
+ Software that has been modified and is distributed under the &quot;Bitstream
+ Vera&quot; names.
+ .
+ The Font Software may be sold as part of a larger software package but no
+ copy of one or more of the Font Software typefaces may be sold by itself.
+ .
+ THE FONT SOFTWARE IS PROVIDED &quot;AS IS&quot;, WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
+ TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME
+ FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
+ ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+ THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE
+ FONT SOFTWARE.
+ .
+ Except as contained in this notice, the names of Gnome, the Gnome
+ Foundation, and Bitstream Inc., shall not be used in advertising or
+ otherwise to promote the sale, use or other dealings in this Font Software
+ without prior written authorization from the Gnome Foundation or Bitstream
+ Inc., respectively. For further information, contact: fonts at gnome dot
+ org.
+
+Files: debian/*
+Copyright: (C) 2005-2006 Peter Cernak &lt;pce@users.sourceforge.net&gt; 
+           (C) 2006-2011 Davide Viti &lt;zinosat@tiscali.it&gt;
+           (C) 2011-2013 Christian Perrier &lt;bubulle@debian.org&gt;
+           (C) 2013 Fabian Greffrath &lt;fabian+debian@greffrath.com&gt;
+License: GPL-2+
+ This program is free software; you can redistribute it
+ and/or modify it under the terms of the GNU General Public
+ License as published by the Free Software Foundation; either
+ version 2 of the License, or (at your option) any later
+ version.
+ .
+ This program is distributed in the hope that it will be
+ useful, but WITHOUT ANY WARRANTY; without even the implied
+ warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+ PURPOSE.  See the GNU General Public License for more
+ details.
+ .
+ You should have received a copy of the GNU General Public
+ License along with this package; if not, write to the Free
+ Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ Boston, MA  02110-1301 USA
+ .
+ On Debian systems, the full text of the GNU General Public
+ License version 2 can be found in the file
+ /usr/share/common-licenses/GPL-2&#x27;.
+</metadata><rect x="10" y="10" width="236" height="236" rx="50" fill="#102A43"/>
+<rect x="13" y="13" width="230" height="230" rx="47" fill="none" stroke="#F4BF4F" stroke-width="6"/>
+<path d="M45 103V73Q45 61 57 61H105L124 83H199Q211 83 211 95V110" fill="none" stroke="#F4BF4F" stroke-width="12" stroke-linejoin="round"/>
+<path d="M40 103Q40 95 50 95H206Q216 95 216 105V191Q216 203 204 203H52Q40 203 40 191Z" fill="#F4BF4F"/>
+<rect x="63" y="117" width="130" height="66" rx="12" fill="#102A43"/>
+<path d="M86 135V163H169M128 145V163" fill="none" stroke="#52DCC4" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="76" y="125" width="20" height="20" rx="4" fill="#52DCC4"/>
+<rect x="118" y="135" width="20" height="20" rx="4" fill="#52DCC4"/>
+<rect x="159" y="153" width="20" height="20" rx="4" fill="#52DCC4"/><g transform="translate(284 175) scale(0.064453125 -0.064453125)" fill="#102A43"><path transform="translate(0 0)" d="M188 1493H1227V1202H573V924H1188V633H573V0H188Z"/><path transform="translate(1399 0)" d="M705 891Q586 891 523.5 805.5Q461 720 461 559Q461 398 523.5 312.5Q586 227 705 227Q822 227 884.0 312.5Q946 398 946 559Q946 720 884.0 805.5Q822 891 705 891ZM705 1147Q994 1147 1156.5 991.0Q1319 835 1319 559Q1319 283 1156.5 127.0Q994 -29 705 -29Q415 -29 251.5 127.0Q88 283 88 559Q88 835 251.5 991.0Q415 1147 705 1147Z"/><path transform="translate(2806 0)" d="M172 1556H530V0H172Z"/><path transform="translate(3508 0)" d="M934 956V1556H1294V0H934V162Q860 63 771.0 17.0Q682 -29 565 -29Q358 -29 225.0 135.5Q92 300 92 559Q92 818 225.0 982.5Q358 1147 565 1147Q681 1147 770.5 1100.5Q860 1054 934 956ZM698 231Q813 231 873.5 315.0Q934 399 934 559Q934 719 873.5 803.0Q813 887 698 887Q584 887 523.5 803.0Q463 719 463 559Q463 399 523.5 315.0Q584 231 698 231Z"/><path transform="translate(4974 0)" d="M1290 563V461H453Q466 335 544.0 272.0Q622 209 762 209Q875 209 993.5 242.5Q1112 276 1237 344V68Q1110 20 983.0 -4.5Q856 -29 729 -29Q425 -29 256.5 125.5Q88 280 88 559Q88 833 253.5 990.0Q419 1147 709 1147Q973 1147 1131.5 988.0Q1290 829 1290 563ZM922 682Q922 784 862.5 846.5Q803 909 707 909Q603 909 538.0 850.5Q473 792 457 682Z"/><path transform="translate(6363 0)" d="M1004 815Q957 837 910.5 847.5Q864 858 817 858Q679 858 604.5 769.5Q530 681 530 516V0H172V1120H530V936Q599 1046 688.5 1096.5Q778 1147 903 1147Q921 1147 942.0 1145.5Q963 1144 1003 1139Z"/><path transform="translate(7373 0)" d="M188 1493H1227V1202H573V924H1188V633H573V0H188Z"/><path transform="translate(8772 0)" d="M705 891Q586 891 523.5 805.5Q461 720 461 559Q461 398 523.5 312.5Q586 227 705 227Q822 227 884.0 312.5Q946 398 946 559Q946 720 884.0 805.5Q822 891 705 891ZM705 1147Q994 1147 1156.5 991.0Q1319 835 1319 559Q1319 283 1156.5 127.0Q994 -29 705 -29Q415 -29 251.5 127.0Q88 283 88 559Q88 835 251.5 991.0Q415 1147 705 1147Z"/><path transform="translate(10179 0)" d="M1004 815Q957 837 910.5 847.5Q864 858 817 858Q679 858 604.5 769.5Q530 681 530 516V0H172V1120H530V936Q599 1046 688.5 1096.5Q778 1147 903 1147Q921 1147 942.0 1145.5Q963 1144 1003 1139Z"/><path transform="translate(11189 0)" d="M934 190Q860 92 771.0 46.0Q682 0 565 0Q360 0 226.0 161.5Q92 323 92 573Q92 824 226.0 984.5Q360 1145 565 1145Q682 1145 771.0 1099.0Q860 1053 934 954V1120H1294V113Q1294 -157 1123.5 -299.5Q953 -442 629 -442Q524 -442 426.0 -426.0Q328 -410 229 -377V-98Q323 -152 413.0 -178.5Q503 -205 594 -205Q770 -205 852.0 -128.0Q934 -51 934 113ZM698 887Q587 887 525.0 805.0Q463 723 463 573Q463 419 523.0 339.5Q583 260 698 260Q810 260 872.0 342.0Q934 424 934 573Q934 723 872.0 805.0Q810 887 698 887Z"/><path transform="translate(12655 0)" d="M1290 563V461H453Q466 335 544.0 272.0Q622 209 762 209Q875 209 993.5 242.5Q1112 276 1237 344V68Q1110 20 983.0 -4.5Q856 -29 729 -29Q425 -29 256.5 125.5Q88 280 88 559Q88 833 253.5 990.0Q419 1147 709 1147Q973 1147 1131.5 988.0Q1290 829 1290 563ZM922 682Q922 784 862.5 846.5Q803 909 707 909Q603 909 538.0 850.5Q473 792 457 682Z"/></g></svg>
