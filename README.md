@@ -211,7 +211,7 @@ Den senaste profilen använder vektorbaserat färgdjup, högdagrar och en orange
 
 ## Frivilligt stöd via Swish
 
-**Hjälp → Stöd FolderForge – Swish** visar en lokal QR-kod i Swishs C-format.
+**Hjälp → Donationer – Stöd FolderForge** visar en lokal QR-kod i Swishs C-format.
 Fast mottagarnummer: **0721817177** (internationellt 46721817177).
 Belopp är inte förifyllt; välj själv i Swish och kontrollera mottagarens namn
 samt belopp innan betalningen godkänns. Inga funktioner låses bakom donation.

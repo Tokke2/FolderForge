@@ -20,7 +20,7 @@ class SupportTests(unittest.TestCase):
         self.assertEqual(SWISH_PAYLOAD, 'C46721817177;;FolderForge;6')
 
     def test_menu_is_explicit_and_dialog_is_read_only(self):
-        self.assertIn('label="Stöd FolderForge – Swish", command=self._show_support', self.source)
+        self.assertIn('label="Donationer – Stöd FolderForge", command=self._show_support', self.source)
         for forbidden in ('CTkEntry', 'CTkTextbox', 'webbrowser', 'urlopen', 'requests.',
                           'self.settings', 'paypal', 'ko-fi', 'qrserver'):
             self.assertNotIn(forbidden, self.code)
@@ -28,6 +28,8 @@ class SupportTests(unittest.TestCase):
         self.assertIn('dialog_layout(win)', self.code)
         self.assertIn("win.bind('<Escape>'", self.code)
         self.assertIn('Kontrollera alltid mottagarens namn', self.code)
+        self.assertIn('Alla funktioner fungerar precis lika bra utan donation.', self.code)
+        self.assertIn('Tack för att du använder FolderForge!', self.code)
 
     def test_qr_is_shipped_and_hashed_by_updater(self):
         path = Path('Icon/swish-folderforge.png')

@@ -5274,7 +5274,7 @@ class FolderForgeApp(_DnDCTkBase):
         help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
         help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
         help_menu.add_separator()
-        help_menu.add_command(label="Stöd FolderForge – Swish", command=self._show_support)
+        help_menu.add_command(label="Donationer – Stöd FolderForge", command=self._show_support)
         help_menu.add_command(label="Om FolderForge", command=self._show_info)
 
     def _rebuild_visa_menu(self) -> None:
@@ -7989,7 +7989,7 @@ class FolderForgeApp(_DnDCTkBase):
         s = self._scale
         win = ctk.CTkToplevel(self)
         self._support_window = win
-        win.title('Stöd FolderForge – Swish')
+        win.title('Donationer – Stöd FolderForge')
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
         win.geometry(f'{scaled(560, s)}x{scaled(640, s)}')
@@ -8002,7 +8002,12 @@ class FolderForgeApp(_DnDCTkBase):
         title = ctk.CTkLabel(hero, text='Gillar du FolderForge?', text_color='white',
                             font=ctk.CTkFont(size=scaled_font(24, s), weight='bold'))
         title.pack(fill='x', padx=18, pady=(0, 8))
-        intro = ctk.CTkLabel(hero, text='En frivillig gåva. Ett stort tack.\nAlla funktioner fungerar precis lika bra utan donation.',
+        intro = ctk.CTkLabel(hero, text='Har FolderForge gjort din vardag lite enklare?\n'
+                            'Med en frivillig gåva visar du uppskattning för arbetet\n'
+                            'bakom appen och uppmuntrar fortsatt utveckling.\n\n'
+                            'Du väljer själv om du vill bidra och med hur mycket.\n'
+                            'Alla funktioner fungerar precis lika bra utan donation.\n'
+                            'Tack för att du använder FolderForge!\n– Rickard Längkvist',
                             text_color='#E0EEF4', justify='center')
         intro.pack(fill='x', padx=18, pady=(0, 18))
         ctk.CTkLabel(body, text='Skanna med Swish-appen',
