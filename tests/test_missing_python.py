@@ -44,7 +44,7 @@ class MissingPythonTests(unittest.TestCase):
                 Path(temp, 'logs').mkdir()
                 script = functions + '''
 ROOT=$1
-find_python() { PYTHON_PRESENT=''' + str(present) + '''; PYTHON_COMMAND=/bin/true; }
+find_python() { PYTHON_PRESENT=''' + str(present) + '''; PYTHON_COMMAND=true; }
 confirm_missing() { printf 'ask\\n' >> "$ROOT/calls"; return ''' + str(consent) + '''; }
 install_missing() { printf 'install\\n' >> "$ROOT/calls"; return ''' + str(result) + '''; }
 notify() { :; }
