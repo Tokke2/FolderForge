@@ -208,3 +208,14 @@ Huvudfönstrets X och minimera går till systemfält/menyrad på stödda skrivbo
 Den aktuella färgstarka profilen kombinerar klarblått, turkos och orange mot mörk marinblå botten. Ordmärket är tvåfärgat; tryckoriginal och appikoner kommer från samma vektormaster.
 
 Den senaste profilen använder vektorbaserat färgdjup, högdagrar och en orange blixt. Tray-varianten är avsiktligt enklare för liten storlek. Hela leveransen beskrivs i [RELEASE_INNEHALL.md](RELEASE_INNEHALL.md).
+
+## Frivilligt stöd via Swish
+
+**Hjälp → Stöd FolderForge – Swish** visar en lokal QR-kod i Swishs C-format.
+Fast mottagarnummer: **0721817177** (internationellt 46721817177).
+Belopp är inte förifyllt; välj själv i Swish och kontrollera mottagarens namn
+samt belopp innan betalningen godkänns. Inga funktioner låses bakom donation.
+Appen behandlar inte betalningar och hämtar ingen betalstatus. Ingen extern
+QR-tjänst används. QR-koden är offentliga betaluppgifter, inte kryptering.
+Mottagaren kan inte ändras i appens gränssnitt eller inställningar, men en
+källkodsdistribution kan inte göras manipulationssäker mot egen kodredigering.

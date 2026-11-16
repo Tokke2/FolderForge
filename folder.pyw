@@ -5273,6 +5273,8 @@ class FolderForgeApp(_DnDCTkBase):
         help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
         help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
         help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
+        help_menu.add_separator()
+        help_menu.add_command(label="Stöd FolderForge – Swish", command=self._show_support)
         help_menu.add_command(label="Om FolderForge", command=self._show_info)
 
     def _rebuild_visa_menu(self) -> None:
@@ -7976,6 +7978,71 @@ class FolderForgeApp(_DnDCTkBase):
             win.after(500, refresh)
 
         refresh()
+
+    def _show_support(self) -> None:
+        """Fixed, local Swish QR: no payment configuration or network access."""
+        existing = getattr(self, '_support_window', None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus_set()
+            return
+        s = self._scale
+        win = ctk.CTkToplevel(self)
+        self._support_window = win
+        win.title('Stöd FolderForge – Swish')
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f'{scaled(560, s)}x{scaled(640, s)}')
+        win.resizable(True, True)
+        body, footer = dialog_layout(win)
+        hero = ctk.CTkFrame(body, fg_color='#12324A', corner_radius=18)
+        hero.pack(fill='x', padx=16, pady=(16, 12))
+        ctk.CTkLabel(hero, text='STÖD FOLDERFORGE', text_color='#59E0D0',
+                     font=ctk.CTkFont(size=scaled_font(12, s), weight='bold')).pack(pady=(18, 4))
+        title = ctk.CTkLabel(hero, text='Gillar du FolderForge?', text_color='white',
+                            font=ctk.CTkFont(size=scaled_font(24, s), weight='bold'))
+        title.pack(fill='x', padx=18, pady=(0, 8))
+        intro = ctk.CTkLabel(hero, text='En frivillig gåva. Ett stort tack.\nAlla funktioner fungerar precis lika bra utan donation.',
+                            text_color='#E0EEF4', justify='center')
+        intro.pack(fill='x', padx=18, pady=(0, 18))
+        ctk.CTkLabel(body, text='Skanna med Swish-appen',
+                     font=ctk.CTkFont(size=scaled_font(18, s), weight='bold')).pack(pady=(2, 8))
+        try:
+            with Image.open(BASE_DIR / 'Icon' / 'swish-folderforge.png') as source:
+                qr_image = source.convert('RGB')
+            # Keep a white quiet zone and identical light/dark images for scanning.
+            win._swish_qr = ctk.CTkImage(light_image=qr_image, dark_image=qr_image, size=(260, 260))
+            qr_label = ctk.CTkLabel(body, text='', image=win._swish_qr, fg_color='white', corner_radius=0)
+            qr_label.pack(padx=12, pady=4)
+        except (OSError, ValueError):
+            logger.exception('Kunde inte läsa den lokala Swish-koden')
+            ctk.CTkLabel(body, text='QR-koden kunde inte läsas. Hämta appens release igen.').pack(pady=16)
+        recipient = ctk.CTkLabel(body, text='Fast mottagarnummer: 0721817177',
+                                font=ctk.CTkFont(size=scaled_font(13, s), weight='bold'))
+        recipient.pack(fill='x', padx=18, pady=(8, 4))
+        note = ctk.CTkLabel(body, text='Välj själv belopp i Swish. Kontrollera alltid mottagarens namn\n'
+                           'och belopp innan du godkänner betalningen.\n\n'
+                           'FolderForge behandlar inga betalningar och läser ingen betalstatus.\n'
+                           'QR-koden skapas lokalt och kräver ingen extern QR-tjänst.', justify='center')
+        note.pack(fill='x', padx=18, pady=(0, 14))
+
+        last_qr_edge = [260]
+
+        def resize_support(event):
+            width = max(100, event.width - 56)
+            for label in (title, intro, recipient, note):
+                label.configure(wraplength=width)
+            if hasattr(win, '_swish_qr'):
+                edge = max(96, min(260, event.width - 48))
+                if edge != last_qr_edge[0]:
+                    last_qr_edge[0] = edge
+                    win._swish_qr.configure(size=(edge, edge))
+
+        body.bind('<Configure>', resize_support, add='+')
+        close = ctk.CTkButton(footer, text='Stäng', command=win.destroy)
+        close.pack(fill='x', padx=8)
+        win.bind('<Escape>', lambda _event: win.destroy())
+        win.after(150, close.focus_set)
 
     def _show_info(self) -> None:
         s = self._scale
