@@ -90,6 +90,10 @@ def build(font_path):
         master.resize((size, size), Image.Resampling.LANCZOS).save(root / name)
     master.save(root / 'projektmapp.ico', sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
     master.save(root / 'folderforge.icns')
+    bundle_icon = root.parent / 'Starta-FolderForge.app/Contents/Resources/folderforge.icns'
+    if bundle_icon.parent.is_dir():
+        import shutil
+        shutil.copy2(root / 'folderforge.icns', bundle_icon)
     raster(svg(f'<rect width="{width}" height="256" fill="#FFFFFF"/>' + mark + display_word + accent.replace(orange, 'url(#ember)'), width, 'FolderForge'), width * 2).save(root / 'folderforge-logo.png')
     print('Built vector masters, outlined wordmark, PNG, ICO and ICNS in', root)
 

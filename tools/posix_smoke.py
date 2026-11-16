@@ -19,6 +19,7 @@ def main():
     evidence = source / 'windows-evidence'
     evidence.mkdir(exist_ok=True)
     for name in updater.FILES | updater.OPTIONAL_FILES:
+        (base / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, base / name)
     shutil.copytree(source / 'Icon', base / 'Icon')
     # Synthetic settings only inside the disposable test copy.
@@ -131,6 +132,7 @@ def main():
         pending = base / 'data/update-pending'
         pending.mkdir()
         for name in updater.FILES | updater.OPTIONAL_FILES:
+            (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         keep = base / 'data/user-keep.txt'
         keep.write_text('preserve user data')
@@ -158,6 +160,7 @@ def main():
         # The old, stable supervisor must survive an intentionally broken app.
         pending.mkdir()
         for name in updater.FILES | updater.OPTIONAL_FILES:
+            (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         (pending / 'folder.pyw').write_text("raise RuntimeError('intentional CI failed update')\n")
         updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',

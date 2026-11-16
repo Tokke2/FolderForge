@@ -29,10 +29,17 @@
 
 1. [Hämta senaste v0.0.2](https://github.com/Tokke2/FolderForge/releases/tag/v0.0.2) → **Source code (zip)**.
 2. Packa upp **hela** mappen till en plats där du har skrivbehörighet.
-3. Python **3.11+ med Tkinter** och paketen i `requirements.txt` måste redan finnas.
+3. Appen kräver **Python 3.11+ med Tkinter** och paketen i `requirements.txt`.
+   Om Python saknas kan startfilen erbjuda installation enligt nedan. Extra apppaket installeras inte av startfilen.
 4. Starta enligt ditt operativsystem nedan.
 
-**FolderForge installerar eller uppgraderar aldrig Python eller paket automatiskt.**
+**Ingen tyst installation, ingen automatisk Python-uppgradering och inga paketinstallationer vid vanlig start.**
+Finns någon hittad Python erbjuds aldrig installation – även om den är gammal,
+inte kan köras eller saknar GUI-paket. Bara när Python saknas visas ett erbjudande,
+med **Nej/Avbryt som standard**. Ett nej hämtar och installerar ingenting.
+Ingen separat `Installera senaste Python.bat` ingår och inget veckounderhåll körs.
+Okända specialinstallationer utanför PATH/registrering/standardplatser kan inte
+upptäckas säkert: avbryt erbjudandet om IT redan har en sådan installation.
 På Windows provas systemets aktuella Python först (även 3.15). Om dess lokala
 GUI-prov misslyckas väljs i första hand en redan installerad **3.14**, därefter
 andra installerade Python 3.11+. Provet kontrollerar nödvändiga GUI-importer
@@ -48,25 +55,54 @@ Dubbelklicka **`Starta-FolderForge.vbs`**.
 Appen använder systemets `pythonw.exe`, startar dold i systemfältet och
 öppnar inget konsolfönster som reserv.
 
-### macOS och Linux
+### macOS
 
-Starta med den befintliga Python som har appens paket:
+Dubbelklicka **Starta-FolderForge.app** direkt i den uppackade mappen.
+Den kräver inte Python för att kunna visa erbjudandet och öppnar inte Terminal.
+Om Python saknas och du godkänner används befintlig Homebrew (`brew install python`,
+utan automatisk Homebrew-uppdatering). Finns inte Homebrew öppnas python.org för
+manuell installation. Starta igen efter manuell installation. Appen installerar
+inte Homebrew eller Apples utvecklarverktyg. Apples utvecklarstub utan installerade
+verktyg räknas inte som en fungerande Python-installation.
+
+### Linux
+
+Öppna **Starta-FolderForge.sh** som program om filhanteraren stöder det, eller kör:
 
 ```sh
-python3 Starta-FolderForge.py
+sh Starta-FolderForge.sh
 ```
 
-Startaren kopplar loss appen från terminalen och skriver fel till `logs/`.
-Vill du starta med en ikon utan att öppna Terminal? Skapa en genväg:
+Om Python saknas krävs Zenity eller KDialog för ett uttryckligt ja. Utan grafisk
+dialog görs ingen installation. Med ditt ja används systemets paketkälla via
+`pkexec`: apt, dnf, zypper eller pacman, inklusive Tkinter. Behörighetsdialog kan
+visas; utan pkexec/stödd paketkälla hänvisas du till IT. Startaren kör inga
+fjärrskript och uppdaterar inte paketlistor. Paketkällans version kan vara äldre
+än senaste python.org, men appen kräver minst 3.11. macOS/Homebrew och Windows/winget
+väljer den senaste stabila version som deras respektive källa erbjuder.
 
-```sh
-python3 tools/create_shortcut.py
-```
+### Windows om Python saknas
 
-Verktyget skapar **FolderForge.app** på macOS eller **FolderForge.desktop** på
-Linux bredvid appfilerna. Det installerar inget och aktiverar inte autostart.
-Linux kan kräva att du markerar genvägen som betrodd. Behåll appmappen på
-samma plats; skapa om genvägen om du flyttar den.
+Efter ett uttryckligt ja söker startfilen dynamiskt efter senaste stabila Python
+3 i winget och visar dess installationsprogram (användarinstallation). Preview,
+alfa, beta och RC väljs bort. Samtycket omfattar wingets käll-/paketvillkor.
+Saknas winget öppnas python.org för manuell installation, först efter ditt ja.
+Installation kan blockeras av IT-policy. Ingen befintlig Python tas bort eller
+uppgraderas av FolderForge.
+
+### Genvägar och beroenden
+
+På macOS/Linux kan `python3 tools/create_shortcut.py` skapa en ikonbaserad genväg
+som använder samma startfil: **FolderForge.app** respektive **FolderForge.desktop**.
+Linux kan kräva att genvägen markeras betrodd. Startaren öppnar inte en ny terminal;
+startar du själv från en terminal stängs den inte av appen. Loggar finns i `logs/`.
+Om installationen avbryts eller misslyckas kan ett nytt erbjudande visas vid nästa
+start så länge Python fortfarande saknas. **När Python hittas erbjuds det inte igen.**
+
+Efter en ny Python-installation måste IT/användaren fortfarande ordna appens
+beroenden enligt `requirements.txt`; startfilen installerar inte dessa automatiskt.
+På macOS kan Gatekeeper och på Linux skrivbordets filregler kräva godkännande.
+Det här är inte en signerad, fristående app och startfilerna kringgår inte IT-policy.
 
 ## Öppna och avsluta
 

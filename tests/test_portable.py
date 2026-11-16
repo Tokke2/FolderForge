@@ -50,6 +50,7 @@ class PortableTests(unittest.TestCase):
         manifest = updater.content_manifest(self.base)
         self.assertTrue(updater.matches_manifest(self.base, manifest))
         for name in updater.OPTIONAL_FILES:
+            (self.base / name).parent.mkdir(parents=True, exist_ok=True)
             (self.base / name).write_text('# optional')
         self.assertTrue(updater.matches_manifest(self.base, manifest))
         new_manifest = updater.content_manifest(self.base)
@@ -65,7 +66,7 @@ class PortableTests(unittest.TestCase):
         self.assertIn('%%test', text)
         self.assertIn('Icon=' + str(base / 'Icon/projektmapp_icon_256.png').replace('\\', '\\\\'), text)
         self.assertNotIn('sh -c', text)
-        self.assertIn('Exec="', text)
+        self.assertIn('Exec=/bin/sh "', text)
 
     def test_macos_bundle_has_matching_icon_and_quoted_executable(self):
         target = create_shortcut(self.base, Path(sys.executable), 'darwin')
@@ -74,7 +75,7 @@ class PortableTests(unittest.TestCase):
         self.assertEqual(info['CFBundleIconFile'], 'folderforge.icns')
         executable = target / 'Contents/MacOS/FolderForge'
         args = shlex.split(executable.read_text().split('exec ', 1)[1])
-        self.assertEqual(args, [str(Path(sys.executable).resolve()), str(self.base / 'Starta-FolderForge.py')])
+        self.assertEqual(args, ['/bin/sh', str(self.base / 'Starta-FolderForge.sh')])
         self.assertTrue((target / 'Contents/Resources/folderforge.icns').exists())
 
     def test_unsupported_shortcut_does_not_silently_create_windows_console(self):

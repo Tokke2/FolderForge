@@ -28,6 +28,7 @@ def main():
     base = Path(tempfile.mkdtemp(prefix='FolderForge-smoke-')).resolve()
     source = Path(__file__).resolve().parents[1]
     for name in updater.FILES:
+        (base / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, base / name)
     shutil.copytree(source / 'Icon', base / 'Icon')
     # Synthetic settings only inside the disposable test copy.
@@ -196,6 +197,7 @@ def main():
         pending = base / 'data/update-pending'
         pending.mkdir()
         for name in updater.FILES:
+            (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         (pending / 'folder.pyw').write_text("raise RuntimeError('simulated failed update')\n")
         sentinel = base / 'data/user-keep.txt'
@@ -223,6 +225,7 @@ def main():
         # Now a valid candidate must acknowledge itself from its own Tk loop.
         pending.mkdir()
         for name in updater.FILES:
+            (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',
                                      pending_hashes=updater.content_manifest(pending)))

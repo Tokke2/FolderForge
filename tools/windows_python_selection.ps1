@@ -18,6 +18,13 @@ function Assert-Equal($Actual, $Expected, $Message) {
     if ($Actual -ne $Expected) { throw ($Message + ': actual=' + $Actual + ', expected=' + $Expected) }
 }
 try {
+    Assert-Equal (Test-AnyInstalledPython @()) $false 'Empty discovery'
+    $Broken = Join-Path $Root 'broken-python.exe'
+    [IO.File]::WriteAllText($Broken, 'not runnable')
+    Assert-Equal (Test-AnyInstalledPython @($Broken)) $true 'Broken interpreter still blocks installation'
+    Assert-Equal (Test-AnyInstalledPython @('C:\missing\python.exe')) $false 'Missing path'
+    Assert-Equal (Get-LatestStablePythonPackageId "Python Python.Python.3.14 3.14.9`nPython Python.Python.3.15 3.15.0`nPython Python.Python.3.16 3.16.0a1") 'Python.Python.3.15' 'Latest stable, never prerelease'
+    Assert-Equal (Get-LatestStablePythonPackageId 'Python Python.Python.3.16 3.16.0rc1') $null 'No stable fails closed'
     $Real = Resolve-ExistingPython (Get-Command python.exe).Source
     if (-not $Real -or -not (Test-ExistingPythonGui $Real)) { throw 'The real installed test Python failed its hidden GUI probe' }
     # A native stub really starts and returns missing-customtkinter on the GUI

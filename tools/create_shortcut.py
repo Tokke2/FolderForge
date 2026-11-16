@@ -14,8 +14,8 @@ def create_shortcut(base, interpreter, system):
         (contents / 'MacOS').mkdir(parents=True, exist_ok=True)
         (contents / 'Resources').mkdir(exist_ok=True)
         executable = contents / 'MacOS/FolderForge'
-        executable.write_text('#!/bin/sh\nexec ' + shlex.quote(str(interpreter)) + ' ' +
-                              shlex.quote(str(base / 'Starta-FolderForge.py')) + '\n', encoding='utf-8')
+        executable.write_text('#!/bin/sh\nexec /bin/sh ' +
+                              shlex.quote(str(base / 'Starta-FolderForge.sh')) + '\n', encoding='utf-8')
         executable.chmod(0o755)
         import shutil
         shutil.copy2(base / 'Icon/folderforge.icns', contents / 'Resources/folderforge.icns')
@@ -34,7 +34,7 @@ def create_shortcut(base, interpreter, system):
         if any(c in str(base) + str(interpreter) for c in '\n\r'):
             raise ValueError('Genvägens sökväg får inte innehålla radbrytningar')
         target = base / 'FolderForge.desktop'
-        command = desktop_quote(interpreter) + ' ' + desktop_quote(base / 'Starta-FolderForge.py')
+        command = '/bin/sh ' + desktop_quote(base / 'Starta-FolderForge.sh')
         # Desktop-entry string values use backslash escaping, including literal backslashes.
         icon = str(base / 'Icon/projektmapp_icon_256.png').replace('\\', '\\\\')
         target.write_text('[Desktop Entry]\nType=Application\nVersion=1.0\nName=FolderForge\n'

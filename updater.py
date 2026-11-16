@@ -28,7 +28,9 @@ REPOSITORY = "Tokke2/FolderForge"
 INTERVAL = 12 * 60 * 60
 MAX_DOWNLOAD = 32 * 1024 * 1024
 FILES = frozenset({"folder.pyw", "settings.py", "historik.py", "logg.py", "updater.py", "cache_cleanup.py", "Starta-FolderForge.ps1", "Starta-FolderForge.vbs"})
-OPTIONAL_FILES = frozenset({"Starta-FolderForge.py", "requirements.txt"})
+OPTIONAL_FILES = frozenset({"Starta-FolderForge.py", "requirements.txt", "Starta-FolderForge.sh",
+    "Starta-FolderForge.app/Contents/Info.plist", "Starta-FolderForge.app/Contents/MacOS/FolderForge",
+    "Starta-FolderForge.app/Contents/Resources/folderforge.icns"})
 logger = logging.getLogger(__name__)
 _check_lock = threading.Lock()
 
@@ -544,7 +546,9 @@ def rollback_update(base):
     # Validate the ENTIRE backup before changing any current file.
     for name, digest in entries.items():
         target, saved = base / name, backup / name
-        if target.is_symlink() or saved.is_symlink() or target.parent.is_symlink() or saved.parent.is_symlink():
+        if target.is_symlink() or saved.is_symlink():
+            raise ValueError('Symbolisk länk bland appfiler')
+        if any(parent.is_symlink() for parent in list(target.parents)[:len(Path(name).parts)] + list(saved.parents)[:len(Path(name).parts)]):
             raise ValueError('Symbolisk länk i återställningen')
         if digest is not None and (not saved.is_file() or hashlib.sha256(saved.read_bytes()).hexdigest() != digest):
             raise ValueError('Säkerhetskopian saknas eller har ändrats: ' + name)
@@ -723,7 +727,7 @@ def apply_pending(base):
     if not all(path.is_file() for path in sources):
         return False
     sources += [pending / name for name in OPTIONAL_FILES if (pending / name).is_file()]
-    sources += list((pending / "Icon").glob("*.png")) + list((pending / "Icon").glob("*.ico")) + list((pending / "Icon").glob("*.icns"))
+    sources += list((pending / "Icon").glob("*.png")) + list((pending / "Icon").glob("*.ico")) + list((pending / "Icon").glob("*.icns")) + list((pending / "Icon").glob("*.svg"))
     backup = base / "data/update-backup"
     if backup.exists():
         shutil.rmtree(backup)
@@ -732,7 +736,9 @@ def apply_pending(base):
     for source in sources:
         relative = source.relative_to(pending)
         target, saved = base / relative, backup / relative
-        if target.is_symlink() or saved.is_symlink() or target.parent.is_symlink() or saved.parent.is_symlink():
+        if target.is_symlink() or saved.is_symlink():
+            raise ValueError('Symbolisk länk bland appfiler')
+        if any(parent.is_symlink() for parent in list(target.parents)[:len(relative.parts)] + list(saved.parents)[:len(relative.parts)]):
             raise ValueError('Symbolisk länk bland appfiler')
         if target.exists():
             saved.parent.mkdir(parents=True, exist_ok=True)
@@ -771,6 +777,8 @@ if __name__ == '__main__':
             temporary = target.with_name(target.name + ".update-tmp")
             shutil.copy2(source, temporary)
             os.replace(temporary, target)
+            if os.name != 'nt' and relative.as_posix() in {'Starta-FolderForge.sh', 'Starta-FolderForge.app/Contents/MacOS/FolderForge'}:
+                target.chmod(target.stat().st_mode | 0o111)
             changed.append((target, saved, existed))
         installed_hashes = state.pop("pending_hashes", None) or content_manifest(pending)
         state["installed_hashes"] = installed_hashes
@@ -1302,10 +1310,7 @@ function Select-ExistingPython([string[]]$Candidates) {
     return $null
 }
 
-try {
-    Remove-LegacyMaintenanceTask
-    # Backward-compatible exit for a previously scheduled maintenance invocation.
-    if ($MaintenanceOnly) { exit 0 }
+function Get-PythonCandidates {
     $Candidates = New-Object 'System.Collections.Generic.List[string]'
     # Respect the system PATH instead of saved runtime state or a chosen version.
     foreach ($Name in @('python.exe','python3.exe','pythonw.exe')) {
@@ -1336,7 +1341,94 @@ try {
         }
     }
     if ($PreferredPython) { $Candidates.Add($PreferredPython) }
-    $Windowless = Select-ExistingPython -Candidates ($Candidates.ToArray())
+    foreach ($Pattern in @("$env:LOCALAPPDATA\Programs\Python\Python*\python.exe", "$env:USERPROFILE\miniconda3\python.exe", "$env:USERPROFILE\anaconda3\python.exe", "$env:ProgramData\Anaconda3\python.exe")) {
+        foreach ($File in @(Get-Item -Path $Pattern -ErrorAction SilentlyContinue)) { $Candidates.Add($File.FullName) }
+    }
+    return $Candidates.ToArray()
+}
+function Test-AnyInstalledPython([string[]]$Candidates) {
+    # Presence, NOT GUI compatibility: old/broken Python must never trigger setup.
+    foreach ($Candidate in $Candidates) {
+        if ($Candidate -and $Candidate -notmatch '\\Microsoft\\WindowsApps\\' -and
+            (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $true }
+    }
+    return $false
+}
+function Get-LatestStablePythonPackageId([string]$Listing) {
+    $Minors = @()
+    foreach ($Line in ($Listing -split "`n")) {
+        if ($Line -match '(?i)preview|alpha|beta|\drc\d|\d[aAbB]\d|\bdev\b') { continue }
+        foreach ($Match in [regex]::Matches($Line, 'Python\.Python\.3\.(\d+)(?![\w.])')) {
+            $Minor = [int]$Match.Groups[1].Value
+            if ($Minor -ge 11) { $Minors += $Minor }
+        }
+    }
+    if (-not $Minors.Count) { return $null }
+    return 'Python.Python.3.' + ($Minors | Sort-Object -Descending -Unique | Select-Object -First 1)
+}
+function Invoke-PythonInstaller([string]$File, [string[]]$Arguments) {
+    # Used ONLY after explicit consent and confirmed absence, never for upgrades.
+    $Info = New-Object Diagnostics.ProcessStartInfo
+    $Info.FileName = $File
+    $Info.Arguments = (($Arguments | ForEach-Object { Quote-Argument $_ }) -join ' ')
+    $Info.UseShellExecute = $false
+    $Info.CreateNoWindow = $true
+    $Info.RedirectStandardOutput = $true
+    $Info.RedirectStandardError = $true
+    $Process = [Diagnostics.Process]::Start($Info)
+    try {
+        $Out = $Process.StandardOutput.ReadToEndAsync()
+        $Err = $Process.StandardError.ReadToEndAsync()
+        $Process.WaitForExit()
+        return [pscustomobject]@{ Code=$Process.ExitCode; Out=$Out.Result; Err=$Err.Result }
+    } finally { $Process.Dispose() }
+}
+function Offer-MissingPythonInstall {
+    $Dialog = New-Object -ComObject WScript.Shell
+    $Answer = $Dialog.Popup('Ingen Python-installation hittades. Vill du installera den senaste stabila Python som finns i winget? Installationen sker bara efter ditt ja och kan stoppas av arbetsgivarens IT-policy. Wingets käll- och paketvillkor godkänns för hämtningen; Python-installationsprogrammet visas. Om winget saknas öppnas i stället python.org för manuell installation. FolderForges extra paket installeras inte.', 0, 'FolderForge - Python saknas', 4 + 32 + 256)
+    if ($Answer -ne 6) { Write-StartInfo 'Python saknas; användaren avstod installation.'; return $false }
+    $Winget = Get-Command 'winget.exe' -ErrorAction SilentlyContinue
+    if (-not $Winget) {
+        Start-Process 'https://www.python.org/downloads/windows/'
+        Write-StartInfo 'Öppnade python.org efter samtycke; ingen installation kördes av startfilen.'
+        return $false
+    }
+    $Listing = Invoke-PythonInstaller $Winget.Source @('search','--id','Python.Python.3','--source','winget','--accept-source-agreements','--disable-interactivity')
+    if ($Listing.Code -ne 0) { throw ('Kunde inte läsa wingets Python-lista: ' + $Listing.Err) }
+    $Id = Get-LatestStablePythonPackageId $Listing.Out
+    if (-not $Id) { throw 'Ingen entydig stabil Python hittades i winget. Ingen installation kördes.' }
+    # Recheck just before installation in case a concurrent installer finished.
+    if (Test-AnyInstalledPython @(Get-PythonCandidates)) { return $true }
+    Write-StartInfo ('Uttryckligen godkänd förstagångsinstallation: ' + $Id)
+    $Installed = Invoke-PythonInstaller $Winget.Source @('install','--id',$Id,'--exact','--source','winget','--scope','user','--interactive','--accept-source-agreements','--accept-package-agreements')
+    if ($Installed.Code -ne 0) { throw ('Python installerades inte (winget exit ' + $Installed.Code + '): ' + $Installed.Err) }
+    return $true
+}
+
+
+try {
+    Remove-LegacyMaintenanceTask
+    # Backward-compatible exit for a previously scheduled maintenance invocation.
+    if ($MaintenanceOnly) { exit 0 }
+    $Candidates = @(Get-PythonCandidates)
+    if (-not (Test-AnyInstalledPython $Candidates)) {
+        # The only install offer in the app: absence, never a failed GUI probe.
+        $SetupLock = New-Object Threading.Mutex($false, 'Local\FolderForge_FirstPythonSetup')
+        $OwnSetup = $false
+        try {
+            $OwnSetup = $SetupLock.WaitOne(0)
+            if (-not $OwnSetup) { throw 'En Python-installationsdialog är redan aktiv. Starta igen när den är klar.' }
+            $Candidates = @(Get-PythonCandidates)
+            if (-not (Test-AnyInstalledPython $Candidates)) {
+                if (-not (Offer-MissingPythonInstall)) { exit 0 }
+            }
+            $Candidates = @(Get-PythonCandidates)
+        } finally {
+            if ($OwnSetup) { $SetupLock.ReleaseMutex() }
+            $SetupLock.Dispose()
+        }
+    }
+    $Windowless = Select-ExistingPython -Candidates @($Candidates)
     if (-not $Windowless) { throw 'Ingen installerad system-Python kunde köra appens GUI-beroenden. Se hoppade tolkar i folderforge.log. Ingen Python eller paket installerades eller uppgraderades.' }
     $AppArgs = @('--tray')
     if ($Arguments64) { $AppArgs = @([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Arguments64)).Split(@([char]0), [StringSplitOptions]::RemoveEmptyEntries)) }

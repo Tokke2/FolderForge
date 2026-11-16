@@ -21,3 +21,9 @@ Alla SVG-original består av vektorformer och konturiserade bokstäver, inte inb
 `Icon/` innehåller också PNG-logotyp, 1024px-symbol, en förenklad 64px-tray-ikon, Windows ICO och macOS ICNS. Appens automatiska uppdaterare tar med SVG- och rastertillgångarna i `Icon/`. Dokumentationen följer med den fullständiga release-ZIP:en.
 
 Detta är fortfarande ett källkodspaket med befintlig system-Python, inte en fristående installerare. Starta `Starta-FolderForge.vbs` på Windows eller följ README för macOS/Linux. Inga nya Python-/paketinstallationer sker vid appstart.
+
+## Start utan befintlig Python
+
+Windows: `Starta-FolderForge.vbs`. macOS: `Starta-FolderForge.app`. Linux: `Starta-FolderForge.sh`.
+Endast om Python saknas erbjuds installation, med uttryckligt ja. Ingen separat installations-BAT ingår.
+Se README för paketkällor, behörigheter och manuella appberoenden.

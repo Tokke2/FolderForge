@@ -119,7 +119,7 @@ class RuntimeBootstrapTests(unittest.TestCase):
         self.assertIn('HKCU:\\Software\\Python\\PythonCore', self.ps)
 
     def test_no_install_upgrade_network_or_virtual_environment(self):
-        for token in ('winget', 'pypi.org', 'Invoke-RestMethod', 'ensurepip', "'-m','pip'", "'-m','venv'", 'https://'):
+        for token in ('pypi.org', 'Invoke-RestMethod', 'ensurepip', "'-m','pip'", "'-m','venv'"):
             self.assertNotIn(token, self.ps)
 
     def test_obsolete_weekly_task_is_removed_not_recreated(self):
@@ -130,7 +130,7 @@ class RuntimeBootstrapTests(unittest.TestCase):
         self.assertIn("$Root.ToLowerInvariant()", self.ps)
 
     def test_legacy_maintenance_invocation_never_launches_app(self):
-        self.assertLess(self.ps.index('if ($MaintenanceOnly) { exit 0 }'), self.ps.index('$Candidates ='))
+        self.assertLess(self.ps.index('if ($MaintenanceOnly) { exit 0 }'), self.ps.index('$Candidates = @(Get-PythonCandidates)', self.ps.index('if ($MaintenanceOnly)')))
 
     def test_no_python_check_popup_or_state_replacement(self):
         for token in ('MessageBox', 'System.Windows.Forms', '[IO.File]::Replace', 'Save-RuntimeState'):
