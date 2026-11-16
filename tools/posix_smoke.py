@@ -51,7 +51,8 @@ def main():
         temp.write_text(json.dumps(dict(pid=status()['pid'], id=number, action=action)))
         os.replace(temp, path)
     def launch():
-        process = subprocess.run([sys.executable, str(base / 'Starta-FolderForge.py')], env=env,
+        entry = base / ('Starta-FolderForge.app/Contents/MacOS/FolderForge' if sys.platform == 'darwin' else 'Starta-FolderForge.sh')
+        process = subprocess.run(['/bin/sh', str(entry)], env=env,
                                  cwd=base, capture_output=True, timeout=15)
         assert process.returncode == 0, process.stderr
     try:

@@ -777,9 +777,9 @@ if __name__ == '__main__':
             temporary = target.with_name(target.name + ".update-tmp")
             shutil.copy2(source, temporary)
             os.replace(temporary, target)
+            changed.append((target, saved, existed))
             if os.name != 'nt' and relative.as_posix() in {'Starta-FolderForge.sh', 'Starta-FolderForge.app/Contents/MacOS/FolderForge'}:
                 target.chmod(target.stat().st_mode | 0o111)
-            changed.append((target, saved, existed))
         installed_hashes = state.pop("pending_hashes", None) or content_manifest(pending)
         state["installed_hashes"] = installed_hashes
         state.pop("restart_blocked", None)
