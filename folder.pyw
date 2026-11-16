@@ -7980,7 +7980,9 @@ class FolderForgeApp(_DnDCTkBase):
         refresh()
 
     def _show_support(self) -> None:
-        """Fixed, local Swish QR: no payment configuration or network access."""
+        """Fixed recipients: local Swish QR and explicit external payment buttons."""
+        import webbrowser
+
         existing = getattr(self, '_support_window', None)
         if existing is not None and existing.winfo_exists():
             existing.lift()
@@ -8031,11 +8033,27 @@ class FolderForgeApp(_DnDCTkBase):
                            'QR-koden skapas lokalt och kräver ingen extern QR-tjänst.', justify='center')
         note.pack(fill='x', padx=18, pady=(0, 14))
 
+        payment_buttons = ctk.CTkFrame(body, fg_color='transparent')
+        payment_buttons.pack(fill='x', padx=18, pady=(0, 8))
+        ctk.CTkButton(payment_buttons, text='PayPal – valfritt belopp',
+                      fg_color='#0070BA', hover_color='#005A96', text_color='white',
+                      command=lambda: webbrowser.open('https://paypal.me/Rickard3dPrint', new=2)
+                      ).pack(fill='x', pady=(0, 8))
+        ctk.CTkButton(payment_buttons, text='Ko-fi – stöd utvecklingen',
+                      fg_color='#A82C39', hover_color='#87232E', text_color='white',
+                      command=lambda: webbrowser.open('https://ko-fi.com/tokke2', new=2)
+                      ).pack(fill='x')
+        external_note = ctk.CTkLabel(body,
+                      text='PayPal och Ko-fi öppnas i din webbläsare först när du klickar.\n'
+                           'Välj belopp och kontrollera mottagaren hos betaltjänsten.\n'
+                           'Mottagarlänkarna är fasta och kan inte ändras i appen.', justify='center')
+        external_note.pack(fill='x', padx=18, pady=(0, 14))
+
         last_qr_edge = [260]
 
         def resize_support(event):
             width = max(100, event.width - 56)
-            for label in (title, intro, recipient, note):
+            for label in (title, intro, recipient, note, external_note):
                 label.configure(wraplength=width)
             if hasattr(win, '_swish_qr'):
                 edge = max(96, min(260, event.width - 48))

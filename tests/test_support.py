@@ -21,8 +21,8 @@ class SupportTests(unittest.TestCase):
 
     def test_menu_is_explicit_and_dialog_is_read_only(self):
         self.assertIn('label="Donationer – Stöd FolderForge", command=self._show_support', self.source)
-        for forbidden in ('CTkEntry', 'CTkTextbox', 'webbrowser', 'urlopen', 'requests.',
-                          'self.settings', 'paypal', 'ko-fi', 'qrserver'):
+        for forbidden in ('CTkEntry', 'CTkTextbox', 'urlopen', 'requests.',
+                          'self.settings', 'qrserver'):
             self.assertNotIn(forbidden, self.code)
         self.assertIn('existing.winfo_exists()', self.code)
         self.assertIn('dialog_layout(win)', self.code)
@@ -36,3 +36,16 @@ class SupportTests(unittest.TestCase):
         content = path.read_bytes()
         self.assertTrue(content.startswith(b'\x89PNG\r\n\x1a\n'))
         self.assertEqual(updater.content_manifest(Path('.'))[path.as_posix()], hashlib.sha256(content).hexdigest())
+
+    def test_payment_links_are_fixed_and_only_open_on_click(self):
+        calls = [node for node in ast.walk(self.method) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and isinstance(node.func.value, ast.Name)
+                 and node.func.value.id == 'webbrowser']
+        self.assertEqual({node.args[0].value for node in calls},
+                         {'https://paypal.me/Rickard3dPrint', 'https://ko-fi.com/tokke2'})
+        parents = {child: parent for parent in ast.walk(self.method) for child in ast.iter_child_nodes(parent)}
+        for call in calls:
+            self.assertEqual(call.func.attr, 'open')
+            self.assertIsInstance(parents[call], ast.Lambda)
+        self.assertIn('Mottagarlänkarna är fasta', self.code)

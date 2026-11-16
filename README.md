@@ -209,7 +209,7 @@ Den aktuella färgstarka profilen kombinerar klarblått, turkos och orange mot m
 
 Den senaste profilen använder vektorbaserat färgdjup, högdagrar och en orange blixt. Tray-varianten är avsiktligt enklare för liten storlek. Hela leveransen beskrivs i [RELEASE_INNEHALL.md](RELEASE_INNEHALL.md).
 
-## Frivilligt stöd via Swish
+## Frivilligt stöd via Swish, PayPal och Ko-fi
 
 **Hjälp → Donationer – Stöd FolderForge** visar en lokal QR-kod i Swishs C-format.
 Fast mottagarnummer: **0721817177** (internationellt 46721817177).
@@ -219,3 +219,9 @@ Appen behandlar inte betalningar och hämtar ingen betalstatus. Ingen extern
 QR-tjänst används. QR-koden är offentliga betaluppgifter, inte kryptering.
 Mottagaren kan inte ändras i appens gränssnitt eller inställningar, men en
 källkodsdistribution kan inte göras manipulationssäker mot egen kodredigering.
+
+I samma dialog finns fasta knappar för **PayPal Rickard3dPrint**
+(`https://paypal.me/Rickard3dPrint`) och **Ko-fi tokke2**
+(`https://ko-fi.com/tokke2`). De öppnar respektive betaltjänst i webbläsaren
+först efter klick. Ingen separat stödsida eller inbäddad betalning används.
+Belopp väljs hos betaltjänsten. Kontrollera alltid mottagaren innan betalning.
