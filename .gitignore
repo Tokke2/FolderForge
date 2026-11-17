@@ -12,3 +12,5 @@ release-assets/
 
 /FolderForge.app/
 /FolderForge.desktop
+
+/.venv-qt/

@@ -225,3 +225,10 @@ I samma dialog finns fasta knappar för **PayPal Rickard3dPrint**
 (`https://ko-fi.com/tokke2`). De öppnar respektive betaltjänst i webbläsaren
 först efter klick. Ingen separat stödsida eller inbäddad betalning används.
 Belopp väljs hos betaltjänsten. Kontrollera alltid mottagaren innan betalning.
+
+## Valfri Qt-prototyp – Tk är kvar
+
+En separat, skrivskyddad PySide6-prototyp kan provas enligt
+[docs/QT_PROTOTYP.md](docs/QT_PROTOTYP.md). Den ändrar inte vanlig start,
+installerar inget automatiskt och sparar inga projekt/inställningar.
+Tk är fortfarande den riktiga appen och reservvalet.

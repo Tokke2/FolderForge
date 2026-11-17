@@ -1,0 +1,31 @@
+name: Optional Qt preview
+on:
+  push:
+    branches: ['arena/319fd9b1-folderforge']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  qt-preview:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    env:
+      PYTHONUTF8: 1
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Qt OS libraries (disposable Linux runner only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libegl1 libxkbcommon0
+      - name: Optional preview dependencies (disposable runner only)
+        run: python -m pip install -r requirements-qt.txt
+      - name: Real Qt widgets, focus, geometry and storage isolation
+        run: python tools/qt_smoke.py

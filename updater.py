@@ -28,7 +28,7 @@ REPOSITORY = "Tokke2/FolderForge"
 INTERVAL = 12 * 60 * 60
 MAX_DOWNLOAD = 32 * 1024 * 1024
 FILES = frozenset({"folder.pyw", "settings.py", "historik.py", "logg.py", "updater.py", "cache_cleanup.py", "Starta-FolderForge.ps1", "Starta-FolderForge.vbs"})
-OPTIONAL_FILES = frozenset({"Starta-FolderForge.py", "requirements.txt", "Starta-FolderForge.sh",
+OPTIONAL_FILES = frozenset({"qt_preview.py", "Starta-FolderForge-Qt.py", "requirements-qt.txt", "Starta-FolderForge.py", "requirements.txt", "Starta-FolderForge.sh",
     "Starta-FolderForge.app/Contents/Info.plist", "Starta-FolderForge.app/Contents/MacOS/FolderForge",
     "Starta-FolderForge.app/Contents/Resources/folderforge.icns"})
 logger = logging.getLogger(__name__)
