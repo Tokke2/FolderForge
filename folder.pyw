@@ -144,6 +144,8 @@ from dataclasses import dataclass, field, asdict
 # importen (implementationen bor i logg.py).
 # ============================================================
 logger = logging.getLogger(__name__)
+from updater import ensure_shared_core
+ensure_shared_core(Path(__file__).resolve().parent)
 from instance_lock import SingleInstanceLock, _pid_alive, default_lock_dir, DEFAULT_POLL_MS
 from app_core import create_project_tree, ExistingProject, build_project_name
 from app_core import (AppSettings, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, NameValidator, RESERVED_STEM_RE, StructureEngine, TREE_IGNORED_DIRS, TemplateManager, _PLATE_RE, _SUFFIX_STRIP, generate_tree_string_safe, normalize_plate_name, project_year_choices, sanitize_name, strip_root_level, validate_project_year, validate_settings)
