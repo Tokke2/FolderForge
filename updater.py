@@ -1157,8 +1157,15 @@ def ensure_runtime_bootstrap(base):
         target = base / name
         encoding = 'utf-8-sig' if name.endswith('.ps1') else 'utf-8'
         payload = content.encode(encoding)
-        if target.is_file() and target.read_bytes().replace(b'\r\n', b'\n') == payload.replace(b'\r\n', b'\n'):
-            continue
+        if target.is_file():
+            # Equivalent shipped UTF-8 scripts must retain their EXACT bytes:
+            # adding a BOM at startup invalidates the installed SHA-256 manifest.
+            try:
+                existing = target.read_bytes().decode('utf-8-sig').replace('\r\n', '\n')
+            except UnicodeDecodeError:
+                existing = None
+            if existing == content.replace('\r\n', '\n'):
+                continue
         fd, temporary = tempfile.mkstemp(prefix='.bootstrap-', dir=base)
         try:
             with os.fdopen(fd, 'wb') as stream:

@@ -256,6 +256,21 @@ class AccessibilityTests(unittest.TestCase):
         self.assertEqual(native.cget('highlightthickness'), 0)
         self.assertEqual(native.cget('highlightcolor'), 'gray')
 
+    def test_ctk_focus_uses_native_canvas_without_unsupported_options(self):
+        for cls in (CTkButton, CTkEntry, CTkOptionMenu):
+            control = cls(self.root)
+            control._canvas = Widget(control)
+            original_cget = control.cget
+            def reject_native(key):
+                if key.startswith('highlight'):
+                    raise ValueError('unsupported CTk argument')
+                return original_cget(key)
+            control.cget = reject_native
+            self.controller.focus_in(self.event(control))
+            self.assertEqual(control._canvas.cget('highlightthickness'), 2)
+            self.controller.focus_out(None)
+            self.assertEqual(control._canvas.cget('highlightthickness'), 0)
+
     def test_high_contrast_is_reversible(self):
         button = CTkButton(self.root, fg_color='#4488CC', text_color='#EEEEEE', border_width=0)
         self.controller.refresh(True)

@@ -46,6 +46,17 @@ class RuntimeBootstrapTests(unittest.TestCase):
         for name, data in before.items():
             self.assertEqual((self.base / name).read_bytes(), data)
 
+    def test_shipped_scripts_keep_exact_manifest_bytes_with_or_without_bom(self):
+        for bom in (False, True):
+            for crlf in (False, True):
+                for name, content in updater.RUNTIME_BOOTSTRAP_FILES.items():
+                    text = content.replace('\n', '\r\n') if crlf else content
+                    (self.base / name).write_bytes(text.encode('utf-8-sig' if bom else 'utf-8'))
+                before = {name: (self.base / name).read_bytes() for name in updater.RUNTIME_BOOTSTRAP_FILES}
+                updater.ensure_runtime_bootstrap(self.base)
+                for name, data in before.items():
+                    self.assertEqual((self.base / name).read_bytes(), data)
+
     def test_failed_atomic_bootstrap_write_keeps_existing_file(self):
         script = self.base / 'Starta-FolderForge.ps1'
         script.write_text('existing script')

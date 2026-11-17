@@ -1960,13 +1960,20 @@ class AccessibilityController:
             return
         self.focus_out(None)
         widget = event.widget
+        owner = self.owner(widget)
+        self.reveal(owner)
+        if widget_kind(widget).startswith('CTk'):
+            # FocusIn can target the CTk wrapper, whose cget rejects Tk options.
+            # Use its native canvas, not the public CustomTkinter configure API.
+            widget = getattr(widget, '_canvas', None)
+            if widget is None:
+                return
         try:
             self._highlight = {key: widget.cget(key) for key in
                                ("highlightthickness", "highlightcolor", "highlightbackground")}
             color = "#FFD54F" if self.high_contrast or self.ctk.get_appearance_mode() == "Dark" else "#005FCC"
             widget.configure(highlightthickness=2, highlightcolor=color, highlightbackground=color)
             self._focus = weakref.ref(widget)
-            self.reveal(self.owner(widget))
         except Exception:
             accessibility_logger.debug("Could not highlight focus", exc_info=True)
 

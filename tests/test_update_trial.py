@@ -57,6 +57,20 @@ class TrialTests(unittest.TestCase):
         self.assertFalse(updater.read_state(self.base)['startup_pending'])
         self.assertTrue((self.data / 'update-backup/folder.pyw').exists())
 
+    def test_bootstrap_at_trial_start_does_not_mutate_shipped_manifest(self):
+        pending = self.data / 'update-pending'
+        for name, content in updater.RUNTIME_BOOTSTRAP_FILES.items():
+            (pending / name).write_bytes(content.encode('utf-8'))
+        state = updater.read_state(self.base)
+        state['pending_hashes'] = updater.content_manifest(pending)
+        updater.write_state(self.base, state)
+        journal = self.install()
+        updater.ensure_runtime_bootstrap(self.base)
+        journal['trial_pid'] = os.getpid()
+        updater._write_transaction(self.base, journal)
+        with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN=journal['token']):
+            self.assertTrue(updater.confirm_startup(self.base))
+
     def test_another_process_or_stale_token_cannot_confirm(self):
         journal = self.install()
         journal['trial_pid'] = os.getpid() + 100
