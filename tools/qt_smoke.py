@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 def main():
     source = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='FolderForge-Qt-test-') as temp:
-        root = Path(temp)
+        root = Path(temp).resolve()
         for name in ('qt_preview.py', 'qt_app.py', 'workspace.py', 'app_core.py', 'instance_lock.py', 'settings.py', 'historik.py'):
             shutil.copy2(source / name, root / name)
         (root / 'Icon').mkdir()
@@ -95,6 +95,15 @@ def main():
             assert len(historik.ProjectHistory(root / 'data/history.json').get_all()) == 1
             assert Workspace(lock, root).raw['future_key'] == 'preserved'
             assert functional.tabs.count() == 5
+            ws.config.text_size = '150%'
+            ws.config.high_contrast = True
+            functional.apply_accessibility()
+            assert '22px' in functional.styleSheet()
+            ws.config.text_size = '100%'
+            ws.config.high_contrast = False
+            ws.config.theme = 'Light'
+            functional.apply_accessibility()
+            assert '#F4F7FB' in functional.styleSheet()
             dialog.reject()
             functional.close()
             functional.deleteLater()

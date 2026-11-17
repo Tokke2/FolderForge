@@ -5714,7 +5714,14 @@ class FolderForgeApp(_DnDCTkBase):
         win.after(150, lambda: focus_project_name(entry))
 
         if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
-            def report_layout():
+            def report_layout(attempt=0):
+                # Busy CI desktops can still be mapping nested canvas controls.
+                # Sample settled controls, not their provisional off-window coords.
+                controls = (entry, preview_ram, btn_row, skapa_knapp, cancel_button)
+                if attempt < 30 and not all(widget.winfo_viewable() and widget.winfo_width() > 1
+                                            for widget in controls):
+                    win.after(200, lambda: report_layout(attempt + 1))
+                    return
                 def box(widget):
                     return [widget.winfo_rootx() - win.winfo_rootx(), widget.winfo_rooty() - win.winfo_rooty(),
                             widget.winfo_width(), widget.winfo_height()]

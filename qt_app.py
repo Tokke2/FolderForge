@@ -180,6 +180,7 @@ class QtWindow(PreviewWindow):
             'diagnostikexport och komplett tillgänglighets-/DPI-paritet är ännu inte migrerade.\n'
             'Qt installerar inte uppdateringar själv; avsluta och använd vanliga startfilen.'))
         self.refresh_history()
+        self.apply_accessibility()
 
     def open_project(self):
         if self.dialog and self.dialog.isVisible():
@@ -265,6 +266,19 @@ class QtWindow(PreviewWindow):
         self.plate_mode.setChecked(self.workspace.config.plate_mode)
         layout.addWidget(self.open_after)
         layout.addWidget(self.plate_mode)
+        self.theme = QComboBox()
+        self.theme.addItems(['Dark', 'Light', 'System'])
+        self.theme.setCurrentText(self.workspace.config.theme)
+        self.text_size = QComboBox()
+        self.text_size.addItems(['100%', '110%', '125%', '150%'])
+        self.text_size.setCurrentText(self.workspace.config.text_size)
+        self.high_contrast = QCheckBox('Hög kontrast')
+        self.high_contrast.setChecked(self.workspace.config.high_contrast)
+        layout.addWidget(label('Tema'))
+        layout.addWidget(self.theme)
+        layout.addWidget(label('Textstorlek'))
+        layout.addWidget(self.text_size)
+        layout.addWidget(self.high_contrast)
         def save():
             if not self.root_edit.text().strip():
                 QMessageBox.warning(self, 'Sparplats', 'Välj en sparplats först.')
@@ -272,13 +286,38 @@ class QtWindow(PreviewWindow):
             self.workspace.config.save_root = self.root_edit.text().strip()
             self.workspace.config.open_after_creation = self.open_after.isChecked()
             self.workspace.config.plate_mode = self.plate_mode.isChecked()
+            self.workspace.config.theme = self.theme.currentText()
+            self.workspace.config.text_size = self.text_size.currentText()
+            self.workspace.config.high_contrast = self.high_contrast.isChecked()
             self.save_settings()
         button(layout, 'Spara inställningar', save)
         layout.addStretch()
 
+    def apply_accessibility(self):
+        config = self.workspace.config
+        factor = int(config.text_size.rstrip('%')) / 100
+        dark = config.theme == 'Dark'
+        if config.theme == 'System':
+            dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        if config.high_contrast:
+            background, foreground, field, accent, focus = '#000000', '#FFFFFF', '#000000', '#164B73', '#FFFF00'
+        elif dark:
+            background, foreground, field, accent, focus = '#101C2C', '#EDF4FA', '#203249', '#215C95', '#FFCE66'
+        else:
+            background, foreground, field, accent, focus = '#F4F7FB', '#172B42', '#FFFFFF', '#155A94', '#005FCC'
+        self.setStyleSheet(f"""
+            QWidget {{ background: {background}; color: {foreground}; font-size: {round(15 * factor)}px; }}
+            QPushButton {{ background: {accent}; color: white; padding: 12px; border: 2px solid transparent; border-radius: 7px; }}
+            QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
+            QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 2px solid #708090; }}
+            QTabBar::tab {{ padding: 10px; }}
+            QTabBar::tab:selected, QMenu::item:selected {{ background: {accent}; color: white; }}
+        """)
+
     def save_settings(self):
         try:
             self.workspace.save_settings()
+            self.apply_accessibility()
             self.statusBar().showMessage('Inställningar sparade')
         except (OSError, RuntimeError) as exc:
             QMessageBox.warning(self, 'Skrivfel', str(exc))

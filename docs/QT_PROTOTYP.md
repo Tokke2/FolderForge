@@ -96,7 +96,8 @@ Installationskommandona ovan är oförändrade. Qt-klienten startar dold i tray.
 
 - Ångra/radering med samtliga befintliga säkerhetsflöden; komplett mall-/historikadministration.
 - Global snabbtangent, OS-autostart och befintliga specialflöden för drag & drop.
-- Full textskalning/högkontrast, skärmplacering och fysiska skärm-/DPI-byten.
+- Full tillgänglighetsparitet, sparad skärmplacering och fysiska skärm-/DPI-byten.
+  Grundläggande tema (ljust/mörkt/system), 100/110/125/150 % text och hög kontrast finns i Qt-inställningarna.
 - Detaljerad fellista, arkivhantering, diagnostikexport och cacheadministration i Qt.
 - Egen komplett Qt-startbekräftelse, säker uppskjuten omstart och återställning för uppdateringar.
 - Fullständig GUI-paritet och praktiska tester av riktig tray på alla stödda skrivbord.
