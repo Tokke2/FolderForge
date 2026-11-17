@@ -169,7 +169,7 @@ class PreviewWindow(QMainWindow):
             QTimer.singleShot(0, self.hide)
 
 
-def run():
+def run(window_factory=None, production=False):
     import hashlib
     import sys
     from PySide6.QtCore import QLockFile, QStandardPaths
@@ -178,16 +178,30 @@ def run():
     app.setQuitOnLastWindowClosed(False)
     # Prototype-only lock in OS temp; never opens or changes production's lock/data.
     key = hashlib.sha256(str(ROOT).encode()).hexdigest()[:16]
-    lock = QLockFile(str(Path(QStandardPaths.writableLocation(QStandardPaths.TempLocation)) /
-                         ('folderforge-qt-preview-' + key + '.lock')))
-    if not lock.tryLock(0):
+    if production:
+        from instance_lock import SingleInstanceLock
+        from settings import APP_NAME
+        lock = SingleInstanceLock(APP_NAME)
+        acquired = lock.acquire()
+    else:
+        lock = QLockFile(str(Path(QStandardPaths.writableLocation(QStandardPaths.TempLocation)) /
+                             ('folderforge-qt-preview-' + key + '.lock')))
+        acquired = lock.tryLock(0)
+    if not acquired:
         return 0
+    release = lock.release if production else lock.unlock
+    app.aboutToQuit.connect(release)
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print('Qt-prototypen kräver ett tillgängligt systemfält. Använd vanliga Tk-startfilen.', file=sys.stderr)
+        release()
         return 1
-    window = PreviewWindow()
+    try:
+        window = window_factory(lock) if window_factory else PreviewWindow()
+    except Exception:
+        release()
+        raise
     tray = QSystemTrayIcon(window.windowIcon(), window)
-    tray.setToolTip('FolderForge · Qt-prototyp (testläge)')
+    tray.setToolTip('FolderForge · Qt (valfri testversion)' if production else 'FolderForge · Qt-prototyp (testläge)')
     menu = QMenu()
     menu.addAction('Öppna Qt-prototypen', window.restore)
     menu.addAction(window.exit_action)
@@ -196,7 +210,18 @@ def run():
     window.tray = tray
     tray.show()
     # Remains hidden until an explicit tray action. Never starts Tk in this process.
-    result = app.exec()
-    tray.hide()
-    lock.unlock()
-    return result
+    stop = None
+    if production:
+        from updater import service_instance_health, start_updates
+        from settings import APP_VERSION
+        health = QTimer(window)
+        health.timeout.connect(lambda: service_instance_health(lock.lock_dir, ROOT / 'folder.pyw'))
+        health.start(500)
+        stop = start_updates(ROOT, APP_VERSION)
+    try:
+        return app.exec()
+    finally:
+        if stop is not None:
+            stop.set()
+        tray.hide()
+        release()

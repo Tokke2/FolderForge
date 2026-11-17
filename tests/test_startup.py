@@ -1,3 +1,4 @@
+from source_helpers import app_source
 import ast
 from pathlib import Path
 import tempfile
@@ -11,7 +12,7 @@ import updater
 
 class StartupTests(unittest.TestCase):
     def setUp(self):
-        self.tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        self.tree = ast.parse(app_source())
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name)

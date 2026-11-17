@@ -228,7 +228,13 @@ Belopp väljs hos betaltjänsten. Kontrollera alltid mottagaren innan betalning.
 
 ## Valfri Qt-prototyp – Tk är kvar
 
-En separat, skrivskyddad PySide6-prototyp kan provas enligt
-[docs/QT_PROTOTYP.md](docs/QT_PROTOTYP.md). Den ändrar inte vanlig start,
-installerar inget automatiskt och sparar inga projekt/inställningar.
+En separat, valfri PySide6-klient kan provas enligt
+[docs/QT_PROTOTYP.md](docs/QT_PROTOTYP.md). Den ändrar inte vanlig start och
+installerar inget automatiskt. Utan `--preview` används riktiga projektdata.
 Tk är fortfarande den riktiga appen och reservvalet.
+
+**Qt-etapp 2:** Den valfria `Starta-FolderForge-Qt.py` kan nu skapa riktiga projekt
+med gemensam kärna, historik, mallar och instanslås. Tk och Qt kan inte köras
+samtidigt i detta läge. `--preview` behåller den skrivskyddade förhandsvisningen.
+Tk är fortfarande standard; se slutet av Qt-guiden för genomförda och kvarvarande
+funktioner. Qt är ännu inte en fullständig ersättning för Tk.

@@ -1,21 +1,23 @@
+from source_helpers import app_source
 import ast
 from datetime import datetime
 import re
 from pathlib import Path
 import unittest
 import settings
+from app_core import build_project_name
 
 
 class YearTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in {'project_year_choices', 'validate_project_year', 'toggle_vehicle_type'}]
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_bygg_projektnamn')
         method.decorator_list = []
         nodes.append(method)
-        cls.ns = {'datetime': datetime, 're': re, 'LOKAL_CHOICES': settings.LOKAL_CHOICES, 'VEHICLE_CHOICES': settings.VEHICLE_CHOICES}
+        cls.ns = {'build_project_name': build_project_name, 'datetime': datetime, 're': re, 'LOKAL_CHOICES': settings.LOKAL_CHOICES, 'VEHICLE_CHOICES': settings.VEHICLE_CHOICES}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), 'years', 'exec'), cls.ns)
 
     def test_current_year_and_three_previous(self):
@@ -55,7 +57,7 @@ class YearTests(unittest.TestCase):
                 self.ns['validate_project_year'](value)
 
     def test_editable_picker_preserves_custom_year_on_refresh(self):
-        source = Path('folder.pyw').read_text(encoding='utf-8')
+        source = app_source()
         self.assertIn('year_menu = ctk.CTkComboBox(', source)
         tree = ast.parse(source)
         refresh = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'refresh_year_choices')

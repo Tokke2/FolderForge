@@ -144,6 +144,9 @@ from dataclasses import dataclass, field, asdict
 # importen (implementationen bor i logg.py).
 # ============================================================
 logger = logging.getLogger(__name__)
+from instance_lock import SingleInstanceLock, _pid_alive, default_lock_dir, DEFAULT_POLL_MS
+from app_core import create_project_tree, ExistingProject, build_project_name
+from app_core import (AppSettings, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, NameValidator, RESERVED_STEM_RE, StructureEngine, TREE_IGNORED_DIRS, TemplateManager, _PLATE_RE, _SUFFIX_STRIP, generate_tree_string_safe, normalize_plate_name, project_year_choices, sanitize_name, strip_root_level, validate_project_year, validate_settings)
 
 # ============================================================
 # Konstanter — utbrutna till settings.py (sökvägar, färger,
@@ -439,486 +442,9 @@ def is_stale_console_entry(command: str) -> bool:
 
 ERROR_ALREADY_EXISTS: int = 183
 
-DEFAULT_POLL_MS: int = 1000
 
-def _pid_alive(pid: int) -> bool:
-    """Sant om processen med angivet PID lever (stale-detektering)."""
-    if not pid or pid <= 0:
-        return False
-    if IS_WINDOWS:
-        try:
-            import win32api
-            import win32con
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = win32api.OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not handle:
-                return False
-            try:
-                # ExitCodeProcess == STILL_ACTIVE (259) → lever
-                import win32process
-                code = win32process.GetExitCodeProcess(handle)
-                return code == win32con.STILL_ACTIVE
-            finally:
-                win32api.CloseHandle(handle)
-        except ImportError:
-            # pywin32 saknas/är trasig — KRITISK fallback via ren ctypes.
-            # Utan denna gren svarade funktionen "död" om varje PID på
-            # pywin32-lösa maskiner, vilket fick PID-filslåset att överta
-            # låset vid VARJE ny start → flera appfönster samtidigt.
-            try:
-                k32 = ctypes.windll.kernel32
-                handle = k32.OpenProcess(0x1000, False, int(pid))
-                if not handle:
-                    return False
-                try:
-                    code = ctypes.c_ulong(0)
-                    if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                        return False
-                    return code.value == 259   # STILL_ACTIVE
-                finally:
-                    k32.CloseHandle(handle)
-            except Exception:
-                return False
-        except Exception:
-            return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True          # finns men ägs av annan användare
-    except OSError:
-        return False
-    return True
 
-def default_lock_dir(app_name: str) -> Path:
-    """Plattformsoberoende katalog för lås-/trigger-/pid-filer."""
-    if IS_WINDOWS:
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") \
-            or tempfile.gettempdir()
-    else:
-        base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return Path(base) / app_name
 
-class SingleInstanceLock:
-    """
-    C1: Max en instans. Andra start → fokus på befintligt fönster.
-
-      Windows  : CreateMutexW, "Global\\" → "Local\\"-fallback,
-                 ERROR_ALREADY_EXISTS = 183
-      macOS/Linux: flock LOCK_EX | LOCK_NB (+ PID-fil med stale-detektering)
-      Ingen fcntl OCH ingen pywin32 → PID-filsfallback (självläkning, C41.2)
-
-    Fokus via triggerfil + poll-loop (~1000 ms) som anropar on_trigger i
-    Tk-huvudtråden via after(). Cleanup vid exit (atexit) och krasch (finally).
-    """
-
-    def __init__(
-        self,
-        app_name: str,
-        lock_dir: Optional[Path] = None,
-        poll_ms: int = DEFAULT_POLL_MS,
-    ) -> None:
-        self.app_name = str(app_name)
-        self.lock_dir = Path(lock_dir) if lock_dir else default_lock_dir(self.app_name)
-        self.poll_ms = max(50, int(poll_ms))
-
-        slug = re.sub(r"[^a-z0-9_]+", "_", self.app_name.lower()).strip("_")
-        self.lock_file = self.lock_dir / f"{slug}.lock"
-        self.pid_file = self.lock_dir / f"{slug}.pid"
-        self.trigger_file = self.lock_dir / f"{slug}_show.trigger"
-
-        self._mutex_handle: Optional[int] = None
-        self._mutex_name: Optional[str] = None
-        self._fd: Optional[int] = None
-        self._is_primary: bool = False
-        self._backend: str = "none"
-        self._last_trigger: Optional[str] = None   # filinnehåll, ej mtime
-        self._trigger_init: bool = False
-        self._poll_job: Optional[str] = None
-        self._atexit_registered: bool = False
-        self.check_trigger()  # Baseline before acquisition; do not lose a startup focus request.
-
-    # ------------------------------------------------------------------
-    # Status
-    # ------------------------------------------------------------------
-    @property
-    def is_primary(self) -> bool:
-        """True om DENNA process är den enda/primära instansen."""
-        return self._is_primary
-
-    @property
-    def backend(self) -> str:
-        """'win32-mutex-global', 'win32-mutex-local', 'flock', 'pidfile'."""
-        return self._backend
-
-    def read_owner_pid(self) -> Optional[int]:
-        """PID för instansen som håller låset (diagnostik)."""
-        try:
-            return int(self.pid_file.read_text(encoding="utf-8").strip() or 0) or None
-        except (OSError, ValueError):
-            return None
-
-    # ------------------------------------------------------------------
-    # Förvärv
-    # ------------------------------------------------------------------
-    def acquire(self) -> bool:
-        """
-        Försök ta låset. True = vi är primär instans och ska köra.
-        False = en annan instans kör redan; anropa request_focus() och avsluta.
-        Kastar aldrig.
-        """
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.error("Kan inte skapa låskatalog %s: %s", self.lock_dir, exc)
-            return False         # Utan verifierat lås får ingen ny instans starta.
-
-        if IS_WINDOWS:
-            try:
-                ok = self._acquire_win32()
-                # Låsbeslutet MÅSTE synas i loggen. Utan denna rad kunde
-                # PyHANDLE-buggen leva osynlig: mutexen dog direkt, backend-
-                # strängen såg frisk ut, och dubbelstarter passerade tyst.
-                logger.info("Instanslås: %s (backend=%s pid=%d)",
-                            "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                            self._backend, os.getpid())
-                return ok
-            except ImportError:
-                logger.error("Windows-instanslåset är otillgängligt — start stoppad.")
-                self._backend = "unavailable"
-                return False
-            except Exception as exc:
-                logger.error("Win32-instanslåset kunde inte verifieras (%s) — start stoppad.", exc)
-                self._backend = "unavailable"
-                return False
-
-        try:
-            import fcntl  # noqa: F401
-            ok = self._acquire_flock()
-            logger.info("Instanslås: %s (backend=%s pid=%d)",
-                        "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                        self._backend, os.getpid())
-            return ok
-        except ImportError:
-            logger.warning("fcntl saknas — faller tillbaka på PID-fil.")
-        except Exception as exc:
-            logger.warning("flock misslyckades (%s) — fallback.", exc)
-
-        ok = self._acquire_pidfile()
-        logger.info("Instanslås: %s (backend=%s pid=%d)",
-                    "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                    self._backend, os.getpid())
-        return ok
-
-    def _acquire_win32(self) -> bool:
-        try:
-            import win32api
-            import win32event
-            import winerror
-        except ImportError:
-            # pywin32 saknas på maskinen — ta samma mutex via ren ctypes
-            # (stdlib) istället. Spärren får ALDRIG bero på ett valfritt
-            # paket: PID-fils-fallbacken är inte atomär och kan släppa in
-            # två instanser som startar samtidigt (autostart + manuell
-            # start) → just det scenariot som gav dubbla tray-ikoner.
-            return self._acquire_win32_ctypes()
-
-        last_error = 0
-        for prefix in ("Global\\", "Local\\"):
-            name = f"{prefix}{self.app_name}_SingleInstance_Mutex"
-            try:
-                handle = win32event.CreateMutex(None, False, name)
-            except Exception as exc:
-                # Global\ kräver rättigheter på vissa system → prova Local\
-                logger.warning("CreateMutex(%s) misslyckades: %s", name, exc)
-                continue
-            last_error = win32api.GetLastError()
-            if last_error == winerror.ERROR_ALREADY_EXISTS:
-                try:
-                    win32api.CloseHandle(handle)
-                except Exception:
-                    pass
-                self._backend = "win32-mutex-inuse"
-                self._is_primary = False
-                return False
-            # KRITISKT: spara ALDRIG bara int(handle)! pywin32:s PyHANDLE
-            # stänger det underliggande handtaget automatiskt när objektet
-            # skräpsamlas — med int(handle) dog mutexen mikrosekunder efter
-            # förvärvet och instansspärren existerade aldrig i praktiken
-            # (verifierat i logg: dubbelstarter passerade utan avvisning).
-            # Detach() överför ägandet till oss; release() stänger explicit.
-            self._mutex_handle = handle.Detach()
-            self._mutex_name = name
-            self._backend = "win32-mutex-" + prefix.rstrip(chr(92)).lower()
-            self._is_primary = True
-            self._write_pid()
-            self._register_atexit()
-            return True
-
-        raise RuntimeError(f"CreateMutex fungerade inte (sista fel={last_error})")
-
-    def _acquire_win32_ctypes(self) -> bool:
-        """
-        Samma namngivna mutex som _acquire_win32, men via ren ctypes —
-        körs när pywin32 saknas. Identiska namn = samma spärr även om
-        två processer råkar gå olika vägar (den ena med, den andra utan
-        pywin32). use_last_error=True + set_last_error(0) före anropet,
-        annars är GetLastError opålitlig från ctypes.
-        """
-        ERROR_ALREADY_EXISTS = 183
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateMutexW.restype = ctypes.c_void_p
-        kernel32.CreateMutexW.argtypes = (
-            ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
-
-        for prefix in ("Global\\", "Local\\"):
-            name = f"{prefix}{self.app_name}_SingleInstance_Mutex"
-            ctypes.set_last_error(0)
-            handle = kernel32.CreateMutexW(None, False, name)
-            if not handle:
-                logger.warning("CreateMutexW(%s) misslyckades (fel=%s) — provar nästa.",
-                               name, ctypes.get_last_error())
-                continue
-            if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
-                kernel32.CloseHandle(ctypes.c_void_p(handle))
-                self._backend = "win32-mutex-inuse"
-                self._is_primary = False
-                return False
-            self._mutex_handle = int(handle)  # ctypes-int äger inget — ingen auto-stängning
-            self._mutex_name = name
-            self._backend = ("win32-mutex-global-ctypes" if prefix == "Global\\"
-                             else "win32-mutex-local-ctypes")
-            self._is_primary = True
-            self._write_pid()
-            self._register_atexit()
-            return True
-
-        raise RuntimeError("CreateMutexW (ctypes) fungerade inte")
-
-    def _acquire_flock(self) -> bool:
-        import fcntl
-
-        fd = os.open(str(self.lock_file), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)
-            self._backend = "flock-inuse"
-            self._is_primary = False
-            return False
-
-        self._fd = fd
-        try:
-            os.ftruncate(fd, 0)
-            os.write(fd, str(os.getpid()).encode("ascii"))
-            os.fsync(fd)
-        except OSError as exc:
-            logger.warning("Kunde inte skriva PID i låsfil: %s", exc)
-
-        self._backend = "flock"
-        self._is_primary = True
-        self._write_pid()
-        self._register_atexit()
-        return True
-
-    def _acquire_pidfile(self) -> bool:
-        """Fallback utan fcntl/win32: PID-fil + stale-detektering."""
-        owner = self.read_owner_pid()
-        if owner and owner != os.getpid() and _pid_alive(owner):
-            self._backend = "pidfile-inuse"
-            self._is_primary = False
-            return False
-        if owner and not _pid_alive(owner):
-            logger.info("Stale PID-fil (%s) upptäckt — övertar låset.", owner)
-        self._write_pid()
-        self._backend = "pidfile"
-        self._is_primary = True
-        self._register_atexit()
-        return True
-
-    def _write_pid(self) -> None:
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=str(self.lock_dir), suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(str(os.getpid()))
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.pid_file)
-        except OSError as exc:
-            logger.warning("Kunde inte skriva PID-fil: %s", exc)
-
-    def _register_atexit(self) -> None:
-        if self._atexit_registered:
-            return
-        try:
-            atexit.register(self.release)
-            self._atexit_registered = True
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Fokus mellan instanser (triggerfil + poll)
-    # ------------------------------------------------------------------
-    def request_focus(self) -> bool:
-        """
-        Skrivs av den AVVISADE instansen: begär att den primära instansen
-        visar och fokuserar sitt fönster. Kastar aldrig.
-        """
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=str(self.lock_dir), suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(f"{time.time_ns()}\n{os.getpid()}\n")
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.trigger_file)
-            return True
-        except OSError as exc:
-            logger.error("Kunde inte skriva triggerfil: %s", exc)
-            return False
-
-    def check_trigger(self) -> bool:
-        """
-        True om triggerfilen ändrats sedan senaste anropet.
-
-        Jämför FILINNEHÅLLET, inte mtime. Skäl (verifierat): två snabba
-        request_focus()-anrop kan ge IDENTISK st_mtime_ns eftersom
-        filsystemets tidsupplösning är för grov, medan innehållet
-        (time_ns + pid) alltid är unikt. Med mtime tappades den andra
-        förfrågan.
-
-        Första anropet sätter baslinjen och returnerar False. Baslinjen sätts
-        även när filen INTE finns ännu — annars tappas den första
-        fokusförfrågan, eftersom None då betyder både "ingen baslinje" och
-        "filen saknas" (se _trigger_init).
-        """
-        try:
-            state: Optional[str] = self.trigger_file.read_text(encoding="utf-8")
-        except OSError:
-            state = None
-
-        if not self._trigger_init:
-            self._trigger_init = True
-            self._last_trigger = state
-            return False
-
-        if state != self._last_trigger:
-            self._last_trigger = state
-            # En borttagen fil är ingen fokusförfrågan — bara ett nytt läge.
-            return state is not None
-        return False
-
-    def poll_start(self, root: Any, on_trigger: Any) -> bool:
-        """
-        Starta Tk-poll-loop (C1: ~1000 ms). Anropar on_trigger() i
-        huvudtråden när en annan instans begärt fokus.
-
-        root     : något med .after(ms, fn) — din CTk/Tk-instans
-        on_trigger: callback, t.ex. app._restore_from_tray
-        """
-        if not self._is_primary:
-            return False
-
-        pending_focus = self.check_trigger()  # Preserve requests received while GUI initialized.
-        from updater import service_instance_health
-        try:
-            service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
-        except Exception:
-            logger.warning("Hälsosignalen kunde inte startas", exc_info=True)
-
-        def _loop() -> None:
-            nonlocal pending_focus
-            if not self._is_primary:
-                return
-            try:
-                service_instance_health(self.lock_dir, BASE_DIR / "folder.pyw")
-                requested = self.check_trigger()
-                if pending_focus or requested:
-                    pending_focus = False
-                    logger.info("Trigger mottagen — fokuserar fönster.")
-                    on_trigger()
-            except Exception:
-                logger.exception("Fel i single-instance poll-loop")
-            finally:
-                try:
-                    root.after(self.poll_ms, _loop)
-                except Exception:
-                    pass                   # fönstret stängs — avsluta loopen
-
-        try:
-            root.after(self.poll_ms, _loop)
-            return True
-        except Exception as exc:
-            logger.error("Kunde inte starta poll-loop: %s", exc)
-            return False
-
-    def poll_stop(self) -> None:
-        self._poll_job = None
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
-    def release(self) -> None:
-        """Frigör låset. Idempotent — kan anropas flera gånger säkert."""
-        if self._is_primary:
-            try:
-                from updater import clear_instance_health
-                clear_instance_health(self.lock_dir)
-            except Exception:
-                pass  # Hälsostädning får aldrig hindra att instanslåset släpps.
-        self._is_primary = False
-
-        if self._fd is not None:
-            try:
-                import fcntl
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            self._fd = None
-
-        if self._mutex_handle is not None:
-            closed = False
-            try:
-                import win32api
-                win32api.CloseHandle(self._mutex_handle)
-                closed = True
-            except Exception:
-                pass
-            if not closed and IS_WINDOWS:
-                # Handtaget kan ha skapats via ctypes-vägen (utan pywin32) —
-                # stäng det då via ctypes så mutexen verkligen frigörs.
-                try:
-                    ctypes.windll.kernel32.CloseHandle(
-                        ctypes.c_void_p(self._mutex_handle))
-                except Exception:
-                    pass
-            self._mutex_handle = None
-            self._mutex_name = None
-
-        try:
-            logger.info("Instanslås frigivet (%s, pid=%d)",
-                        self._backend, os.getpid())
-        except Exception:
-            pass
-
-        for path in (self.pid_file, self.trigger_file):
-            try:
-                path.unlink()
-            except OSError:
-                pass
-
-        try:
-            if self.lock_file.exists() and not IS_WINDOWS:
-                self.lock_file.unlink()
-        except OSError:
-            pass
 
 AUTOSTART_KEY_PATH: str = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
@@ -1105,53 +631,6 @@ def repair_stale_autostart(app_name: str, reg: Any = None,
 # importeras ovan. validate_settings() nedan använder samma namn som förut.
 
 
-def validate_settings(data: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
-    """
-    Returnerar (rensat_data, reparerad?, loggrader).
-    Okända nycklar behålls (framåtkompatibilitet) men ogiltiga TYPER och
-    ogiltiga ENUM-värden korrigeras till default — aldrig krasch.
-    """
-    log: List[str] = []
-    repaired = False
-
-    if not isinstance(data, dict):
-        return dict(), True, ["settings var inte en dict — nollställd till schema"]
-
-    out: Dict[str, Any] = dict(data)
-
-    for key, (typ, default) in SETTINGS_SCHEMA.items():
-        if key not in out or not isinstance(out[key], typ):
-            if key in out:
-                # log-listan är en vanlig lista → formatering sker direkt.
-                # (Lazy %s gäller endast logger-anrop, aldrig list.append.)
-                log.append("ogiltigt värde för %s (%r) → default" % (key, out[key]))
-                repaired = True
-            out[key] = default if not callable(default) else default()
-
-    for key, allowed in SETTINGS_ENUMS.items():
-        if out.get(key) not in allowed:
-            log.append("'%s' = %r ej i %s → %s" % (
-                key, out.get(key), tuple(allowed), SETTINGS_SCHEMA[key][1]))
-            out[key] = SETTINGS_SCHEMA[key][1]
-            repaired = True
-
-    if not out.get("save_root"):
-        out["save_root"] = str(Path.home() / "Projects")
-        repaired = True
-
-    tabs = out.get("visible_tabs")
-    if not isinstance(tabs, dict):
-        tabs = {}
-    cleaned_tabs: Dict[str, bool] = {}
-    for name, val in tabs.items():
-        cleaned_tabs[str(name)] = bool(val)
-    out["visible_tabs"] = cleaned_tabs
-
-    if out.get("start_minimized") is not True:
-        out["start_minimized"] = True
-        repaired = True
-        log.append("start_minimized → True (obligatorisk start i systemfältet)")
-    return out, repaired, log
 
 
 def _hex_to_rgb(value: str) -> Tuple[int, int, int]:
@@ -1246,78 +725,16 @@ def ensure_contrast(
     return (fix(fg_norm, bg_light, True), fix(fg_norm, bg_dark, False))
 
 
-RESERVED_STEM_RE = re.compile(
-    r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$', re.IGNORECASE,
-)
 
 
-def sanitize_name(name: str, *, max_len: int = 255) -> str:
-    """
-    Rensar ett mapp-/filnamn enligt Windows-regler:
-      • ogiltiga tecken → '_'
-      • inledande/avslutande mellanslag och punkter tas bort
-      • reserverade namn blockeras ÄVEN med filändelse (CON.txt, NUL.md …)
-      • längdtak
-    """
-    if not isinstance(name, str):
-        raise ValueError("Namnet måste vara en sträng.")
-    cleaned = INVALID_NAME_CHARS.sub('_', name)
-    cleaned = cleaned.strip().strip('.').strip()
-    if not cleaned:
-        raise ValueError("Mappnamnet är tomt efter rensning.")
-    if cleaned.upper() in INVALID_NAMES or RESERVED_STEM_RE.match(cleaned):
-        raise ValueError(f"'{cleaned}' är ett reserverat systemnamn.")
-    if len(cleaned) > max_len:
-        raise ValueError(f"Mappnamnet är för långt (max {max_len} tecken).")
-    return cleaned
 
 
 # ------------------------------------------------------------
 # Regns-läge — registreringsnummer i början av projektnamn
 # ------------------------------------------------------------
-_PLATE_RE = re.compile(
-    r"""^\s*
-    (?P<bokst>[a-z]{3})              # tre bokstäver (ABC)
-    [\s\-–—]*                        # fri separator: mellanslag/streck/inget
-    (?:
-        (?P<s2>\d{2})[\s\-]*(?P<s3>\d)      # äldre format: ABC 123 (1973–2019)
-      | (?P<n2>\d{2})[\s\-]*(?P<nb>[a-z])   # nyare format: ABC 12 A (2019–)
-    )
-    (?![a-zA-Z0-9])                  # regnr:t får inte flyta ihop med mer text
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-_SUFFIX_STRIP = " \t-–—_\u00b7"   # tecken som inte ska inleda den fria texten
 
 
-def normalize_plate_name(name: str) -> Tuple[str, Optional[str]]:
-    """
-    Normalisera ett projektnamn som BÖRJAR med ett svenskt registreringsnummer.
 
-      'dss 817'           → ('DSS817', 'DSS817')
-      'dss 81 7'          → ('DSS817', 'DSS817')
-      'dss 817 stenskott' → ('DSS817 stenskott', 'DSS817')   (suffix orört)
-      'abc 12 a 2021'     → ('ABC12A 2021', 'ABC12A')
-      'Biltest'           → ('Biltest', None)                (ingen ändring)
-
-    Båda svenska formaten stöds: ABC123 (1973–2019) och ABC12A (2019–).
-    Matchningen är medvetet tolerant (mellanslag/streck ignoreras, I/Q/V
-    blockeras inte): funktionen VARNAR mjukt via returvärdet None — den
-    stoppar eller ändrar aldrig ett namn som inte matchar.
-
-    Versaliseringen av HELA namnet sker av anroparen (safe_name.upper());
-    här normaliseras bara regnr-delen och gränsen mot fri eftertext.
-
-    Returnerar (ev. normaliserat namn, regnr eller None).
-    """
-    m = _PLATE_RE.match(name or "")
-    if not m:
-        return (name, None)
-    regnr = (m.group("bokst") + (m.group("s2") or m.group("n2"))
-             + (m.group("s3") or m.group("nb") or "")).upper()
-    suffix = name[m.end():].lstrip(_SUFFIX_STRIP)
-    return (regnr + ((" " + suffix) if suffix else ""), regnr)
 
 
 def parse_dnd_paths(raw: str, tk_obj: Optional[Any] = None) -> List[str]:
@@ -1434,141 +851,14 @@ def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
     return True, norm, ""
 
 
-def strip_root_level(items: List[Dict[str, Any]], root_name: str) -> Tuple[List[Dict[str, Any]], bool]:
-    """
-    Malltext och inklistrade träd har sin rot på rad 1 ('projektnamn/',
-    'ärendenummer/'), men _build_structure skapar redan
-    base = save_root / root_name. Utan denna funktion blir resultatet:
-
-        PROJEKT123/
-        └── PROJEKT123/      ← dublett (MB5)
-            ├── src/ ...
-
-    Bevis för att rad 1 ÄR roten: de inbyggda mallarna använder
-    'projektnamn'/'ärendenummer' som placeholder som ersätts med användarens
-    namn via .replace() — alltså är rad 1 per definition roten.
-
-    Regel: finns EXAKT EN post på toppnivå och den är en mapp, skalas den
-    nivån bort från alla poster. Flera toppnivåposter (docs/ + src/) lämnas
-    orörda, eftersom base då redan är deras gemensamma förälder.
-
-    Returnerar (nya_items, skalades_nivån_bort?).
-    """
-    if not items:
-        return items, False
-
-    top = [it for it in items if len(it.get('path', [])) == 1]
-    if len(top) != 1 or not top[0].get('is_dir'):
-        return items, False
-
-    root_label = str(top[0]['path'][0]).strip()
-    stripped: List[Dict[str, Any]] = []
-    for it in items:
-        path = list(it.get('path', []))
-        if len(path) <= 1:
-            continue                      # själva rotraden försvinner
-        new_it = dict(it)
-        new_it['path'] = path[1:]
-        stripped.append(new_it)
-
-    if not stripped:
-        # Endast en tom rotmapp i mallen → behåll originalet så att
-        # användaren inte står utan innehåll.
-        return items, False
-
-    return stripped, True
 
 
-MAX_TREE_DEPTH: int = 40
 
 
-MAX_TREE_ENTRIES: int = 20000
 
 
-TREE_IGNORED_DIRS = frozenset({
-    '.git', '__pycache__', '.idea', '.vscode',
-    'node_modules', 'venv', '.env', '.tox',
-})
 
 
-def generate_tree_string_safe(
-    root_path: Path,
-    max_depth: int = MAX_TREE_DEPTH,
-    max_entries: int = MAX_TREE_ENTRIES,
-    include_dotfiles: bool = False,
-) -> str:
-    """
-    Säkert alternativ till StructureEngine.generate_tree_string:
-      • max_depth    → ingen RecursionError vid extremt djupa träd
-      • resolve()-deduplicering → ingen oändlig loop vid cirkulära symlänkar
-      • max_entries  → ingen minnesexplosion vid t.ex. node_modules-jättar
-      • PermissionError per mapp → '<Åtkomst nekad>' istället för krasch
-      • include_dotfiles → .gitignore/.env kan exporteras (MB12)
-
-    Returnerar alltid en sträng; kastar aldrig.
-    """
-    root_path = Path(root_path)
-    if not root_path.exists():
-        return "Mappen finns inte."
-
-    lines: List[str] = [f"{root_path.name}/"]
-    state = {'entries': 0, 'hit_depth': False, 'hit_entries': False}
-    seen: set = set()
-    try:
-        seen.add(str(root_path.resolve()))
-    except OSError:
-        seen.add(str(root_path))
-
-    def walk(directory: Path, prefix: str, depth: int) -> None:
-        if depth >= max_depth:
-            state['hit_depth'] = True
-            return
-        if state['hit_entries']:
-            return
-        try:
-            contents = list(directory.iterdir())
-        except (PermissionError, OSError):
-            lines.append(f"{prefix}└── <Åtkomst nekad>")
-            return
-
-        filtered = []
-        for x in contents:
-            if x.name in TREE_IGNORED_DIRS:
-                continue
-            if x.name.startswith('.') and not include_dotfiles:
-                continue
-            filtered.append(x)
-        filtered.sort(key=lambda p: (not p.is_dir(), p.name.lower()))
-
-        for i, path in enumerate(filtered):
-            if state['entries'] >= max_entries:
-                state['hit_entries'] = True
-                return
-            state['entries'] += 1
-
-            is_last = i == len(filtered) - 1
-            connector = "└── " if is_last else "├── "
-            is_dir = path.is_dir()
-            lines.append(f"{prefix}{connector}{path.name}{'/' if is_dir else ''}")
-
-            if is_dir:
-                try:
-                    key = str(path.resolve())
-                except OSError:
-                    key = str(path)
-                if key in seen:
-                    lines.append(f"{prefix}{'    ' if is_last else '│   '}└── <symlink-loop, hoppad över>")
-                    continue
-                seen.add(key)
-                walk(path, prefix + ("    " if is_last else "│   "), depth + 1)
-
-    walk(root_path, "", 0)
-
-    if state['hit_depth']:
-        lines.append(f"... (avbröts: max djup {max_depth} nått)")
-    if state['hit_entries']:
-        lines.append(f"... (avbröts: max {max_entries} poster nådda)")
-    return "\n".join(lines)
 
 
 def ui_call(root: Any, fn: Any, *args: Any, **kwargs: Any) -> bool:
@@ -1721,30 +1011,6 @@ def blend_color(
 # ============================================================
 # Validering
 # ============================================================
-class NameValidator:
-    @staticmethod
-    def sanitize(name: str) -> str:
-        """
-        Rensar ett mappnamn enligt Windows-regler.
-
-        M18 — delegerar till sanitize_name(), som utöver v4.1:s regler även
-        blockerar reserverade systemnamn MED filändelse (CON.txt, NUL.md,
-        LPT1.log) via RESERVED_STEM_RE. v4.1 jämförde bara cleaned.upper()
-        mot INVALID_NAMES och släppte alltså igenom "CON.txt", vilket kan
-        göra mappen omöjlig att skapa eller ta bort på Windows.
-
-        Kontraktet är oförändrat: returnerar en rensad sträng eller kastar
-        ValueError. Metoden behålls som publik API-yta — inget tas bort.
-        """
-        return sanitize_name(name)
-
-    @staticmethod
-    def is_safe_path(base: Path, target: Path) -> bool:
-        try:
-            target.resolve().relative_to(base.resolve())
-            return True
-        except ValueError:
-            return False
 
 
 # ============================================================
@@ -2185,49 +1451,6 @@ class AccessibilityController:
             self.focus_in(SimpleNamespace(widget=focused))
 
 # ============================================================
-@dataclass
-class AppSettings:
-    save_root: str = field(default_factory=lambda: str(Path.home() / "Projects"))
-    open_after_creation: bool = True
-    theme: str = "Dark"
-    text_size: str = "100%"
-    high_contrast: bool = False
-    default_template: str = "Skaderapport"
-    last_template: str = ""
-    plate_mode: bool = True
-    start_minimized: bool = True    # starta i systray utan att visa fönstret
-    visible_tabs: Dict[str, bool] = field(default_factory=lambda: {
-        t: True for t in TAB_ICONS
-    })
-
-    def to_dict(self) -> dict:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict) -> "AppSettings":
-        # M3/C2 — validera mot schema INNAN något används. Fel typ, okänt
-        # enum-värde eller saknad nyckel rättas till default istället för att
-        # följa med in i appen och krascha längre ner i GUI:t. validate_settings
-        # är idempotent, så att _load_settings redan validerat spelar ingen roll.
-        data, repaired, log = validate_settings(data)
-        if repaired:
-            for line in log:
-                logger.warning("Inställning reparerad: %s", line)
-        default_tabs = {t: True for t in TAB_ICONS}
-        saved_tabs = data.get("visible_tabs", {})
-        default_tabs.update(saved_tabs)
-        return cls(
-            save_root=data.get("save_root", str(Path.home() / "Projects")),
-            open_after_creation=data.get("open_after_creation", True),
-            theme=data.get("theme", "Dark"),
-            text_size=data.get("text_size", "100%"),
-            high_contrast=data.get("high_contrast", False),
-            default_template=data.get("default_template", "Skaderapport"),
-            last_template=data.get("last_template", ""),
-            plate_mode=data.get("plate_mode", True),
-            start_minimized=data.get("start_minimized", True),
-            visible_tabs=default_tabs,
-        )
 
 
 # ============================================================
@@ -2260,182 +1483,11 @@ class UndoManager:
 # ============================================================
 # Mallsystem
 # ============================================================
-class TemplateManager:
-    def __init__(self) -> None:
-        TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-        self._builtin = self._create_builtins()
-
-    @staticmethod
-    def _create_builtins() -> Dict[str, str]:
-        return {
-            "Python Projekt": (
-                "projektnamn/\n    src/\n        __init__.py\n        main.py\n"
-                "    tests/\n        test_main.py\n    docs/\n"
-                "    requirements.txt\n    README.md\n    .gitignore\n"
-            ),
-            "Webb Projekt": (
-                "projektnamn/\n    public/\n        index.html\n        style.css\n"
-                "    src/\n        app.js\n    assets/\n        images/\n"
-                "    README.md\n    package.json\n"
-            ),
-            "Skaderapport": (
-                "ärendenummer/\n    Bilder/\n    Skadeanmälan/\n"
-                "    Diagnos/\n    Instruktioner/\n    Kvalitetsrapport/\n"
-            ),
-        }
-
-    def list_templates(self) -> Dict[str, str]:
-        templates = dict(self._builtin)
-        for f in TEMPLATES_DIR.glob("*.json"):
-            # M2/C41.3 — read_json_safe() återställer från .bak/.bak2 om filen
-            # är trasig, istället för att bara hoppa över mallen.
-            data = read_json_safe(f, None)
-            if not isinstance(data, dict):
-                logger.warning("Kunde inte läsa mall %s: ogiltig eller saknad JSON",
-                               f.name)
-                continue
-            try:
-                if isinstance(data["name"], str) and isinstance(data["structure"], str):
-                    templates[data["name"]] = data["structure"]
-            except KeyError as e:
-                logger.warning("Kunde inte läsa mall %s: %s", f.name, e)
-        return templates
-
-    def save_template(self, name: str, structure: str) -> None:
-        if name in self._builtin:
-            raise ValueError("Inbyggda mallar kan inte skrivas över. Välj ett eget namn.")
-        if not StructureEngine.parse_structure_text(structure)[1]:
-            raise ValueError("Mallen måste innehålla en struktur.")
-        safe = NameValidator.sanitize(name)
-        # M1/F1 — atomisk skrivning med backup. Obs: filen får nu indent=2
-        # (atomic_write_json:s standard) istället för en enda lång rad;
-        # innehållet och inläsningsvägen är oförändrade.
-        if not atomic_write_json(
-            TEMPLATES_DIR / f"{safe}.json",
-            {"name": name, "structure": structure},
-        ):
-            raise OSError(f"Kunde inte spara mall {name!r}")
-
-    def delete_template(self, name: str) -> bool:
-        if name in self._builtin:
-            return False
-        safe = NameValidator.sanitize(name)
-        p = TEMPLATES_DIR / f"{safe}.json"
-        if p.exists():
-            p.unlink()
-            return True
-        return False
 
 
 # ============================================================
 # Strukturmotor
 # ============================================================
-class StructureEngine:
-    IGNORED_DIRS: Final[frozenset] = frozenset({
-        '.git', '__pycache__', '.idea', '.vscode',
-        'node_modules', 'venv', '.env', '.tox',
-    })
-
-    @staticmethod
-    def is_file(name: str) -> bool:
-        clean = name.rstrip('/\\')
-        if name.endswith(('/', '\\')):
-            return False
-        if clean.lower() in KNOWN_FILES:
-            return True
-        return '.' in clean
-
-    @staticmethod
-    def parse_structure_text(text: str) -> Tuple[Optional[str], List[dict]]:
-        lines = text.splitlines()
-        preprocessed: List[Tuple[int, str, Optional[str]]] = []
-        indent_lengths: Set[int] = set()
-
-        for line in lines:
-            if not line.strip():
-                continue
-            comment = None
-            if '<-' in line:
-                line, comment = line.split('<-', 1)
-            elif '←' in line:
-                line, comment = line.split('←', 1)
-            line = line.rstrip()
-            match = re.match(r'^([ │├──└──\t]*)', line)
-            prefix = match.group(1) if match else ""
-            name = line[len(prefix):].strip()
-            if not name:
-                continue
-            if len(prefix) > 0:
-                indent_lengths.add(len(prefix))
-            preprocessed.append(
-                (len(prefix), name, comment.strip() if comment else None)
-            )
-
-        unit = min(indent_lengths) if indent_lengths else 1
-        items: List[dict] = []
-        stack: List[str] = []
-
-        for ilen, name, cmt in preprocessed:
-            depth = ilen // unit if unit else 0
-            while len(stack) > depth:
-                stack.pop()
-            clean = name.rstrip('/\\')
-            is_dir = not StructureEngine.is_file(name)
-            items.append({
-                'path': list(stack) + [clean],
-                'is_dir': is_dir,
-                'comment': cmt,
-            })
-            if is_dir:
-                stack.append(clean)
-
-        return None, items
-
-    @classmethod
-    def generate_tree_string(cls, root_path: Path) -> str:
-        """
-        M12/MB10 — delegerar till generate_tree_string_safe(), som har
-        djupgräns (MAX_TREE_DEPTH), symlink-loop-detektering via resolve(),
-        posttak (MAX_TREE_ENTRIES) och PermissionError-hantering per mapp.
-
-        v4.1:s version rekade utan något tak: ett tillräckligt djupt träd gav
-        RecursionError och en cirkulär symlänk gav en oändlig loop. Alla
-        anropare får nu det säkra beteendet via denna enda ingång.
-
-        _tree_recursive() behålls oförändrad nedan — ingen metod tas bort.
-        """
-        return generate_tree_string_safe(root_path)
-
-    @classmethod
-    def _tree_recursive(
-        cls, directory: Path, prefix: str, lines: List[str],
-    ) -> None:
-        try:
-            contents = list(directory.iterdir())
-        except PermissionError:
-            lines.append(f"{prefix}└── <Åtkomst nekad>")
-            return
-        filtered = [
-            x for x in contents
-            if x.name not in cls.IGNORED_DIRS and not x.name.startswith('.')
-        ]
-        filtered.sort(key=lambda x: (not x.is_dir(), x.name.lower()))
-        for i, path in enumerate(filtered):
-            is_last = i == len(filtered) - 1
-            connector = "└── " if is_last else "├── "
-            suffix = '/' if path.is_dir() else ''
-            lines.append(f"{prefix}{connector}{path.name}{suffix}")
-            if path.is_dir():
-                cls._tree_recursive(
-                    path, prefix + ("    " if is_last else "│   "), lines,
-                )
-
-    @staticmethod
-    def count_items(items: List[dict]) -> Tuple[int, int]:
-        return (
-            sum(1 for i in items if i['is_dir']),
-            sum(1 for i in items if not i['is_dir']),
-        )
 
 
 # ============================================================
@@ -4961,20 +4013,8 @@ def toggle_vehicle_type(current, clicked):
     return "" if current == clicked else clicked
 
 
-def validate_project_year(value):
-    """År kan väljas eller skrivas; tomt/streck betyder inget år."""
-    year = str(value).strip()
-    if year in ("", "—"):
-        return "—"
-    if not re.fullmatch(r"[1-9][0-9]{3}", year):
-        raise ValueError("Ange ett fyrsiffrigt år, till exempel 2020, eller lämna fältet tomt.")
-    return year
 
 
-def project_year_choices(today=None):
-    """Innevarande år och tre år bakåt, beräknat när väljaren öppnas."""
-    year = (today or datetime.now()).year
-    return [str(year - offset) for offset in range(4)]
 
 
 def focus_project_name(entry, attempts=10) -> None:
@@ -6352,30 +5392,7 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     @staticmethod
     def _bygg_projektnamn(namn_text: str, lokal: str, year: str = "—", vehicle_type: str = "") -> str:
-        """Sätter ihop slutnamnet för standardprojekt.
-
-        Lokalen läggs efter projektnamnet, och valt år efter lokalen —
-        användarens beslut ("JPM602 SIDORUTA LAXÅ"). Handskrivna lokal-
-        ord i textfältet plockas bort först (case-insensitivt), så
-        dropdownen är enda källan → inga dubbletter möjliga.
-        """
-        year = str(year).strip()
-        ord_lista = [o for o in str(namn_text).split()
-                     if o.upper() not in LOKAL_CHOICES]
-        # Undvik dubbelt valt år utan att radera andra år i fri text.
-        if year and year != "—":
-            ord_lista = [o for o in ord_lista if o != year]
-        vehicle = str(vehicle_type or "").strip().upper()
-        if vehicle:
-            if vehicle not in VEHICLE_CHOICES:
-                raise ValueError("Okänt fordonsslag")
-            ord_lista = [word for word in ord_lista if word.upper() not in VEHICLE_CHOICES]
-            ord_lista.append(vehicle)
-        if lokal and lokal != "—":
-            ord_lista.append(lokal)
-        if year and year != "—":
-            ord_lista.append(year)
-        return " ".join(ord_lista)
+        return build_project_name(namn_text, lokal, year, vehicle_type)
 
     def _create_folder_dialog(self) -> None:
         """Namndialog för Standardprojekt — design v2.
@@ -6874,47 +5891,20 @@ class FolderForgeApp(_DnDCTkBase):
 
     def _build_structure(self, root_name: str, items: List[dict]) -> bool:
         try:
-            root_name = NameValidator.sanitize(root_name)
-        except ValueError as exc:
-            messagebox.showwarning("Ogiltigt namn", str(exc))
-            return False
-        base = Path(self.settings.save_root) / root_name
-
-        # Samma namn med annan skiftning räknas också som en dubblett.
-        try:
-            existing = next((p for p in base.parent.iterdir()
-                             if p.name.casefold() == base.name.casefold()), None) if base.parent.exists() else None
-        except OSError as exc:
-            messagebox.showerror("Fel", f"Kunde inte läsa projektmappen: {exc}")
-            return False
-        if existing is not None:
+            base = create_project_tree(self.settings.save_root, root_name, items)
+        except ExistingProject as exc:
             if messagebox.askyesno("Mappen finns redan",
-                                  f"'{existing.name}' finns redan. Öppna befintlig mapp istället?"):
-                self._open_path(existing)
+                                  f"'{exc.path.name}' finns redan. Öppna befintlig mapp istället?"):
+                self._open_path(exc.path)
             return False
-
-        try:
-            # exist_ok=False skyddar även om mappen skapas efter kontrollen.
-            base.mkdir(parents=True, exist_ok=False)
-            for it in items:
-                p = base.joinpath(*it['path'])
-                if not NameValidator.is_safe_path(base, p):
-                    logger.warning("Hoppade över osäker sökväg: %s", p)
-                    continue
-                if it['is_dir']:
-                    p.mkdir(parents=True, exist_ok=True)
-                else:
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    if not p.exists():
-                        p.write_text(
-                            f"# {it['comment'] or p.name}",
-                            encoding="utf-8",
-                        )
-            self._on_creation_success(base)
-            return True
-        except OSError as e:
-            messagebox.showerror("Fel", f"Kunde inte skapa struktur: {e}")
+        except ValueError as exc:
+            messagebox.showwarning("Ogiltigt namn eller struktur", str(exc))
             return False
+        except OSError as exc:
+            messagebox.showerror("Fel", f"Kunde inte skapa struktur: {exc}")
+            return False
+        self._on_creation_success(base)
+        return True
 
     def _on_creation_success(self, path: Path) -> None:
         self.undo_mgr.record(path)

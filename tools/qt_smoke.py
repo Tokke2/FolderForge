@@ -16,7 +16,8 @@ def main():
     source = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='FolderForge-Qt-test-') as temp:
         root = Path(temp)
-        shutil.copy2(source / 'qt_preview.py', root / 'qt_preview.py')
+        for name in ('qt_preview.py', 'qt_app.py', 'workspace.py', 'app_core.py', 'instance_lock.py', 'settings.py', 'historik.py'):
+            shutil.copy2(source / name, root / name)
         (root / 'Icon').mkdir()
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
         def snapshot():
@@ -57,6 +58,49 @@ def main():
         assert not (root / 'data').exists()
         print('Qt smoke OK: hidden startup, screen fit, dialog focus/selection, Tab, preview, Escape, no data writes')
         window.deleteLater()
+        app.processEvents()
+        from instance_lock import SingleInstanceLock
+        from workspace import Workspace
+        from qt_app import QtWindow
+        from unittest.mock import patch
+        import uuid
+        from PySide6.QtWidgets import QMessageBox
+        import historik
+        lock = SingleInstanceLock('FolderForge-Qt-CI-' + uuid.uuid4().hex, root / 'test-lock')
+        assert lock.acquire()
+        try:
+            ws = Workspace(lock, root)
+            ws.config.save_root = str(root / 'Projects')
+            ws.config.open_after_creation = False
+            ws.raw['future_key'] = 'preserved'
+            ws.save_settings()
+            functional = QtWindow(ws)
+            functional.restore()
+            QTest.qWait(50)
+            functional.open_project()
+            dialog = functional.dialog
+            dialog.name.setText('abc123 vindruta')
+            dialog.year.setEditText('2026')
+            QTest.qWait(100)
+            assert app.focusWidget() is dialog.name
+            with patch('qt_app.QMessageBox.question', return_value=QMessageBox.Yes):
+                dialog.create()
+            entries = ws.history.get_all()
+            assert len(entries) == 1, entries
+            project = Path(entries[0]['path'])
+            assert project.parent == root / 'Projects'
+            assert project.name == 'ABC123 VINDRUTA 2026', project
+            assert (project / 'Bilder').is_dir()
+            assert dialog.name.selectedText() == 'abc123 vindruta'
+            assert len(historik.ProjectHistory(root / 'data/history.json').get_all()) == 1
+            assert Workspace(lock, root).raw['future_key'] == 'preserved'
+            assert functional.tabs.count() == 5
+            dialog.reject()
+            functional.close()
+            functional.deleteLater()
+            print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')
+        finally:
+            lock.release()
         app.processEvents()
 
 

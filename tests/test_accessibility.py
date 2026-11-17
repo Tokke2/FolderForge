@@ -1,3 +1,4 @@
+from source_helpers import app_source
 """Display-independent behavioral tests for the actual GUI accessibility helpers."""
 import ast
 import logging
@@ -8,7 +9,7 @@ import weakref
 
 import settings
 
-SOURCE = Path('folder.pyw').read_text(encoding='utf-8')
+SOURCE = app_source()
 TREE = ast.parse(SOURCE)
 NAMES = {'TEXT_SIZES', 'FOCUS_TAG', 'CONTROLS', 'COLOR_KEYS', 'accessibility_logger',
          'text_scale', 'widget_kind', 'contrast_colors', 'AccessibilityController',

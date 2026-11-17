@@ -1,3 +1,5 @@
+> **Aktuellt läge:** start utan flagga öppnar den funktionella Qt-testklienten med riktiga data och gemensamt instanslås. Använd `--preview` för det tidigare skrivskyddade testläget. Se etapp 2 längre ned; första avsnittet beskriver endast `--preview`.
+
 # Stegvis övergång till PySide6 – första, isolerade prototypen
 
 **Tk är fortfarande standard och reserv. Ingen vanlig startfil är ändrad.**
@@ -59,3 +61,46 @@ PySide6/Qt har LGPL-/GPL-/kommersiella licensalternativ. Detta ändrar inte
 FolderForges egna licensvillkor. Före paketerad distribution behövs korrekt
 licensgranskning, licenstexter/notiser och uppfyllda villkor för de Qt-moduler som
 faktiskt distribueras. Inga Qt-binärer levereras i detta källkodspaket.
+
+# Nästa etapp: fungerande Qt-klient med gemensamma data
+
+**Den vanliga Tk-starten är fortfarande standard. Qt är valfri och ännu inte funktionslikvärdig.**
+
+`Starta-FolderForge-Qt.py` startar nu den fungerande Qt-klienten. Lägg till
+`--preview` för den ursprungliga, skrivskyddade gränssnittsförhandsvisningen.
+Installationskommandona ovan är oförändrade. Qt-klienten startar dold i tray.
+
+## Genomfört
+
+- `app_core.py`: faktiskt utbruten, GUI-oberoende kod för inställningsschema,
+  namn/regnr/år, mallar, strukturtolkning och säker trälexport. Tk och Qt använder samma kod.
+- `instance_lock.py`: det befintliga, testade instanslåset är utbrutet utan ändrade
+  låsnamn. **Riktig Qt och Tk kan inte köras samtidigt.** En extra start visar inte
+  befintligt fönster. Låset tas före produktionsdata öppnas och släpps vid avslut/fel.
+- `create_project_tree`: samma skapandefunktion i båda gränssnitten. Hela strukturen
+  kontrolleras före skapande. Ingen hopslagning eller överskrivning av befintliga
+  projekt, även vid skillnad enbart i stora/små bokstäver. Delvis skapad struktur
+  vid disk-/behörighetsfel behålls för inspektion – appen raderar inte automatiskt.
+- Qt kan skapa riktiga standardprojekt med vald mall eller tillfällig egen struktur,
+  fordon/lokal/år och namnförhandsvisning. Explicit bekräftelse före skapande.
+- Samma beständiga historik, samma mallfiler och inställningsformat som Tk.
+  Okända inställningsnycklar bevaras när Qt sparar. Sparplats, regnr-läge och
+  öppna-efter-skapande kan ändras. Inbyggda/egna mallar kan laddas och egna sparas,
+  samt väljas som standard. Historikmappar kan öppnas.
+- Struktur kan exporteras till text med gemensam begränsad trälexportmotor.
+- Donationsdialog med lokal Swish-QR och fasta PayPal-/Ko-fi-knappar.
+- Bakgrundskontroll av releaser, manuell kontroll och uppdateringsstatus.
+  **Installation/återställning går ännu via den vanliga Tk-startfilen efter att Qt avslutats.**
+
+## Kvar innan Qt får bli standard
+
+- Ångra/radering med samtliga befintliga säkerhetsflöden; komplett mall-/historikadministration.
+- Global snabbtangent, OS-autostart och befintliga specialflöden för drag & drop.
+- Full textskalning/högkontrast, skärmplacering och fysiska skärm-/DPI-byten.
+- Detaljerad fellista, arkivhantering, diagnostikexport och cacheadministration i Qt.
+- Egen komplett Qt-startbekräftelse, säker uppskjuten omstart och återställning för uppdateringar.
+- Fullständig GUI-paritet och praktiska tester av riktig tray på alla stödda skrivbord.
+
+Detta är därför **inte en färdig ersättning för Tk ännu**. Använd Tk för funktionerna
+ovan tills de har migrerats och verifierats. Ingen automatisk konvertering av data
+eller automatisk övergång mellan ramverken har lagts till.

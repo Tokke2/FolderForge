@@ -132,14 +132,15 @@ def read_json_safe(path: Path, default: Any = None) -> Any:
 # Projekthistorik
 # ============================================================
 class ProjectHistory:
-    def __init__(self) -> None:
+    def __init__(self, path=None) -> None:
+        self.path = Path(path) if path is not None else HISTORY_FILE
         self._items: List[Dict] = self._load()
 
     def _load(self) -> List[Dict]:
         # M2/C41.3 — read_json_safe() provar fil → .bak → .bak2 → default och
         # är BOM-tolerant (utf-8-sig). v4.1 kastade bort HELA historiken vid en
         # enda trasig fil, utan backup och utan att försöka återställa.
-        data = read_json_safe(HISTORY_FILE, [])
+        data = read_json_safe(self.path, [])
         if isinstance(data, list):
             result, seen = [], set()
             for item in data:
@@ -161,7 +162,7 @@ class ProjectHistory:
         # os.replace, med .bak-backup före skrivning. write_text() kunde vid
         # krasch eller full disk lämna en trunkerad fil som nästa start inte
         # kunde läsa. Returnerar bool så att felet loggas istället för att kastas.
-        if not atomic_write_json(HISTORY_FILE, self._items):
+        if not atomic_write_json(self.path, self._items):
             logger.warning("Kunde inte spara historik (atomisk skrivning misslyckades)")
 
     @staticmethod

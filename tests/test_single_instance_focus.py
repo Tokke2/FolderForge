@@ -1,3 +1,4 @@
+from source_helpers import app_source
 """Lock, startup-race and branding regressions, without a GUI display."""
 import ast
 import atexit
@@ -19,7 +20,7 @@ class FocusTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.folder = Path(self.tmp.name)
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         node = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'SingleInstanceLock')
         self.ns = dict(Path=Path, os=os, re=re, tempfile=tempfile, time=time,
                        ctypes=ctypes, atexit=Mock(), logger=Mock(), IS_WINDOWS=(os.name == 'nt'),

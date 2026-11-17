@@ -1,3 +1,4 @@
+from source_helpers import app_source
 """Headless tests of the actual app methods, without loading GUI dependencies."""
 import ast
 from dataclasses import dataclass, field, asdict
@@ -9,12 +10,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+from app_core import create_project_tree, ExistingProject
 import historik
 import settings
 
 
 def load_logic():
-    tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+    tree = ast.parse(app_source())
     classes = {'TemplateManager', 'NameValidator', 'StructureEngine', 'AppSettings'}
     nodes = [ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)]
     for node in tree.body:
@@ -26,7 +28,7 @@ def load_logic():
             nodes.extend(n for n in node.body if isinstance(n, ast.FunctionDef)
                          and n.name in {'_build_structure', '_create_std_proj'})
     namespace = vars(settings).copy()
-    namespace.update(Path=Path, re=re, logger=logging.getLogger('test'),
+    namespace.update(create_project_tree=create_project_tree, ExistingProject=ExistingProject, Path=Path, re=re, logger=logging.getLogger('test'),
                      dataclass=dataclass, field=field, asdict=asdict,
                      atomic_write_json=historik.atomic_write_json,
                      read_json_safe=historik.read_json_safe, messagebox=Mock(),
