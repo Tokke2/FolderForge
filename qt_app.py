@@ -371,4 +371,11 @@ class QtWindow(PreviewWindow):
 
 def run():
     from qt_preview import run as run_host
-    return run_host(window_factory=lambda lock: QtWindow(Workspace(lock)), production=True)
+
+    def build(lock):
+        from logg import init_logging, start_log_archiver
+        init_logging()
+        start_log_archiver()
+        return QtWindow(Workspace(lock))
+
+    return run_host(window_factory=build, production=True)
