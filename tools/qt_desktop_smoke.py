@@ -19,6 +19,7 @@ def main():
     current_pid = None
     env = os.environ.copy()
     env.pop('QT_QPA_PLATFORM', None)
+    os.environ.pop('QT_QPA_PLATFORM', None)  # Native trial must not inherit offscreen widget-test mode.
     env.pop('FOLDERFORGE_GUI', None)
     env['FOLDERFORGE_QT_SMOKE'] = '1'
     env['PYTHONUTF8'] = '1'
@@ -94,6 +95,12 @@ def main():
         try:
             child = updater.launch_update_trial(root, interpreter)
             assert child.wait(timeout=110) == 0, 'Qt update supervisor did not accept healthy start'
+        except Exception:
+            for filename in ('folderforge-errors.log', 'folderforge.log'):
+                log = root / 'logs' / filename
+                if log.exists():
+                    print(log.read_text(encoding='utf-8', errors='replace')[-12000:], flush=True)
+            raise
         finally:
             if previous is None: os.environ.pop('FOLDERFORGE_QT_SMOKE', None)
             else: os.environ['FOLDERFORGE_QT_SMOKE'] = previous
