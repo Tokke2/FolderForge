@@ -51,6 +51,7 @@ class ResponsiveTabs(QWidget):
         layout.addWidget(self.stack)
         self.buttons = []
         self.columns = 0
+        self.hidden_tabs = set()
 
     def addTab(self, widget, title):
         index = self.stack.addWidget(widget)
@@ -76,13 +77,25 @@ class ResponsiveTabs(QWidget):
         for n, control in enumerate(self.buttons):
             control.setChecked(n == index)
 
+    def setTabVisible(self, index, visible):
+        if visible:
+            self.hidden_tabs.discard(index)
+        else:
+            self.hidden_tabs.add(index)
+        if len(self.hidden_tabs) == self.count():
+            self.hidden_tabs.discard(0)
+        if self.currentIndex() in self.hidden_tabs:
+            self.setCurrentIndex(next(n for n in range(self.count()) if n not in self.hidden_tabs))
+        self.reflow(force=True)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.reflow()
 
     def reflow(self, force=False):
-        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 48 for b in self.buttons), default=180)
-        columns = max(1, min(len(self.buttons), max(1, self.width() - 24) // needed))
+        visible = [b for n, b in enumerate(self.buttons) if n not in self.hidden_tabs]
+        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 48 for b in visible), default=180)
+        columns = max(1, min(len(visible), max(1, self.width() - 24) // needed))
         if not force and columns == self.columns:
             return
         while self.header.count():
@@ -90,6 +103,8 @@ class ResponsiveTabs(QWidget):
         for col in range(max(self.columns, columns)):
             self.header.setColumnStretch(col, 1 if col < columns else 0)
         for index, control in enumerate(self.buttons):
+            control.setVisible(index not in self.hidden_tabs)
+        for index, control in enumerate(visible):
             self.header.addWidget(control, index // columns, index % columns)
         self.columns = columns
 
@@ -274,9 +289,17 @@ class QtWindow(PreviewWindow):
         file_menu.addAction('Minimera till systemfältet', self.hide)
         file_menu.addAction(self.exit_action)
         view_menu = self.menuBar().addMenu('Visa')
+        self.tab_actions = []
+        view_menu.addAction('Visa alla sidor', self.show_all_tabs)
+        view_menu.addSeparator()
         for index, title in enumerate(('Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent')):
             action = view_menu.addAction(title)
-            action.triggered.connect(lambda checked=False, n=index: self.tabs.setCurrentIndex(n))
+            action.setCheckable(True)
+            visible = self.workspace.config.visible_tabs.get(title, True)
+            action.setChecked(visible)
+            self.tabs.setTabVisible(index, visible)
+            action.triggered.connect(lambda checked, n=index: self.toggle_tab(n, checked))
+            self.tab_actions.append(action)
         help_menu = self.menuBar().addMenu('Hjälp')
         self.exit_action.setText('Avsluta FolderForge Qt')
         help_menu.addAction(self.exit_action)
@@ -358,6 +381,19 @@ class QtWindow(PreviewWindow):
             return
         self.dialog = ProjectDialog(self)
         self.dialog.show()
+
+    def toggle_tab(self, index, visible):
+        self.tabs.setTabVisible(index, visible)
+        for n, action in enumerate(self.tab_actions):
+            shown = n not in self.tabs.hidden_tabs
+            action.setChecked(shown)
+            self.workspace.config.visible_tabs[action.text()] = shown
+        self.save_settings()
+
+    def show_all_tabs(self):
+        for n in range(self.tabs.count()):
+            self.tabs.setTabVisible(n, True)
+        self.toggle_tab(0, True)
 
     def open_custom_project(self):
         self.open_project()
