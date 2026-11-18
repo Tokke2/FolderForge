@@ -5,13 +5,46 @@ Qt types are imported only when this optional module is explicitly selected.
 """
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QTimer, Qt
-from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import QEvent, QTimer, Qt, QObject, QPointF
+from PySide6.QtGui import QAction, QIcon, QWheelEvent
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget)
+    QAbstractSpinBox, QPlainTextEdit, QTextEdit, QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget)
 
 ROOT = Path(__file__).resolve().parent
+
+
+class FieldWheelGuard(QObject):
+    """Wheel belongs to the containing page, never to an input control."""
+    def eventFilter(self, watched, event):
+        if event.type() != QEvent.Wheel or not isinstance(watched, QWidget):
+            return False
+        control = watched
+        protected = (QComboBox, QLineEdit, QAbstractSpinBox, QPlainTextEdit, QTextEdit)
+        while control is not None and not isinstance(control, protected):
+            control = control.parentWidget()
+        if control is None:
+            return False
+        # Multiline editors send wheel events to their viewport/scrollbars too.
+        # Forward outside the entire input, never to the input's own scroll area.
+        parent = control.parentWidget()
+        while parent is not None and not isinstance(parent, QScrollArea):
+            parent = parent.parentWidget()
+        if parent is not None:
+            target = parent.viewport()
+            local = QPointF(target.mapFromGlobal(event.globalPosition().toPoint()))
+            forwarded = QWheelEvent(local, event.globalPosition(), event.pixelDelta(),
+                event.angleDelta(), event.buttons(), event.modifiers(), event.phase(),
+                event.inverted(), event.source())
+            QApplication.sendEvent(target, forwarded)
+        event.accept()
+        return True
+
+
+def install_field_wheel_guard(app):
+    if not hasattr(app, '_folderforge_wheel_guard'):
+        app._folderforge_wheel_guard = FieldWheelGuard(app)
+        app.installEventFilter(app._folderforge_wheel_guard)
 
 
 def fit_to_screen(window, width, height):
@@ -178,6 +211,7 @@ def run(window_factory=None, production=False):
         from qt_diagnostics import install_qt_message_logging
         install_qt_message_logging()
     app = QApplication(sys.argv)
+    install_field_wheel_guard(app)
     app.setApplicationName('FolderForge' if production else 'FolderForge Qt-prototyp')
     app.setQuitOnLastWindowClosed(False)
     # Prototype-only lock in OS temp; never opens or changes production's lock/data.

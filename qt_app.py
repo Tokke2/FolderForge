@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 from app_core import (build_project_name, ExistingProject, StructureEngine, project_year_choices, validate_project_year)
-from qt_preview import PreviewWindow, fit_to_screen
+from qt_preview import PreviewWindow, fit_to_screen, install_field_wheel_guard
 from settings import APP_VERSION, BASE_DIR, LOKAL_CHOICES, VEHICLE_CHOICES
 from workspace import Workspace
 
@@ -227,6 +227,7 @@ class ProjectDialog(QDialog):
 class QtWindow(PreviewWindow):
     def __init__(self, workspace):
         super().__init__()
+        install_field_wheel_guard(QApplication.instance())
         self.workspace = workspace
         self._hotkeys = None
         self._busy_tasks = 0

@@ -7,9 +7,10 @@ import sys
 import tempfile
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QPoint, QPointF
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea, QComboBox, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget
 
 
 def main():
@@ -78,6 +79,40 @@ def main():
             ws.raw['future_key'] = 'preserved'
             ws.save_settings()
             functional = QtWindow(ws)
+            # Real wheel dispatch: focused controls stay unchanged; containing page scrolls.
+            wheel_page = QScrollArea()
+            wheel_page.setWidgetResizable(True)
+            wheel_body = QWidget()
+            wheel_layout = QVBoxLayout(wheel_body)
+            combo = QComboBox()
+            combo.addItems(['A', 'B', 'C'])
+            combo.setCurrentIndex(1)
+            line = QLineEdit('unchanged')
+            multi = QPlainTextEdit('\n'.join(str(n) for n in range(100)))
+            multi.setFixedHeight(80)
+            for control in (combo, line, multi):
+                wheel_layout.addWidget(control)
+            wheel_layout.addSpacing(2000)
+            wheel_page.setWidget(wheel_body)
+            wheel_page.resize(400, 280)
+            wheel_page.show()
+            QTest.qWait(50)
+            for control in (combo, line, multi.viewport()):
+                wheel_page.verticalScrollBar().setValue(0)
+                control.setFocus()
+                before_text_scroll = multi.verticalScrollBar().value()
+                event = QWheelEvent(QPointF(8, 8), QPointF(control.mapToGlobal(QPoint(8, 8))),
+                    QPoint(), QPoint(0, -120), Qt.NoButton, Qt.NoModifier, Qt.NoScrollPhase, False)
+                QApplication.sendEvent(control, event)
+                assert combo.currentIndex() == 1
+                assert line.text() == 'unchanged'
+                assert multi.verticalScrollBar().value() == before_text_scroll
+                assert wheel_page.verticalScrollBar().value() > 0, 'Wheel must scroll outer page'
+            combo.setFocus()
+            QTest.keyClick(combo, Qt.Key_Down)
+            assert combo.currentIndex() == 2, 'Keyboard selection must remain available'
+            wheel_page.close()
+            wheel_page.deleteLater()
             functional.restore()
             QTest.qWait(50)
             functional.open_project()
