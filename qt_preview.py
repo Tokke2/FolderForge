@@ -220,6 +220,9 @@ def run(window_factory=None, production=False):
     tray.setToolTip('FolderForge · Qt' if production else 'FolderForge · Qt-prototyp (testläge)')
     menu = QMenu()
     menu.addAction('Öppna FolderForge' if production else 'Öppna Qt-prototypen', window.restore)
+    if production:
+        menu.addAction('Sök uppdatering nu', window.check_updates)
+        menu.addAction('Uppdateringsstatus', window.update_status)
     menu.addAction(window.exit_action)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: window.restore() if reason == QSystemTrayIcon.Trigger else None)

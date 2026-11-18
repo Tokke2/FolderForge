@@ -5,8 +5,8 @@ import logging
 import webbrowser
 
 from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy,
+from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QKeySequence
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy, QKeySequenceEdit,
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
@@ -271,6 +271,7 @@ class QtWindow(PreviewWindow):
         file_menu.addAction('Klistra in struktur', self.open_custom_project)
         file_menu.addAction('Öppna sparplats', lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(self.workspace.config.save_root)))
+        file_menu.addAction('Minimera till systemfältet', self.hide)
         file_menu.addAction(self.exit_action)
         view_menu = self.menuBar().addMenu('Visa')
         for index, title in enumerate(('Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent')):
@@ -284,7 +285,11 @@ class QtWindow(PreviewWindow):
         help_menu.addAction('Sök uppdatering nu', self.check_updates)
         help_menu.addAction('Felsökning och fellista…', self.diagnostics)
         help_menu.addAction('Rensa cache (smartfilter)…', self.cache_dialog)
-        help_menu.addAction('Detaljerad loggning i 15 minuter', self.enable_debug)
+        help_menu.addAction('Detaljerad loggning i 15 minuter', lambda: self.enable_debug(15))
+        help_menu.addAction('Återgå till normal loggning', lambda: self.enable_debug(0))
+        help_menu.addAction('Öppna fellogg', lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(self.workspace.base / 'logs/folderforge-errors.log'))))
+        help_menu.addAction('Exportera felsökningspaket…', self.export_diagnostics)
         help_menu.addAction('Om FolderForge', lambda: QMessageBox.information(self, 'FolderForge',
             f'FolderForge {APP_VERSION} · Qt\n© Rickard Längkvist\n'
             'Explicit Tk-reserv finns via Starta-FolderForge-Tk.py.'))
@@ -579,6 +584,24 @@ class QtWindow(PreviewWindow):
                 QMessageBox.warning(self, 'Snabbtangent', str(exc))
         layout.addWidget(self.hotkey_edit)
         button(layout, 'Spara snabbtangent', save_hotkey)
+        layout.addWidget(label('Eller spela in en tangentkombination nedan och överför den till fältet:'))
+        self.hotkey_recorder = QKeySequenceEdit()
+        self.hotkey_recorder.setAccessibleName('Spela in snabbtangent')
+        layout.addWidget(self.hotkey_recorder)
+        def recorded():
+            text = self.hotkey_recorder.keySequence().toString(QKeySequence.PortableText)
+            if ',' in text:
+                QMessageBox.warning(self, 'Snabbtangent', 'Använd en enda kombination, inte en sekvens.')
+                return
+            text = text.lower().replace('meta', 'cmd')
+            self.hotkey_edit.setText(text)
+            self.hotkey_edit.setModified(True)
+        button(layout, 'Använd inspelad kombination', recorded)
+        def reset_hotkey():
+            from settings import DEFAULT_HOTKEY
+            self.hotkey_edit.setText('+'.join(DEFAULT_HOTKEY))
+            self.hotkey_edit.setModified(True)
+        button(layout, 'Återställ standardkombination i fältet', reset_hotkey)
         layout.addStretch()
 
     def apply_accessibility(self):
@@ -752,10 +775,19 @@ class QtWindow(PreviewWindow):
         dialog = DiagnosticsDialog(self)
         dialog.exec()
 
-    def enable_debug(self):
+    def export_diagnostics(self):
+        from qt_help import DiagnosticsDialog
+        dialog = DiagnosticsDialog(self)
+        try:
+            dialog.export()
+        finally:
+            dialog.timer.stop()
+            dialog.deleteLater()
+
+    def enable_debug(self, minutes=15):
         from logg import enable_detailed_logging
-        enable_detailed_logging(15)
-        self.statusBar().showMessage('Detaljerad loggning aktiv i 15 minuter')
+        enable_detailed_logging(minutes)
+        self.statusBar().showMessage('Detaljerad loggning aktiv i 15 minuter' if minutes else 'Normal loggning aktiv')
 
     def undo_last(self):
         if not self._created:
