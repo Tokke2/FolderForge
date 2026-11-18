@@ -16,6 +16,17 @@ from settings import *
 from historik import atomic_write_json, read_json_safe
 logger = logging.getLogger(__name__)
 
+HOTKEY_MODIFIERS: frozenset = frozenset({
+    "ctrl", "alt", "shift", "cmd", "win", "super", "option", "command",
+})
+
+HOTKEY_MAX_KEYS: int = 5
+
+HOTKEY_KEY_ORDER: Dict[str, int] = {
+    'ctrl': 0, 'control': 0, 'alt': 1, 'option': 1,
+    'shift': 2, 'cmd': 3, 'win': 3, 'super': 3, 'command': 3,
+}
+
 def validate_settings(data: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
     """
     Returnerar (rensat_data, reparerad?, loggrader).

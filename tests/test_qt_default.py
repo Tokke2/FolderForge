@@ -43,6 +43,12 @@ class QtDefaultTests(unittest.TestCase):
             self.assertEqual(report['gui'], 'Qt')
             self.assertEqual(json.loads((root / 'logs/startup-diagnostics.json').read_text())['phase'], 'ready')
 
+    def test_shared_hotkeys_execute_in_the_real_module_namespace(self):
+        from app_core import validate_hotkey_combo, hotkey_expression
+        valid, keys, error = validate_hotkey_combo(['ctrl', 'alt', 'm'])
+        self.assertTrue(valid, error)
+        self.assertEqual(hotkey_expression(keys), '<ctrl>+<alt>+m')
+
     def test_manifest_diagnostics_name_only_real_modified_app_file(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

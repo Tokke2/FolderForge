@@ -40,6 +40,7 @@ def main():
     env = os.environ.copy()
     env['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
     env['FOLDERFORGE_GUI'] = 'tk'
+    os.environ['FOLDERFORGE_GUI'] = 'tk'  # Update supervisor inherits explicit reserve too.
     # Child must route through the actual windowless bootstrap on its first start.
     env.pop('FOLDERFORGE_RUNTIME_READY', None)
     env.pop('FOLDERFORGE_RUNTIME_POLICY', None)

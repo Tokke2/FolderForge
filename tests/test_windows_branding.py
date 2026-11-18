@@ -1,3 +1,4 @@
+from source_helpers import app_source
 """Windows integration contracts; native execution must be verified on Windows."""
 import ast
 import logging
@@ -14,7 +15,7 @@ import updater
 
 
 def app_functions(*names):
-    tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+    tree = ast.parse(app_source())
     nodes = [ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)]
     nodes += [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
     app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')

@@ -29,6 +29,7 @@ def main():
     env = os.environ.copy()
     env['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
     env['FOLDERFORGE_GUI'] = 'tk'
+    os.environ['FOLDERFORGE_GUI'] = 'tk'  # Update supervisor inherits explicit reserve too.
     status_path = base / 'data/windows-smoke-status.json'
     observed = []
     def status():

@@ -1,11 +1,12 @@
 """Opt-in functional Qt client. Tk remains the default and full-feature fallback."""
 from pathlib import Path
 import threading
+import logging
 import webbrowser
 
-from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QPixmap
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy,
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
@@ -37,6 +38,63 @@ def page(tabs, title):
     scroll.setWidget(widget)
     tabs.addTab(scroll, title)
     return layout
+
+
+class ResponsiveTabs(QWidget):
+    """All page names remain visible; navigation wraps rather than scrolling away."""
+    def __init__(self):
+        super().__init__()
+        layout = QVBoxLayout(self)
+        self.header = QGridLayout()
+        layout.addLayout(self.header)
+        self.stack = QStackedWidget()
+        layout.addWidget(self.stack)
+        self.buttons = []
+        self.columns = 0
+
+    def addTab(self, widget, title):
+        index = self.stack.addWidget(widget)
+        control = QPushButton(title)
+        control.setCheckable(True)
+        control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        control.clicked.connect(lambda checked=False, n=index: self.setCurrentIndex(n))
+        self.buttons.append(control)
+        self.reflow(force=True)
+        self.setCurrentIndex(self.stack.currentIndex())
+        return index
+
+    def count(self):
+        return self.stack.count()
+
+    def currentIndex(self):
+        return self.stack.currentIndex()
+
+    def setCurrentIndex(self, index):
+        self.stack.setCurrentIndex(index)
+        for n, control in enumerate(self.buttons):
+            control.setChecked(n == index)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.reflow()
+
+    def reflow(self, force=False):
+        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 48 for b in self.buttons), default=180)
+        columns = max(1, min(len(self.buttons), max(1, self.width() - 24) // needed))
+        if not force and columns == self.columns:
+            return
+        while self.header.count():
+            self.header.takeAt(0)
+        for col in range(max(self.columns, columns)):
+            self.header.setColumnStretch(col, 1 if col < columns else 0)
+        for index, control in enumerate(self.buttons):
+            self.header.addWidget(control, index // columns, index % columns)
+        self.columns = columns
+
+
+class ExportBridge(QObject):
+    ready = Signal(str)
+    failed = Signal(str)
 
 
 class ProjectDialog(QDialog):
@@ -135,6 +193,7 @@ class ProjectDialog(QDialog):
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(exc.path)))
         except (ValueError, OSError, RuntimeError) as exc:
+            logging.getLogger('qt.projects').exception('Projektet kunde inte skapas')
             QMessageBox.warning(self, 'Projektet kunde inte skapas', str(exc))
 
     def showEvent(self, event):
@@ -152,8 +211,12 @@ class QtWindow(PreviewWindow):
         super().__init__()
         self.workspace = workspace
         self._hotkeys = None
+        self._busy_tasks = 0
+        self._export_bridge = ExportBridge(self)
+        self._export_bridge.ready.connect(self.export_ready)
+        self._export_bridge.failed.connect(self.export_failed)
         self.setWindowTitle(f'FolderForge {APP_VERSION} · Qt')
-        self.tabs = QTabWidget()
+        self.tabs = ResponsiveTabs()
         self.setCentralWidget(self.tabs)
         create = page(self.tabs, 'Skapa')
         create.addWidget(label('FolderForge · Qt\nSkapa projektmappar med dina mallar.'))
@@ -187,6 +250,60 @@ class QtWindow(PreviewWindow):
         self.setAcceptDrops(True)
         self.refresh_history()
         self.apply_accessibility()
+        self._placement_timer = QTimer(self)
+        self._placement_timer.setSingleShot(True)
+        self._placement_timer.timeout.connect(self.save_placement)
+        QApplication.instance().aboutToQuit.connect(self.save_placement)
+
+    def restore(self):
+        from historik import read_json_safe
+        raw = read_json_safe(self.workspace.base / 'data/qt-window-placement.json', {})
+        rectangle = None
+        if isinstance(raw, dict) and all(isinstance(raw.get(k), int) and not isinstance(raw[k], bool) for k in ('x', 'y', 'width', 'height')):
+            if raw['width'] > 0 and raw['height'] > 0:
+                rectangle = QRect(raw['x'], raw['y'], raw['width'], raw['height'])
+        screens = QApplication.screens()
+        screen = self.screen() or QApplication.primaryScreen()
+        if rectangle is not None:
+            best = max(screens, key=lambda item: item.availableGeometry().intersected(rectangle).width()
+                       * item.availableGeometry().intersected(rectangle).height(), default=screen)
+            if best.availableGeometry().intersects(rectangle):
+                screen = best
+        area = screen.availableGeometry().adjusted(12, 12, -12, -12)
+        if rectangle is None:
+            rectangle = QRect(0, 0, min(760, area.width()), min(560, area.height()))
+            rectangle.moveCenter(area.center())
+        width = min(max(300, rectangle.width()), area.width())
+        height = min(max(250, rectangle.height()), area.height())
+        x = max(area.left(), min(rectangle.x(), area.right() - width + 1))
+        y = max(area.top(), min(rectangle.y(), area.bottom() - height + 1))
+        self.setGeometry(x, y, width, height)
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+        self.tabs.reflow(force=True)
+
+    def save_placement(self):
+        if not self.workspace.lock.is_primary or not self.isVisible() or self.isMinimized() or self.isMaximized():
+            return
+        from historik import atomic_write_json
+        rect = self.geometry()
+        atomic_write_json(self.workspace.base / 'data/qt-window-placement.json',
+                          dict(x=rect.x(), y=rect.y(), width=rect.width(), height=rect.height()))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, '_placement_timer'):
+            self._placement_timer.start(500)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+        if hasattr(self, '_placement_timer'):
+            self._placement_timer.start(500)
+
+    def closeEvent(self, event):
+        self.save_placement()
+        super().closeEvent(event)
 
     def open_project(self):
         if self.dialog and self.dialog.isVisible():
@@ -228,6 +345,7 @@ class QtWindow(PreviewWindow):
                 self.structure.document().setModified(False)
                 self.statusBar().showMessage('Mall sparad')
             except (OSError, ValueError, RuntimeError) as exc:
+                logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
                 QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
         button(layout, 'Spara som egen mall', save)
         def set_default():
@@ -257,7 +375,7 @@ class QtWindow(PreviewWindow):
             folder = QFileDialog.getExistingDirectory(self, 'Välj mapp')
             if folder:
                 # Bounded traversal uses the exact shared Tk engine.
-                self.export_text.setPlainText(StructureEngine.generate_tree_string(Path(folder)))
+                self.start_export(Path(folder))
         button(layout, 'Välj mapp', choose)
         layout.addWidget(self.export_text)
         def save():
@@ -266,6 +384,7 @@ class QtWindow(PreviewWindow):
                 try:
                     Path(path).write_text(self.export_text.toPlainText(), encoding='utf-8')
                 except OSError as exc:
+                    logging.getLogger('qt.export').exception('Textfilen kunde inte sparas')
                     QMessageBox.warning(self, 'Kunde inte exportera', str(exc))
         button(layout, 'Spara text…', save)
 
@@ -310,6 +429,26 @@ class QtWindow(PreviewWindow):
             self.workspace.config.high_contrast = self.high_contrast.isChecked()
             self.save_settings()
         button(layout, 'Spara inställningar', save)
+        def startup(enabled):
+            if QMessageBox.question(self, 'Ändra autostart?',
+                    ('Aktivera' if enabled else 'Avaktivera') + ' FolderForge vid inloggning?\n'
+                    'Följ arbetsgivarens IT-policy. Inga paket installeras.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            try:
+                from os_startup import configure_autostart
+                import json
+                result = configure_autostart(enabled)
+                details = json.dumps(result, ensure_ascii=False, indent=2)
+                if not result.get('ok'):
+                    raise RuntimeError(details)
+                QMessageBox.information(self, 'Autostart', details)
+            except Exception as exc:
+                import logging
+                logging.getLogger('qt.autostart').exception('Ändring av autostart misslyckades')
+                QMessageBox.warning(self, 'Autostart misslyckades', str(exc))
+        button(layout, 'Starta med operativsystemet…', lambda: startup(True))
+        button(layout, 'Stäng av autostart…', lambda: startup(False))
         layout.addWidget(label('Global snabbtangent, till exempel ctrl+alt+m'))
         self.hotkey_edit = QLineEdit()
         self.hotkey_edit.setPlaceholderText('ctrl+alt+m')
@@ -343,11 +482,13 @@ class QtWindow(PreviewWindow):
         self.setStyleSheet(f"""
             QWidget {{ background: {background}; color: {foreground}; font-size: {round(15 * factor)}px; }}
             QPushButton {{ background: {accent}; color: white; padding: 12px; border: 2px solid transparent; border-radius: 7px; }}
+            QPushButton:checked {{ background: #316FA5; color: white; }}
             QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
             QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 2px solid #708090; }}
             QTabBar::tab {{ padding: 10px; }}
             QTabBar::tab:selected, QMenu::item:selected {{ background: {accent}; color: white; }}
         """)
+        QTimer.singleShot(0, lambda: self.tabs.reflow(force=True))
 
     def save_settings(self):
         try:
@@ -355,6 +496,7 @@ class QtWindow(PreviewWindow):
             self.apply_accessibility()
             self.statusBar().showMessage('Inställningar sparade')
         except (OSError, RuntimeError) as exc:
+            logging.getLogger('qt.settings').exception('Inställningar kunde inte sparas')
             QMessageBox.warning(self, 'Skrivfel', str(exc))
 
     def donations(self):
@@ -404,11 +546,34 @@ class QtWindow(PreviewWindow):
         self.statusBar().showMessage('Uppdateringskontroll begärd – se uppdateringsstatus')
 
 
+    def start_export(self, folder):
+        if self._busy_tasks:
+            self.statusBar().showMessage('En export pågår redan. Vänta tills den är klar.')
+            return
+        self._busy_tasks += 1
+        self.statusBar().showMessage('Läser mappstruktur i bakgrunden…')
+        def worker():
+            try:
+                self._export_bridge.ready.emit(StructureEngine.generate_tree_string(folder))
+            except Exception as exc:
+                logging.getLogger('qt.export').exception('Trälexport misslyckades')
+                self._export_bridge.failed.emit(str(exc))
+        threading.Thread(target=worker, name='qt-tree-export', daemon=True).start()
+
+    def export_ready(self, text):
+        self._busy_tasks = max(0, self._busy_tasks - 1)
+        self.export_text.setPlainText(text)
+        self.statusBar().showMessage('Struktur klar – du kan spara texten')
+
+    def export_failed(self, message):
+        self._busy_tasks = max(0, self._busy_tasks - 1)
+        QMessageBox.warning(self, 'Export misslyckades', message)
+
     def can_restart(self):
         if any(isinstance(widget, QDialog) and widget.isVisible() for widget in QApplication.topLevelWidgets()):
             return False
         config = self.workspace.config
-        return (not self.structure.document().isModified()
+        return (self._busy_tasks == 0 and not self.structure.document().isModified()
                 and self.root_edit.text().strip() == config.save_root
                 and self.open_after.isChecked() == config.open_after_creation
                 and self.plate_mode.isChecked() == config.plate_mode
@@ -455,6 +620,7 @@ class QtWindow(PreviewWindow):
             self.workspace.history.remove(str(path))
             self.refresh_history()
         except (OSError, ValueError) as exc:
+            logging.getLogger('qt.projects').exception('Ångra/radering stoppades')
             QMessageBox.warning(self, 'Ångra stoppades', str(exc))
 
     def dragEnterEvent(self, event):
@@ -464,7 +630,7 @@ class QtWindow(PreviewWindow):
     def dropEvent(self, event):
         folders = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
         if folders and folders[0].is_dir():
-            self.export_text.setPlainText(StructureEngine.generate_tree_string(folders[0]))
+            self.start_export(folders[0])
             self.tabs.setCurrentIndex(3)
             event.acceptProposedAction()
 
