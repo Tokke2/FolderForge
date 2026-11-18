@@ -545,7 +545,7 @@ def export_diagnostic_package(destination, display_info=None):
                             and path.resolve().is_relative_to(LOG_DIR.resolve()))
                 archives = sorted((p for p in (LOG_DIR / 'archive').rglob('*.log') if safe_log(p)),
                                   key=lambda p: p.stat().st_mtime, reverse=True)[:3]
-                for path in [LOG_FILE, ERROR_LOG_FILE, *archives]:
+                for path in [LOG_FILE, ERROR_LOG_FILE, LOG_DIR / "startup-diagnostics.json", *archives]:
                     if not safe_log(path):
                         continue
                     size = path.stat().st_size

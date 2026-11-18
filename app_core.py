@@ -607,3 +607,70 @@ def build_project_name(namn_text: str, lokal: str, year: str = "—", vehicle_ty
         ord_lista.append(year)
     return " ".join(ord_lista)
 
+
+
+def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
+    """
+    Godkänner bara kombinationer som INTE kan stjäla vanlig skrivning:
+      • minst 1 modifierare (ctrl/alt/shift/cmd/win)
+      • minst 1 icke-modifierare
+      • max 5 tangenter
+      • inga mellanslag i namn
+    Returnerar (ok?, normaliserad_lista, felmeddelande).
+    """
+    norm = normalize_hotkey_keys(keys)
+
+    if not norm:
+        return False, [], "Inga tangenter registrerade."
+    if len(norm) > HOTKEY_MAX_KEYS:
+        return False, norm, f"Max {HOTKEY_MAX_KEYS} tangenter i en kombination."
+
+    mods = [k for k in norm if k in HOTKEY_MODIFIERS]
+    base = [k for k in norm if k not in HOTKEY_MODIFIERS]
+
+    if not mods:
+        return False, norm, (
+            "Snabbtangenten måste innehålla minst en modifierare "
+            "(Ctrl, Alt, Shift eller Win) — annars blockerar den "
+            "vanlig skrivning i hela Windows."
+        )
+    if not base:
+        return False, norm, "Kombinationen saknar en vanlig tangent."
+    for key in base:
+        if not ((len(key) == 1 and key.isprintable() and key not in "+<> ")
+                or key in {"space", "enter", "tab", "esc", "backspace", "delete", "insert", "home", "end", "page_up", "page_down", "up", "down", "left", "right"}
+                or re.fullmatch(r"f(?:[1-9]|1[0-9]|2[0-4])", key)):
+            return False, norm, "Okänd tangent: " + key
+    return True, norm, ""
+
+
+def normalize_hotkey_keys(keys: Iterable[str]) -> List[str]:
+    """
+    Normaliserar pynput-tangentnamn till en stabil, läsbar ordning:
+      'Key.ctrl_l' → 'ctrl', 'Key.shift_r' → 'shift', modifierare först.
+    Samma logik som redan finns i _on_press_rec, men GUI-fri och testbar.
+    """
+    norm: List[str] = []
+    for k in keys or []:
+        if k is None:
+            continue
+        raw = str(k)
+        if len(raw) == 1 and 1 <= ord(raw) <= 26:
+            raw = chr(ord(raw) + 96)  # pynput kan ge Ctrl+M som \r
+        s = raw.strip().lower()
+        if not s:
+            continue
+        if s.startswith('key.'):
+            s = s[4:]
+        s = s.replace('_l', '').replace('_r', '')
+        s = {'win': 'cmd', 'super': 'cmd', 'command': 'cmd', 'option': 'alt', 'control': 'ctrl'}.get(s, s)
+        if s and s not in norm:
+            norm.append(s)
+    norm.sort(key=lambda x: (HOTKEY_KEY_ORDER.get(x, 99), x))
+    return norm
+
+
+def hotkey_expression(keys):
+    """pynput: <ctrl>+<alt>+m, aldrig <m>."""
+    return "+".join(k if len(k) == 1 else "<" + k + ">" for k in normalize_hotkey_keys(keys))
+

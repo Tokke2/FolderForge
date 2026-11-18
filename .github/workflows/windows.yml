@@ -27,7 +27,7 @@ jobs:
         with:
           python-version: '${{ matrix.python }}'
       - name: Install test dependencies on the disposable runner only
-        run: python -m pip install customtkinter pillow pystray pynput pywin32 tkinterdnd2 psutil
+        run: python -m pip install -r requirements.txt -r requirements-tk.txt psutil
       - name: Unit and update recovery tests
         run: python tools/ci_tests.py
       - name: Existing Python fallback, including broken 3.15 and 3.14 priority

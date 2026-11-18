@@ -171,10 +171,14 @@ class PreviewWindow(QMainWindow):
 
 def run(window_factory=None, production=False):
     import hashlib
+    import os
     import sys
     from PySide6.QtCore import QLockFile, QStandardPaths
+    if production:
+        from qt_diagnostics import install_qt_message_logging
+        install_qt_message_logging()
     app = QApplication(sys.argv)
-    app.setApplicationName('FolderForge Qt-prototyp')
+    app.setApplicationName('FolderForge' if production else 'FolderForge Qt-prototyp')
     app.setQuitOnLastWindowClosed(False)
     # Prototype-only lock in OS temp; never opens or changes production's lock/data.
     key = hashlib.sha256(str(ROOT).encode()).hexdigest()[:16]
@@ -190,9 +194,21 @@ def run(window_factory=None, production=False):
     if not acquired:
         return 0
     release = lock.release if production else lock.unlock
-    app.aboutToQuit.connect(release)
+    if production:
+        from updater import apply_pending, launch_update_trial, mark_installation_failed
+        try:
+            updated = apply_pending(ROOT)
+        except Exception as exc:
+            import logging
+            logging.getLogger('qt.update').exception('Kunde inte installera uppdatering; aktuell app används')
+            mark_installation_failed(ROOT, exc)
+            updated = False
+        if updated:
+            release()
+            launch_update_trial(ROOT, sys.executable)
+            return 0
     if not QSystemTrayIcon.isSystemTrayAvailable():
-        print('Qt-prototypen kräver ett tillgängligt systemfält. Använd vanliga Tk-startfilen.', file=sys.stderr)
+        print('FolderForge kräver ett tillgängligt systemfält. Se logs/ och reservstarten Starta-FolderForge-Tk.py.', file=sys.stderr)
         release()
         return 1
     try:
@@ -201,9 +217,9 @@ def run(window_factory=None, production=False):
         release()
         raise
     tray = QSystemTrayIcon(window.windowIcon(), window)
-    tray.setToolTip('FolderForge · Qt (valfri testversion)' if production else 'FolderForge · Qt-prototyp (testläge)')
+    tray.setToolTip('FolderForge · Qt' if production else 'FolderForge · Qt-prototyp (testläge)')
     menu = QMenu()
-    menu.addAction('Öppna Qt-prototypen', window.restore)
+    menu.addAction('Öppna FolderForge' if production else 'Öppna Qt-prototypen', window.restore)
     menu.addAction(window.exit_action)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: window.restore() if reason == QSystemTrayIcon.Trigger else None)
@@ -211,17 +227,82 @@ def run(window_factory=None, production=False):
     tray.show()
     # Remains hidden until an explicit tray action. Never starts Tk in this process.
     stop = None
+    cleanup = None
     if production:
         from updater import service_instance_health, start_updates
         from settings import APP_VERSION
         health = QTimer(window)
         health.timeout.connect(lambda: service_instance_health(lock.lock_dir, ROOT / 'folder.pyw'))
         health.start(500)
-        stop = start_updates(ROOT, APP_VERSION)
+        if os.environ.get('FOLDERFORGE_QT_SMOKE') == '1':
+            import threading
+            stop = threading.Event()
+        else:
+            stop = start_updates(ROOT, APP_VERSION)
+        from cache_cleanup import start_cleanup
+        cleanup = start_cleanup(ROOT)
+        from qt_diagnostics import save_startup_report
+        from updater import confirm_startup, pending_ready_for_restart
+        import logging
+        log = logging.getLogger('qt.update')
+        def acknowledge():
+            try:
+                if not tray.isVisible():
+                    raise RuntimeError('Tray-ikonen är inte redo')
+                confirm_startup(ROOT)
+                save_startup_report(ROOT, 'ready')
+            except Exception as exc:
+                log.exception('Startbekräftelse misslyckades; backup behålls')
+                save_startup_report(ROOT, 'confirmation-failed', str(exc))
+        QTimer.singleShot(500, acknowledge)
+        restart_timer = QTimer(window)
+        def restart_if_safe():
+            if hasattr(window, 'can_restart') and window.can_restart() and pending_ready_for_restart(ROOT):
+                log.info('Uppdatering klar; säker dold Qt-omstart begärd')
+                app.exit(71)
+        restart_timer.timeout.connect(restart_if_safe)
+        restart_timer.start(2000)
+        if os.environ.get('FOLDERFORGE_QT_SMOKE') == '1':
+            import json
+            from historik import atomic_write_json
+            status_path = ROOT / 'data/qt-smoke-status.json'
+            command_path = ROOT / 'data/qt-smoke-command.json'
+            last_command = [None]
+            def smoke_tick():
+                try:
+                    command = json.loads(command_path.read_text(encoding='utf-8'))
+                except (OSError, ValueError):
+                    command = {}
+                if command.get('pid') == os.getpid() and command.get('id') != last_command[0]:
+                    last_command[0] = command.get('id')
+                    action = command.get('action')
+                    if action == 'restore': window.restore()
+                    elif action == 'project-dialog': window.open_project()
+                    elif action == 'close-project-dialog' and window.dialog: window.dialog.reject()
+                    elif action == 'close-main': window.close()
+                    elif action == 'minimize-main': window.showMinimized()
+                    elif action == 'exit': app.quit()
+                dialog = getattr(window, 'dialog', None)
+                atomic_write_json(status_path, dict(pid=os.getpid(), visible=window.isVisible(),
+                    tray=tray.isVisible(), gui='qt', tk_loaded='tkinter' in sys.modules,
+                    dialog=bool(dialog and dialog.isVisible()),
+                    project_focused=bool(dialog and dialog.isVisible() and app.focusWidget() is dialog.name)), backup=False)
+            smoke_timer = QTimer(window)
+            smoke_timer.timeout.connect(smoke_tick)
+            smoke_timer.start(100)
+    result = 1
     try:
-        return app.exec()
+        result = app.exec()
     finally:
         if stop is not None:
             stop.set()
+        if cleanup is not None:
+            cleanup.set()
         tray.hide()
         release()
+    if production and result == 71:
+        import subprocess
+        subprocess.Popen([sys.executable, str(ROOT / 'folder.pyw'), '--tray'], cwd=ROOT,
+                         creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0), close_fds=True)
+        return 0
+    return result

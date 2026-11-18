@@ -1,7 +1,4 @@
-# Manual installation by the user/IT only. The app never runs pip at startup.
-customtkinter>=5.2,<6
-Pillow>=10
-pystray>=0.19
+# Default Qt app. Manual installation by user/IT only; never installed at startup.
+PySide6>=6.8,<7
 pynput>=1.7
-tkinterdnd2>=0.4
 pywin32>=306; sys_platform == "win32"

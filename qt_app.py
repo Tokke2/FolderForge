@@ -122,6 +122,8 @@ class ProjectDialog(QDialog):
                 return
             path = self.window.workspace.create_project(name, items)
             self.window.statusBar().showMessage(f'Skapad: {path}')
+            stat = path.stat()
+            self.window._created.append((path, stat.st_dev, stat.st_ino))
             self.window.refresh_history()
             if self.window.workspace.config.open_after_creation:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
@@ -149,12 +151,15 @@ class QtWindow(PreviewWindow):
     def __init__(self, workspace):
         super().__init__()
         self.workspace = workspace
-        self.setWindowTitle(f'FolderForge {APP_VERSION} · Qt – under övergång')
+        self._hotkeys = None
+        self.setWindowTitle(f'FolderForge {APP_VERSION} · Qt')
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
         create = page(self.tabs, 'Skapa')
-        create.addWidget(label('FolderForge · Qt\nRiktiga projekt och gemensamma data. '
-                              'Tk är fortfarande standard och har alla äldre funktioner.'))
+        create.addWidget(label('FolderForge · Qt\nSkapa projektmappar med dina mallar.'))
+        button(create, 'Sök uppdatering nu', self.check_updates)
+        self._created = []
+        button(create, 'Ångra senast skapade projekt…', self.undo_last)
         button(create, 'Skapa standardprojekt', self.open_project)
         create.addWidget(label('Sparplats: ' + workspace.config.save_root))
         create.addStretch()
@@ -174,11 +179,12 @@ class QtWindow(PreviewWindow):
         help_menu.addAction('Donationer – Stöd FolderForge', self.donations)
         help_menu.addAction('Uppdateringsstatus', self.update_status)
         help_menu.addAction('Sök uppdatering nu', self.check_updates)
-        help_menu.addAction('Om övergången / funktioner kvar i Tk', lambda: QMessageBox.information(self,
-            'Övergång till Qt', 'Tk är kvar som standard och reserv.\n'
-            'Ångra/radering, global snabbtangent, OS-autostart, detaljerad fellista, '
-            'diagnostikexport och komplett tillgänglighets-/DPI-paritet är ännu inte migrerade.\n'
-            'Qt installerar inte uppdateringar själv; avsluta och använd vanliga startfilen.'))
+        help_menu.addAction('Felsökning och fellista…', self.diagnostics)
+        help_menu.addAction('Detaljerad loggning i 15 minuter', self.enable_debug)
+        help_menu.addAction('Om FolderForge', lambda: QMessageBox.information(self, 'FolderForge',
+            f'FolderForge {APP_VERSION} · Qt\n© Rickard Längkvist\n'
+            'Explicit Tk-reserv finns via Starta-FolderForge-Tk.py.'))
+        self.setAcceptDrops(True)
         self.refresh_history()
         self.apply_accessibility()
 
@@ -219,6 +225,7 @@ class QtWindow(PreviewWindow):
                 self.workspace.templates.save_template(self.template_name.text(), self.structure.toPlainText())
                 self.templates.clear()
                 self.templates.addItems(list(self.workspace.templates.list_templates()))
+                self.structure.document().setModified(False)
                 self.statusBar().showMessage('Mall sparad')
             except (OSError, ValueError, RuntimeError) as exc:
                 QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
@@ -227,6 +234,18 @@ class QtWindow(PreviewWindow):
             self.workspace.config.default_template = self.templates.currentText()
             self.save_settings()
         button(layout, 'Använd vald mall som standard', set_default)
+        def remove():
+            if QMessageBox.question(self, 'Ta bort egen mall?', self.templates.currentText(),
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            try:
+                if not self.workspace.templates.delete_template(self.templates.currentText()):
+                    raise ValueError('Inbyggda mallar kan inte tas bort')
+                self.templates.clear()
+                self.templates.addItems(list(self.workspace.templates.list_templates()))
+            except (OSError, ValueError) as exc:
+                QMessageBox.warning(self, 'Kunde inte ta bort mall', str(exc))
+        button(layout, 'Ta bort vald egen mall…', remove)
         load(self.templates.currentText())
 
     def export_page(self):
@@ -291,6 +310,22 @@ class QtWindow(PreviewWindow):
             self.workspace.config.high_contrast = self.high_contrast.isChecked()
             self.save_settings()
         button(layout, 'Spara inställningar', save)
+        layout.addWidget(label('Global snabbtangent, till exempel ctrl+alt+m'))
+        self.hotkey_edit = QLineEdit()
+        self.hotkey_edit.setPlaceholderText('ctrl+alt+m')
+        def save_hotkey():
+            try:
+                if self._hotkeys is None:
+                    raise RuntimeError('Snabbtangentsbryggan är inte startad')
+                self._hotkeys.register(self.hotkey_edit.text().split('+'), save=True)
+                self.hotkey_edit.setModified(False)
+                self.statusBar().showMessage(self._hotkeys.last_status)
+            except Exception as exc:
+                import logging
+                logging.getLogger('qt.hotkey').exception('Kunde inte ändra snabbtangent')
+                QMessageBox.warning(self, 'Snabbtangent', str(exc))
+        layout.addWidget(self.hotkey_edit)
+        button(layout, 'Spara snabbtangent', save_hotkey)
         layout.addStretch()
 
     def apply_accessibility(self):
@@ -356,7 +391,7 @@ class QtWindow(PreviewWindow):
         timer.timeout.connect(refresh)
         timer.start(1000)
         refresh()
-        layout.addWidget(label('Installation görs genom den vanliga Tk-startfilen efter att Qt har avslutats.'))
+        layout.addWidget(label('Hämtad uppdatering installeras genom dold omstart när öppna dialoger och osparade ändringar är avslutade.'))
         button(layout, 'Sök uppdatering nu', self.check_updates)
         button(layout, 'Stäng', dialog.reject)
         fit_to_screen(dialog, 620, 600)
@@ -369,13 +404,82 @@ class QtWindow(PreviewWindow):
         self.statusBar().showMessage('Uppdateringskontroll begärd – se uppdateringsstatus')
 
 
+    def can_restart(self):
+        if any(isinstance(widget, QDialog) and widget.isVisible() for widget in QApplication.topLevelWidgets()):
+            return False
+        config = self.workspace.config
+        return (not self.structure.document().isModified()
+                and self.root_edit.text().strip() == config.save_root
+                and self.open_after.isChecked() == config.open_after_creation
+                and self.plate_mode.isChecked() == config.plate_mode
+                and self.theme.currentText() == config.theme
+                and self.text_size.currentText() == config.text_size
+                and self.high_contrast.isChecked() == config.high_contrast
+                and (self._hotkeys is None or not self.hotkey_edit.isModified()))
+
+    def start_integrations(self):
+        from qt_integrations import HotkeyBridge
+        self._hotkeys = HotkeyBridge(self)
+        self._hotkeys.status.connect(self.statusBar().showMessage)
+        self.hotkey_edit.setText('+'.join(self._hotkeys.keys))
+        self.hotkey_edit.setModified(False)
+        self._hotkeys.start()
+        QApplication.instance().aboutToQuit.connect(self._hotkeys.stop)
+
+    def diagnostics(self):
+        from qt_help import DiagnosticsDialog
+        dialog = DiagnosticsDialog(self)
+        dialog.exec()
+
+    def enable_debug(self):
+        from logg import enable_detailed_logging
+        enable_detailed_logging(15)
+        self.statusBar().showMessage('Detaljerad loggning aktiv i 15 minuter')
+
+    def undo_last(self):
+        if not self._created:
+            QMessageBox.information(self, 'Ångra', 'Inget projekt har skapats i denna session.')
+            return
+        path, device, inode = self._created[-1]
+        try:
+            stat = path.stat()
+            if path.is_symlink() or (stat.st_dev, stat.st_ino) != (device, inode):
+                raise ValueError('Mappen har ersatts eller flyttats; automatisk radering stoppas')
+            if QMessageBox.warning(self, 'Ta bort hela projektet?',
+                    f'{path}\n\nALLT innehåll, även filer du lagt till, tas bort permanent. Fortsätt?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            import shutil
+            shutil.rmtree(path)
+            self._created.pop()
+            self.workspace.history.remove(str(path))
+            self.refresh_history()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Ångra stoppades', str(exc))
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and all(url.isLocalFile() for url in event.mimeData().urls()):
+            event.acceptProposedAction()
+
+    def dropEvent(self, event):
+        folders = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
+        if folders and folders[0].is_dir():
+            self.export_text.setPlainText(StructureEngine.generate_tree_string(folders[0]))
+            self.tabs.setCurrentIndex(3)
+            event.acceptProposedAction()
+
+
 def run():
     from qt_preview import run as run_host
 
     def build(lock):
         from logg import init_logging, start_log_archiver
-        init_logging()
+        import logg
+        if not logg._initierad:
+            init_logging()
         start_log_archiver()
-        return QtWindow(Workspace(lock))
+        window = QtWindow(Workspace(lock))
+        window.start_integrations()
+        return window
 
     return run_host(window_factory=build, production=True)

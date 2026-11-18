@@ -16,7 +16,7 @@ def main():
     source = Path(__file__).resolve().parents[1]
     with tempfile.TemporaryDirectory(prefix='FolderForge-Qt-test-') as temp:
         root = Path(temp).resolve()
-        for name in ('qt_preview.py', 'qt_app.py', 'workspace.py', 'app_core.py', 'instance_lock.py', 'settings.py', 'historik.py'):
+        for name in ('qt_preview.py', 'qt_app.py', 'workspace.py', 'app_core.py', 'instance_lock.py', 'settings.py', 'historik.py', 'qt_help.py', 'qt_diagnostics.py', 'updater.py', 'logg.py', 'qt_integrations.py'):
             shutil.copy2(source / name, root / name)
         (root / 'Icon').mkdir()
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
@@ -104,7 +104,20 @@ def main():
             ws.config.theme = 'Light'
             functional.apply_accessibility()
             assert '#F4F7FB' in functional.styleSheet()
+            ws.config.theme = functional.theme.currentText()
+            ws.config.text_size = functional.text_size.currentText()
+            ws.config.high_contrast = functional.high_contrast.isChecked()
+            assert not functional.can_restart(), 'An open project dialog must defer restart'
             dialog.reject()
+            assert functional.can_restart(), 'Clean UI must allow a ready update'
+            functional.structure.insertPlainText('\n    unsaved/')
+            assert not functional.can_restart(), 'Unsaved template must defer restart'
+            functional.structure.document().setModified(False)
+            from qt_help import DiagnosticsDialog
+            diagnostics = DiagnosticsDialog(functional)
+            diagnostics.system_check()
+            assert 'qt_version' in diagnostics.details.toPlainText()
+            diagnostics.reject()
             functional.close()
             functional.deleteLater()
             print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')

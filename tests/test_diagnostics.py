@@ -1,3 +1,4 @@
+from source_helpers import app_source
 import ast
 import json
 import logging
@@ -184,7 +185,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn('preserve', next((self.logs / 'resolved-errors').rglob('*.log')).read_text())
 
     def test_export_privacy_decline_does_not_open_save_dialog(self):
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_export_diagnostics')
         ns = dict(messagebox=SimpleNamespace(askyesno=Mock(return_value=False)), filedialog=Mock())
@@ -195,7 +196,7 @@ class DiagnosticsTests(unittest.TestCase):
         ns['filedialog'].asksaveasfilename.assert_not_called()
 
     def test_diagnostic_ui_exposes_group_count_dates_and_confirmation(self):
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_show_error_issues')
         code = ast.unparse(node)
@@ -216,7 +217,7 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertNotIn('screenshot.png', archive.namelist())
 
     def test_display_collection_contains_geometry_not_window_titles(self):
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         app = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
         node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_display_diagnostics')
         window = Mock()
@@ -241,7 +242,7 @@ class DiagnosticsTests(unittest.TestCase):
 class HotkeyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+        tree = ast.parse(app_source())
         names = {'normalize_hotkey_keys', 'validate_hotkey_combo', 'hotkey_expression', 'hotkey_label'}
         nodes = [ast.ImportFrom(module='__future__', names=[ast.alias(name='annotations')], level=0)]
         for node in tree.body:

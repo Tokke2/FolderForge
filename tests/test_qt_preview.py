@@ -13,9 +13,9 @@ class QtPreviewTests(unittest.TestCase):
         for name in ('qt_preview.py', 'Starta-FolderForge-Qt.py', 'requirements-qt.txt'):
             self.assertIn(name, updater.OPTIONAL_FILES)
             self.assertNotIn(name, updater.FILES)
-        self.assertNotIn('PySide6', Path('requirements.txt').read_text())
+        self.assertIn('PySide6', Path('requirements.txt').read_text())
         self.assertNotIn('qt_preview', Path('Starta-FolderForge.py').read_text())
-        self.assertNotIn('qt_preview', Path('folder.pyw').read_text())
+        self.assertIn('from gui_entry import main as _qt_main', Path('folder.pyw').read_text())
 
     def test_no_production_imports_or_file_writes(self):
         source = Path('qt_preview.py').read_text()

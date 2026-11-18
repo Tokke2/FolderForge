@@ -27,7 +27,7 @@ def main():
     evidence.mkdir(exist_ok=True)
     base = Path(tempfile.mkdtemp(prefix='FolderForge-smoke-')).resolve()
     source = Path(__file__).resolve().parents[1]
-    for name in updater.FILES:
+    for name in updater.FILES | updater.OPTIONAL_FILES:
         (base / name).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source / name, base / name)
     shutil.copytree(source / 'Icon', base / 'Icon')
@@ -39,6 +39,7 @@ def main():
     launcher = updater.ensure_launcher(base, pythonw, base / 'Icon/projektmapp.ico')
     env = os.environ.copy()
     env['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
+    env['FOLDERFORGE_GUI'] = 'tk'
     # Child must route through the actual windowless bootstrap on its first start.
     env.pop('FOLDERFORGE_RUNTIME_READY', None)
     env.pop('FOLDERFORGE_RUNTIME_POLICY', None)
@@ -196,7 +197,7 @@ def main():
         # supplied explicitly by this test harness (never a production flag).
         pending = base / 'data/update-pending'
         pending.mkdir()
-        for name in updater.FILES:
+        for name in updater.FILES | updater.OPTIONAL_FILES:
             (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         (pending / 'folder.pyw').write_text("raise RuntimeError('simulated failed update')\n")
@@ -224,7 +225,7 @@ def main():
         psutil.Process(recovered['pid']).wait(timeout=15)
         # Now a valid candidate must acknowledge itself from its own Tk loop.
         pending.mkdir()
-        for name in updater.FILES:
+        for name in updater.FILES | updater.OPTIONAL_FILES:
             (pending / name).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(base / name, pending / name)
         updater.write_state(base, dict(installed='v0.0.2', pending='v0.0.2',

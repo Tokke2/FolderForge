@@ -89,7 +89,11 @@ function Test-ExistingPythonGui($Python) {
     try {
         # Short-lived LOCAL functional probe. No app imports, settings, pip,
         # network, hotkey hooks, autostart or installations. Withdraw before update.
+        if ($env:FOLDERFORGE_GUI -eq 'tk') {
         $Code = 'import tkinter,customtkinter; from PIL import Image; import pystray; r=customtkinter.CTk(); r.withdraw(); r.update_idletasks(); r.destroy()'
+        } else {
+            $Code = 'from PySide6.QtWidgets import QApplication; from PySide6.QtGui import QIcon; a=QApplication([]); a.processEvents(); a.quit()'
+        }
         $Result = Invoke-Hidden $Python.Console @('-c',$Code)
         if ($Result.Code -eq 0) { return $true }
         $Reason = $Result.Err.Trim()

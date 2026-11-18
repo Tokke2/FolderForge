@@ -14,7 +14,8 @@ class Workspace:
         self.lock = lock
         self.base = Path(base)
         self.settings_file = self.base / 'data/settings.json'
-        self.raw = read_json_safe(self.settings_file, {}) or {}
+        raw = read_json_safe(self.settings_file, {})
+        self.raw = raw if isinstance(raw, dict) else {}
         self.config = AppSettings.from_dict(self.raw)
         self.templates = TemplateManager(self.base / 'data/templates')
         self.history = ProjectHistory(self.base / 'data/history.json')

@@ -112,6 +112,18 @@ Author: Rickard Längkvist
 
 from __future__ import annotations
 
+# Keep the stable legacy filename so native shortcuts and recovery supervisors
+# still reach the default GUI. Tk requires an explicit reserve selection.
+if __name__ == '__main__':
+    import os as _gui_os
+    if _gui_os.environ.get('FOLDERFORGE_GUI') != 'tk':
+        from pathlib import Path as _GuiPath
+        from updater import ensure_shared_core as _ensure_gui_modules
+        _ensure_gui_modules(_GuiPath(__file__).resolve().parent)
+        from gui_entry import main as _qt_main
+        raise SystemExit(_qt_main())
+
+
 import sys
 import subprocess
 import importlib.metadata
@@ -147,6 +159,7 @@ logger = logging.getLogger(__name__)
 from updater import ensure_shared_core
 ensure_shared_core(Path(__file__).resolve().parent)
 from instance_lock import SingleInstanceLock, _pid_alive, default_lock_dir, DEFAULT_POLL_MS
+from app_core import validate_hotkey_combo, normalize_hotkey_keys, hotkey_expression
 from app_core import create_project_tree, ExistingProject, build_project_name
 from app_core import (AppSettings, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, NameValidator, RESERVED_STEM_RE, StructureEngine, TREE_IGNORED_DIRS, TemplateManager, _PLATE_RE, _SUFFIX_STRIP, generate_tree_string_safe, normalize_plate_name, project_year_choices, sanitize_name, strip_root_level, validate_project_year, validate_settings)
 
@@ -818,39 +831,6 @@ HOTKEY_MODIFIERS: frozenset = frozenset({
 HOTKEY_MAX_KEYS: int = 5
 
 
-def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
-    """
-    Godkänner bara kombinationer som INTE kan stjäla vanlig skrivning:
-      • minst 1 modifierare (ctrl/alt/shift/cmd/win)
-      • minst 1 icke-modifierare
-      • max 5 tangenter
-      • inga mellanslag i namn
-    Returnerar (ok?, normaliserad_lista, felmeddelande).
-    """
-    norm = normalize_hotkey_keys(keys)
-
-    if not norm:
-        return False, [], "Inga tangenter registrerade."
-    if len(norm) > HOTKEY_MAX_KEYS:
-        return False, norm, f"Max {HOTKEY_MAX_KEYS} tangenter i en kombination."
-
-    mods = [k for k in norm if k in HOTKEY_MODIFIERS]
-    base = [k for k in norm if k not in HOTKEY_MODIFIERS]
-
-    if not mods:
-        return False, norm, (
-            "Snabbtangenten måste innehålla minst en modifierare "
-            "(Ctrl, Alt, Shift eller Win) — annars blockerar den "
-            "vanlig skrivning i hela Windows."
-        )
-    if not base:
-        return False, norm, "Kombinationen saknar en vanlig tangent."
-    for key in base:
-        if not ((len(key) == 1 and key.isprintable() and key not in "+<> ")
-                or key in {"space", "enter", "tab", "esc", "backspace", "delete", "insert", "home", "end", "page_up", "page_down", "up", "down", "left", "right"}
-                or re.fullmatch(r"f(?:[1-9]|1[0-9]|2[0-4])", key)):
-            return False, norm, "Okänd tangent: " + key
-    return True, norm, ""
 
 
 
@@ -890,35 +870,8 @@ HOTKEY_KEY_ORDER: Dict[str, int] = {
 }
 
 
-def normalize_hotkey_keys(keys: Iterable[str]) -> List[str]:
-    """
-    Normaliserar pynput-tangentnamn till en stabil, läsbar ordning:
-      'Key.ctrl_l' → 'ctrl', 'Key.shift_r' → 'shift', modifierare först.
-    Samma logik som redan finns i _on_press_rec, men GUI-fri och testbar.
-    """
-    norm: List[str] = []
-    for k in keys or []:
-        if k is None:
-            continue
-        raw = str(k)
-        if len(raw) == 1 and 1 <= ord(raw) <= 26:
-            raw = chr(ord(raw) + 96)  # pynput kan ge Ctrl+M som \r
-        s = raw.strip().lower()
-        if not s:
-            continue
-        if s.startswith('key.'):
-            s = s[4:]
-        s = s.replace('_l', '').replace('_r', '')
-        s = {'win': 'cmd', 'super': 'cmd', 'command': 'cmd', 'option': 'alt', 'control': 'ctrl'}.get(s, s)
-        if s and s not in norm:
-            norm.append(s)
-    norm.sort(key=lambda x: (HOTKEY_KEY_ORDER.get(x, 99), x))
-    return norm
 
 
-def hotkey_expression(keys):
-    """pynput: <ctrl>+<alt>+m, aldrig <m>."""
-    return "+".join(k if len(k) == 1 else "<" + k + ">" for k in normalize_hotkey_keys(keys))
 
 
 def hotkey_label(keys: Iterable[str]) -> str:

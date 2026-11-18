@@ -40,6 +40,24 @@ class FocusTests(unittest.TestCase):
         self.assertTrue(primary.check_trigger())
         self.assertFalse(primary.check_trigger())
 
+    def test_rejected_and_repeated_release_cannot_remove_another_owners_lock(self):
+        first = self.Lock('FolderForge', self.folder)
+        rejected = self.Lock('FolderForge', self.folder)
+        self.addCleanup(first.release)
+        self.assertTrue(first.acquire())
+        self.assertFalse(rejected.acquire())
+        rejected.release()
+        self.assertTrue(first.pid_file.exists())
+        first.release()
+        second = self.Lock('FolderForge', self.folder)
+        self.addCleanup(second.release)
+        self.assertTrue(second.acquire())
+        first.release()
+        self.assertTrue(second.pid_file.exists())
+        third = self.Lock('FolderForge', self.folder)
+        self.assertFalse(third.acquire())
+        third.release()
+
     def test_request_received_during_gui_initialization_is_not_lost(self):
         lock = self.Lock('FolderForge', self.folder)
         lock._is_primary = True

@@ -28,6 +28,7 @@ def main():
     (base / 'data/settings.json').write_text(json.dumps({'text_size': size}), encoding='utf-8')
     env = os.environ.copy()
     env['FOLDERFORGE_WINDOWS_SMOKE'] = '1'
+    env['FOLDERFORGE_GUI'] = 'tk'
     status_path = base / 'data/windows-smoke-status.json'
     observed = []
     def status():

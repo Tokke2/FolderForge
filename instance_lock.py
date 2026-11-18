@@ -443,7 +443,16 @@ class SingleInstanceLock:
     # ------------------------------------------------------------------
     def release(self) -> None:
         """Frigör låset. Idempotent — kan anropas flera gånger säkert."""
+        if not self._is_primary and self._fd is None and self._mutex_handle is None:
+            return  # A rejected or previously released instance owns no files.
         if self._is_primary:
+            # Remove owner metadata WHILE still holding the OS lock. Never unlink
+            # the flock inode: a concurrent acquirer could otherwise lock a new file.
+            for path in (self.pid_file, self.trigger_file):
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
             try:
                 from updater import clear_instance_health
                 clear_instance_health(self.lock_dir)
@@ -486,17 +495,5 @@ class SingleInstanceLock:
             logger.info("Instanslås frigivet (%s, pid=%d)",
                         self._backend, os.getpid())
         except Exception:
-            pass
-
-        for path in (self.pid_file, self.trigger_file):
-            try:
-                path.unlink()
-            except OSError:
-                pass
-
-        try:
-            if self.lock_file.exists() and not IS_WINDOWS:
-                self.lock_file.unlink()
-        except OSError:
             pass
 
