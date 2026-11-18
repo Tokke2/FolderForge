@@ -37,5 +37,5 @@ class QtPreviewTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-S', 'Starta-FolderForge-Qt.py'],
                                 capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 1)
-        self.assertIn('requirements-qt.txt', result.stderr)
-        self.assertIn('Tk-startfilen', result.stderr)
+        self.assertIn('requirements.txt', result.stderr)
+        self.assertIn('Starta-FolderForge-Tk.py', result.stderr)

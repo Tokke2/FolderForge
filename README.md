@@ -29,7 +29,7 @@
 
 1. [Hämta senaste v0.0.2](https://github.com/Tokke2/FolderForge/releases/tag/v0.0.2) → **Source code (zip)**.
 2. Packa upp **hela** mappen till en plats där du har skrivbehörighet.
-3. Appen kräver **Python 3.11+ med Tkinter** och paketen i `requirements.txt`.
+3. Appen kräver **Python 3.11+ med PySide6 (Qt)** och paketen i `requirements.txt`.
    Om Python saknas kan startfilen erbjuda installation enligt nedan. Extra apppaket installeras inte av startfilen.
 4. Starta enligt ditt operativsystem nedan.
 
@@ -43,7 +43,7 @@ upptäckas säkert: avbryt erbjudandet om IT redan har en sådan installation.
 På Windows provas systemets aktuella Python först (även 3.15). Om dess lokala
 GUI-prov misslyckas väljs i första hand en redan installerad **3.14**, därefter
 andra installerade Python 3.11+. Provet kontrollerar nödvändiga GUI-importer
-samt en dold Tk-start, inte paketversioner eller tillgängliga uppgraderingar.
+samt en dold Qt-start, inte paketversioner eller tillgängliga uppgraderingar.
 Vald och överhoppad tolk med orsak skrivs i `logs/folderforge.log`.
 Om ingen fungerar avbryts starten utan konsolreserv eller installation.
 Detta är ett Python-källkodspaket, inte en fristående signerad app.
@@ -156,7 +156,7 @@ vid misslyckande erbjuds återställning. Ingen upptagen process tvångsavslutas
 
 Vid manuell uppdatering: stäng appen, ersätt appfilerna och **behåll `data/`**.
 
-## Om starten säger `No module named 'customtkinter'`
+## Om starten säger `No module named 'PySide6'`
 
 Det saknade paketet finns inte i **den Python som startaren använder**.
 En annan Python kan ha paketet utan att det hjälper den här starten.
@@ -168,14 +168,14 @@ En annan Python kan ha paketet utan att det hjälper den här starten.
 
 Det lokala GUI-provet väljer bara bland redan installerade tolkar. Ingen
 nedladdning, paketinstallation eller uppgradering körs automatiskt.
-Tkinter/Tk är en del av Python-installationen och ska inte installeras med pip.
+Tkinter behövs endast för det uttryckliga Tk-reservvalet, inte för Qt.
 Om appen inte kan öppnas kan dess uppdateringsknapp inte användas:
 packa i så fall upp appfilerna från v0.0.2 manuellt och **behåll `data/`**.
 
 ## Felsökning
 
 - Saknas appikonen? Kontrollera att hela `Icon/` följde med.
-- Startar appen inte? Kontrollera befintlig Python/Tkinter och nödvändiga paket.
+- Startar appen inte? Kontrollera befintlig Python/PySide6 och nödvändiga paket.
 - Öppna **Hjälp → Fellista och felsökning**, eller läs `logs/folderforge-errors.log`.
 - Inställningar, mallar och historik ligger i **`data/`**. Radera inte den mappen.
 - Python kan fortfarande visas som processikon i Aktivitetshanteraren; appens
@@ -226,15 +226,39 @@ I samma dialog finns fasta knappar för **PayPal Rickard3dPrint**
 först efter klick. Ingen separat stödsida eller inbäddad betalning används.
 Belopp väljs hos betaltjänsten. Kontrollera alltid mottagaren innan betalning.
 
-## Valfri Qt-prototyp – Tk är kvar
+## Qt är standard – Tk är ett uttryckligt reservval
 
-En separat, valfri PySide6-klient kan provas enligt
-[docs/QT_PROTOTYP.md](docs/QT_PROTOTYP.md). Den ändrar inte vanlig start och
-installerar inget automatiskt. Utan `--preview` används riktiga projektdata.
-Tk är fortfarande den riktiga appen och reservvalet.
+Vanliga startfiler öppnar nu **Qt**. De startar dolt med appikon i systemfältet.
+Stäng och minimera döljer fönstret; **Avsluta** i systemfältet stänger processen.
+En extra start visar inte det befintliga fönstret. Snabbtangenten kan däremot visa det.
 
-**Qt-etapp 2:** Den valfria `Starta-FolderForge-Qt.py` kan nu skapa riktiga projekt
-med gemensam kärna, historik, mallar och instanslås. Tk och Qt kan inte köras
-samtidigt i detta läge. `--preview` behåller den skrivskyddade förhandsvisningen.
-Tk är fortfarande standard; se slutet av Qt-guiden för genomförda och kvarvarande
-funktioner. Qt är ännu inte en fullständig ersättning för Tk.
+Ingen automatisk växling till Tk och inga automatiska paketinstallationer görs.
+För en uttrycklig reservstart: kör `Starta-FolderForge-Tk.py` med en befintlig
+Python som har paketen i `requirements-tk.txt` samt Tkinter. Stäng först Qt via
+systemfältet. Båda gränssnitten använder samma instanslås, inställningar, mallar
+och historik. Reservvalet flyttar eller raderar inga projekt.
+
+### Samlad felsökning
+
+Under **Hjälp → Fellista och felsökning** finns bestående fel, feldetaljer,
+system-/skärmkontroll och lokal diagnostikexport. Markera bara ett fel som löst
+när orsaken verkligen är åtgärdad; det utför inte en reparation eller gör om en
+misslyckad projektåtgärd. Utförliga loggar aktiveras separat under Hjälp.
+
+- `logs/startup-diagnostics.json`: senaste startfasen, Python-/paketversioner och appfilernas kontrollsummor.
+- `logs/folderforge-errors.log`: separat fellogg tills felen hanteras.
+- `logs/folderforge.log`: vanlig logg; tidigare dagar arkiveras.
+- Export skapar en **lokal ZIP**, efter godkännande. Ingenting skickas automatiskt.
+  Kontrollera filen innan du delar den: vanliga loggar kan innehålla sökvägar och projektnamn.
+- På Linux kräver Qt en fungerande grafikmiljö och Qt:s systembibliotek. Vid fel
+  om `xcb` behöver IT kontrollera distributionens Qt/XCB-bibliotek; appen installerar inget.
+- Autostart aktiveras uttryckligen under Inställningar, med bekräftelse. På Windows
+  visas resultat per metod; på macOS/Linux skapas användarens inloggningspost.
+  OS-behörigheter, macOS Accessibility och Wayland kan begränsa globala snabbtangenter.
+
+Uppdateringar tillämpas under instanslåset och övervakas tills Qt bekräftat starten.
+Automatisk omstart väntar medan en dialog är öppen, mall/inställningar är osparade
+eller mappträdsinläsning pågår. Kontrollera ändå alltid det egna arbetet innan du
+väljer manuell omstart.
+
+Utvecklarunderlag och kvarvarande hårdvarukontroller: `docs/QT_PROTOTYP.md`.
