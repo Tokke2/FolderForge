@@ -33,6 +33,27 @@ class Workspace:
             raise OSError('Inställningarna kunde inte sparas')
         self.raw = result
 
+    def profile_root(self, template=None):
+        """Legacy templates inherit the global path; profiles store their own path."""
+        selected = template or self.config.default_template
+        if selected not in self.templates.list_templates():
+            raise ValueError('Vald profil/mall saknas.')
+        root = self.config.save_root
+        if selected not in self.templates._builtin:
+            path = self.templates.directory / (NameValidator.sanitize(selected) + '.json')
+            data = read_json_safe(path, {})
+            if isinstance(data, dict) and data.get('name') == selected and 'save_root' in data:
+                root = data['save_root']
+        if not isinstance(root, str) or not root.strip() or not Path(root).is_absolute():
+            raise ValueError('Profilens sparplats är ogiltig. Välj en fullständig sökväg under Mallar.')
+        return Path(root)
+
+    def save_profile(self, name, structure, save_root):
+        self.require_lock()
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError('Ange ett profilnamn.')
+        self.templates.save_template(name.strip(), structure, save_root=save_root)
+
     def prepare_project(self, name, template=None, custom_structure=None):
         self.require_lock()
         if self.config.plate_mode:
@@ -49,8 +70,8 @@ class Workspace:
         items, _ = strip_root_level(items, name)
         return name, items
 
-    def create_project(self, name, items):
+    def create_project(self, name, items, template=None):
         self.require_lock()
-        path = create_project_tree(self.config.save_root, name, items)
+        path = create_project_tree(self.profile_root(template), name, items)
         self.history.add(path)
         return path

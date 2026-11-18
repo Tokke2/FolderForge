@@ -398,18 +398,27 @@ class TemplateManager:
                 logger.warning("Kunde inte läsa mall %s: %s", f.name, e)
         return templates
 
-    def save_template(self, name: str, structure: str) -> None:
+    def save_template(self, name: str, structure: str, *, save_root=None) -> None:
         if name in self._builtin:
             raise ValueError("Inbyggda mallar kan inte skrivas över. Välj ett eget namn.")
         if not StructureEngine.parse_structure_text(structure)[1]:
             raise ValueError("Mallen måste innehålla en struktur.")
         safe = NameValidator.sanitize(name)
+        path = self.directory / f"{safe}.json"
+        existing = read_json_safe(path, {})
+        payload = dict(existing) if isinstance(existing, dict) else {}
+        payload.update(name=name, structure=structure)
+        if save_root is not None:
+            root = str(save_root).strip()
+            if not root or not Path(root).is_absolute():
+                raise ValueError('Profilens sparplats måste vara en fullständig sökväg.')
+            payload['save_root'] = root
         # M1/F1 — atomisk skrivning med backup. Obs: filen får nu indent=2
         # (atomic_write_json:s standard) istället för en enda lång rad;
         # innehållet och inläsningsvägen är oförändrade.
         if not atomic_write_json(
-            self.directory / f"{safe}.json",
-            {"name": name, "structure": structure},
+            path,
+            payload,
         ):
             raise OSError(f"Kunde inte spara mall {name!r}")
 

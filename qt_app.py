@@ -140,7 +140,7 @@ class ProjectDialog(QDialog):
         self.template.addItems(list(window.workspace.templates.list_templates()))
         self.template.setCurrentText(window.workspace.config.default_template)
         for title, widget in (('&Projektnamn', self.name), ('&Fordon', self.vehicle),
-                              ('&Lokal', self.location), ('&År', self.year), ('&Mall', self.template)):
+                              ('&Lokal', self.location), ('&År', self.year), ('&Profil / mall', self.template)):
             form.addRow(title, widget)
         body.addLayout(form)
         body.addWidget(label('Tillfällig egen struktur (frivilligt, ändrar inte dina sparade mallar):'))
@@ -194,7 +194,8 @@ class ProjectDialog(QDialog):
         try:
             name, items = self.prepare()
             folders, files = StructureEngine.count_items(items)
-            self.preview.setText(f'Slutnamn: {name}\n{folders} mappar, {files} filer')
+            self.preview.setText(f'Slutnamn: {name}\n{folders} mappar, {files} filer\n'
+                f'Sparas i: {self.window.workspace.profile_root(self.template.currentText()) / name}')
             self.error.clear()
             self.create_button.setEnabled(True)
         except (ValueError, OSError) as exc:
@@ -205,12 +206,12 @@ class ProjectDialog(QDialog):
     def create(self):
         try:
             name, items = self.prepare()
-            path = Path(self.window.workspace.config.save_root) / name
+            path = self.window.workspace.profile_root(self.template.currentText()) / name
             if QMessageBox.question(self, 'Bekräfta skapande',
                     f'Skapa projektet här?\n{path}\n\n{len(items)} strukturposter.',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
-            path = self.window.workspace.create_project(name, items)
+            path = self.window.workspace.create_project(name, items, self.template.currentText())
             self.window.statusBar().showMessage(f'Skapad: {path}')
             stat = path.stat()
             self.window._created.append((path, stat.st_dev, stat.st_ino))
@@ -269,11 +270,11 @@ class QtWindow(PreviewWindow):
             body.addWidget(label(title))
             body.addWidget(label(description))
             if caption == 'Skapa standardprojekt':
-                self.default_template_label = label('Mall: ' + workspace.config.default_template)
+                self.default_template_label = label('Profil / mall: ' + workspace.config.default_template)
                 body.addWidget(self.default_template_label)
             button(body, caption, callback)
             create.addWidget(card)
-        self.save_root_label = label('Sparplats: ' + workspace.config.save_root)
+        self.save_root_label = label('Profilens sparplats: ' + str(workspace.profile_root()))
         create.addWidget(self.save_root_label)
         button(create, 'Ångra senast skapade projekt…', self.undo_last)
         button(create, 'Sök uppdatering nu', self.check_updates)
@@ -300,7 +301,7 @@ class QtWindow(PreviewWindow):
         file_menu.addAction('Skapa standardprojekt', self.open_project)
         file_menu.addAction('Klistra in struktur', self.open_custom_project)
         file_menu.addAction('Öppna sparplats', lambda: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(self.workspace.config.save_root)))
+            QUrl.fromLocalFile(str(self.workspace.profile_root()))))
         file_menu.addAction('Minimera till systemfältet', self.hide)
         file_menu.addAction(self.exit_action)
         view_menu = self.menuBar().addMenu('Visa')
@@ -487,34 +488,62 @@ class QtWindow(PreviewWindow):
 
     def template_page(self):
         layout = page(self.tabs, 'Mallar')
+        layout.addWidget(label('Profiler – varje mall har en sparplats'))
+        layout.addWidget(label('Välj profil vid skapandet så används både strukturen och sparplatsen. '
+            'Äldre mallar utan egen sparplats använder den allmänna sparplatsen i Inställningar. '
+            'Ge en inbyggd mall ett eget namn för att spara en profil.'))
         self.templates = QComboBox()
         self.templates.addItems(list(self.workspace.templates.list_templates()))
         self.template_name = QLineEdit()
-        self.template_name.setPlaceholderText('Mallnamn (nytt namn skapar en egen mall)')
+        self.template_name.setPlaceholderText('Profilnamn (nytt namn skapar en egen profil)')
         self.structure = QPlainTextEdit()
         layout.addWidget(self.templates)
         layout.addWidget(self.template_name)
         layout.addWidget(self.structure)
+        layout.addWidget(label('Sparplats för profilen'))
+        self.profile_root_edit = QLineEdit()
+        self.profile_root_edit.setAccessibleName('Profilens sparplats')
+        layout.addWidget(self.profile_root_edit)
+        def choose_profile_root():
+            path = QFileDialog.getExistingDirectory(self, 'Välj profilens sparplats', self.profile_root_edit.text())
+            if path:
+                self.profile_root_edit.setText(path)
+                self.profile_root_edit.setModified(True)
+        button(layout, 'Välj profilens sparplats…', choose_profile_root)
         def load(name):
             self.template_name.setText(name)
             self.structure.setPlainText(self.workspace.templates.list_templates().get(name, ''))
+            try:
+                root = self.workspace.profile_root(name) if name else Path(self.workspace.config.save_root)
+                self.profile_root_edit.setText(str(root))
+            except ValueError:
+                self.profile_root_edit.clear()
+            self.profile_root_edit.setModified(False)
+            self.template_name.setModified(False)
         self.templates.currentTextChanged.connect(load)
         def save():
             try:
                 self.workspace.require_lock()
-                self.workspace.templates.save_template(self.template_name.text(), self.structure.toPlainText())
+                name = self.template_name.text().strip()
+                self.workspace.save_profile(name, self.structure.toPlainText(), self.profile_root_edit.text())
+                self.templates.blockSignals(True)
                 self.templates.clear()
                 self.templates.addItems(list(self.workspace.templates.list_templates()))
+                self.templates.setCurrentText(name)
+                self.templates.blockSignals(False)
+                load(name)
                 self.structure.document().setModified(False)
-                self.statusBar().showMessage('Mall sparad')
+                self.default_template_label.setText('Profil / mall: ' + self.workspace.config.default_template)
+                self.save_root_label.setText('Profilens sparplats: ' + str(self.workspace.profile_root()))
+                self.statusBar().showMessage('Profil sparad – struktur och sparplats')
             except (OSError, ValueError, RuntimeError) as exc:
                 logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
                 QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
-        button(layout, 'Spara som egen mall', save)
+        button(layout, 'Spara profil (mall + sparplats)', save)
         def set_default():
             self.workspace.config.default_template = self.templates.currentText()
             self.save_settings()
-        button(layout, 'Använd vald mall som standard', set_default)
+        button(layout, 'Använd vald profil som standard', set_default)
         def remove():
             if QMessageBox.question(self, 'Ta bort egen mall?', self.templates.currentText(),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
@@ -522,8 +551,12 @@ class QtWindow(PreviewWindow):
             try:
                 if not self.workspace.templates.delete_template(self.templates.currentText()):
                     raise ValueError('Inbyggda mallar kan inte tas bort')
+                if self.workspace.config.default_template == self.templates.currentText():
+                    self.workspace.config.default_template = 'Skaderapport'
+                    self.workspace.save_settings()
                 self.templates.clear()
                 self.templates.addItems(list(self.workspace.templates.list_templates()))
+                self.save_settings()
             except (OSError, ValueError) as exc:
                 QMessageBox.warning(self, 'Kunde inte ta bort mall', str(exc))
         button(layout, 'Ta bort vald egen mall…', remove)
@@ -555,7 +588,8 @@ class QtWindow(PreviewWindow):
 
     def settings_page(self):
         layout = page(self.tabs, 'Inställningar')
-        layout.addWidget(label('Samma sparplats och inställningsformat som Tk. Ändringar sparas först med Spara.'))
+        layout.addWidget(label('Allmän sparplats för äldre mallar utan egen profilsparplats. '
+            'Profiler med egen sparplats påverkas inte. Ändringar sparas först med Spara.'))
         self.root_edit = QLineEdit(self.workspace.config.save_root)
         layout.addWidget(self.root_edit)
         def choose():
@@ -685,8 +719,8 @@ class QtWindow(PreviewWindow):
         try:
             self.workspace.save_settings()
             self.apply_accessibility()
-            self.default_template_label.setText('Mall: ' + self.workspace.config.default_template)
-            self.save_root_label.setText('Sparplats: ' + self.workspace.config.save_root)
+            self.default_template_label.setText('Profil / mall: ' + self.workspace.config.default_template)
+            self.save_root_label.setText('Profilens sparplats: ' + str(self.workspace.profile_root()))
             self.statusBar().showMessage('Inställningar sparade')
         except (OSError, RuntimeError) as exc:
             logging.getLogger('qt.settings').exception('Inställningar kunde inte sparas')
@@ -857,6 +891,7 @@ class QtWindow(PreviewWindow):
             return False
         config = self.workspace.config
         return (self._busy_tasks == 0 and not self.structure.document().isModified()
+                and not self.profile_root_edit.isModified() and not self.template_name.isModified()
                 and self.root_edit.text().strip() == config.save_root
                 and self.open_after.isChecked() == config.open_after_creation
                 and self.plate_mode.isChecked() == config.plate_mode

@@ -232,6 +232,29 @@ def main():
                 QTimer.singleShot(100, inspect_update)
                 functional.check_updates()
             assert not update_errors, update_errors
+            # Save a profile through the real editor, then create in its own destination.
+            functional.tabs.setCurrentIndex(2)
+            functional.template_name.setText('CI Profil')
+            functional.structure.setPlainText('Bilder/\nUnderlag/\n')
+            profile_root = root / 'Profile Projects'
+            functional.profile_root_edit.setText(str(profile_root))
+            save_profile = next(b for b in functional.findChildren(QPushButton)
+                                if b.text() == 'Spara profil (mall + sparplats)')
+            save_profile.click()
+            assert ws.profile_root('CI Profil') == profile_root
+            assert functional.templates.currentText() == 'CI Profil'
+            functional.open_project()
+            profile_dialog = functional.dialog
+            profile_dialog.template.setCurrentText('CI Profil')
+            profile_dialog.name.setText('DEF456')
+            profile_dialog.year.setEditText('2026')
+            assert str(profile_root) in profile_dialog.preview.text()
+            with patch('qt_app.QMessageBox.question', return_value=QMessageBox.Yes):
+                profile_dialog.create()
+            assert (profile_root / 'DEF456 2026/Bilder').is_dir()
+            assert (profile_root / 'DEF456 2026/Underlag').is_dir()
+            assert not (root / 'Projects/DEF456 2026').exists()
+            profile_dialog.reject()
             functional.close()
             functional.deleteLater()
             print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')

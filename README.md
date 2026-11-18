@@ -262,3 +262,22 @@ eller mappträdsinläsning pågår. Kontrollera ändå alltid det egna arbetet i
 väljer manuell omstart.
 
 Utvecklarunderlag och kvarvarande hårdvarukontroller: `docs/QT_PROTOTYP.md`.
+
+## Profiler: mall + egen sparplats
+
+Under **Mallar** kan du spara profiler. En profil består av ett namn, mappstrukturen
+ och en fullständig sparplats. Välj en befintlig mall som utgångspunkt, skriv ett
+ eget profilnamn, välj sparplats och tryck **Spara profil (mall + sparplats)**.
+ Du kan till exempel ha ”Jobb” som sparar på arbetsplatsens disk och ”Privat” som
+ sparar på en annan plats, med samma eller olika strukturer.
+
+Välj **Profil / mall** när du skapar projektet. Slutlig sökväg visas före
+bekräftelsen. **Använd vald profil som standard** väljer förvalet för nya projekt.
+Äldre mallar utan egen sparplats använder den allmänna sparplatsen i Inställningar.
+Inbyggda mallar ändras inte: spara en kopia under eget namn för en egen profil.
+Profiler sparas atomiskt i samma JSON-fil som mallen under `data/templates/`.
+Att spara en profil flyttar inga projekt och skapar inte dess projektmappar.
+
+Det uttryckliga äldre Tk-reservgränssnittet behåller profilinformationen när en
+mall redigeras, men använder fortfarande sin allmänna sparplats vid skapande.
+Använd det ordinarie gränssnittet för profilspecifika sparplatser.
