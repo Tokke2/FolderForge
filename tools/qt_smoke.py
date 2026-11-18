@@ -101,6 +101,11 @@ def main():
             assert [b.text() for b in functional.tabs.buttons] == [
                 'Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent']
             assert all(not b.icon().isNull() for b in functional.tabs.buttons)
+            functional.tabs.setTabVisible(5, False)
+            assert 5 in functional.tabs.hidden_tabs
+            functional.tabs.setTabVisible(5, True)
+            assert 5 not in functional.tabs.hidden_tabs
+            assert functional.hotkey_recorder.accessibleName() == 'Spela in snabbtangent'
             functional.history_filter.setText('NO-SUCH-PROJECT')
             assert functional.history_list.count() == 0
             functional.history_filter.clear()
