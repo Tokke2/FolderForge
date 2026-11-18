@@ -1,4 +1,4 @@
 # Default Qt app. Manual installation by user/IT only; never installed at startup.
 PySide6>=6.8,<7
-pynput>=1.7
+pynput>=1.7; sys_platform != "win32"
 pywin32>=306; sys_platform == "win32"

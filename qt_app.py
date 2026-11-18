@@ -148,6 +148,20 @@ class ProjectDialog(QDialog):
         self.custom.setPlaceholderText('Lämna tomt för vald mall, eller klistra in ett indraget mappträd.')
         self.custom.setMaximumHeight(130)
         body.addWidget(self.custom)
+        def show_structure():
+            dialog = QDialog(self)
+            dialog.setWindowTitle('Mappstruktur för projektet')
+            preview_layout = QVBoxLayout(dialog)
+            text = QPlainTextEdit()
+            text.setReadOnly(True)
+            structure = self.custom.toPlainText() if self.custom.toPlainText().strip() else (
+                self.window.workspace.templates.list_templates().get(self.template.currentText(), ''))
+            text.setPlainText(structure)
+            preview_layout.addWidget(text)
+            button(preview_layout, 'Stäng', dialog.reject)
+            fit_to_screen(dialog, 600, 550)
+            dialog.exec()
+        button(body, 'Visa vald mappstruktur', show_structure)
         self.preview = label('')
         body.addWidget(self.preview)
         self.error = label('')
@@ -735,31 +749,85 @@ class QtWindow(PreviewWindow):
         dialog.exec()
 
     def update_status(self):
-        from updater import get_update_status
+        from updater import get_update_status, pending_ready_for_restart
+        existing = getattr(self, '_update_dialog', None)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
         dialog = QDialog(self)
+        self._update_dialog = dialog
         dialog.setWindowTitle('Uppdateringsstatus')
         layout = QVBoxLayout(dialog)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         layout.addWidget(text)
+        explanation = label('')
+        layout.addWidget(explanation)
+        def restart():
+            if QMessageBox.question(dialog, 'Installera hämtad uppdatering?',
+                    'Läs ändringslistan ovan. Appen stängs och startas om dold i systemfältet. '
+                    'Projekt, mallar och historik behålls. Fortsätt?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
+                dialog.accept()
+                QTimer.singleShot(0, self.restart_update)
+        restart_button = button(layout, 'Installera hämtad uppdatering och starta om…', restart)
+        restart_button.setObjectName('installUpdate')
         def refresh():
-            text.setPlainText('\n\n'.join(f'{key}: {value}' for key, value in get_update_status(BASE_DIR, APP_VERSION).items()))
+            report = get_update_status(self.workspace.base, APP_VERSION)
+            value = '\n\n'.join(f'{key}: {value}' for key, value in report.items())
+            if text.toPlainText() != value:
+                bar = text.verticalScrollBar()
+                position = bar.value()
+                text.setPlainText(value)
+                bar.setValue(position)
+            ready = pending_ready_for_restart(self.workspace.base)
+            restart_button.setEnabled(ready)
+            explanation.setText('Uppdateringen är hämtad. Stäng detta fönster för automatisk omstart, '
+                'eller välj Installera ovan.' if ready else
+                'En kontroll hämtar först uppdateringen. Status och eventuella fel visas ovan. '
+                'Installationsknappen aktiveras när hämtningen är klar.')
         timer = QTimer(dialog)
         timer.timeout.connect(refresh)
         timer.start(1000)
         refresh()
-        layout.addWidget(label('Hämtad uppdatering installeras genom dold omstart när öppna dialoger och osparade ändringar är avslutade.'))
-        button(layout, 'Sök uppdatering nu', self.check_updates)
+        button(layout, 'Sök uppdatering nu', lambda: self._check_updates(False))
         button(layout, 'Stäng', dialog.reject)
-        fit_to_screen(dialog, 620, 600)
+        fit_to_screen(dialog, 660, 650)
         dialog.exec()
+        timer.stop()
+        self._update_dialog = None
+        dialog.deleteLater()
+
+    def restart_update(self):
+        from updater import pending_ready_for_restart
+        if not pending_ready_for_restart(self.workspace.base):
+            QMessageBox.information(self, 'Uppdatering', 'Ingen verifierad uppdatering är redo att installeras.')
+            return
+        if not self.can_restart():
+            QMessageBox.information(self, 'Omstart väntar',
+                'Spara ändrade inställningar, mallar eller snabbtangent och stäng projektdialoger. '
+                'Vänta tills eventuell export är klar. Försök sedan igen.')
+            return
+        QApplication.instance().exit(71)
 
     def check_updates(self):
-        from updater import check_once
-        threading.Thread(target=check_once, args=(BASE_DIR, APP_VERSION),
-                         kwargs={'force': True}, daemon=True, name='qt-release-check').start()
-        self.statusBar().showMessage('Uppdateringskontroll begärd – se uppdateringsstatus')
+        self._check_updates(True)
 
+    def _check_updates(self, show_status):
+        from updater import check_once
+        worker = getattr(self, '_update_worker', None)
+        if worker is None or not worker.is_alive():
+            def check():
+                try:
+                    check_once(self.workspace.base, APP_VERSION, force=True)
+                except Exception:
+                    logging.getLogger('qt.update').exception('Manuell uppdateringskontroll misslyckades')
+            self._update_worker = threading.Thread(target=check, daemon=True, name='qt-release-check')
+            self._update_worker.start()
+        self.statusBar().showMessage('Söker uppdatering – hämtning och eventuella fel visas i Uppdateringsstatus')
+        if show_status:
+            self.update_status()
 
     def start_export(self, folder):
         if self._busy_tasks:

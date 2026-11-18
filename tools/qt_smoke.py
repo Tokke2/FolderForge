@@ -79,6 +79,20 @@ def main():
             ws.raw['future_key'] = 'preserved'
             ws.save_settings()
             functional = QtWindow(ws)
+            if sys.platform == 'win32':
+                import builtins
+                from qt_integrations import HotkeyBridge, WindowsHotkey
+                original_import = builtins.__import__
+                def no_pynput(name, *args, **kwargs):
+                    if name == 'pynput' or name.startswith('pynput.'):
+                        raise AssertionError('Windows native hotkey must not import pynput')
+                    return original_import(name, *args, **kwargs)
+                bridge = HotkeyBridge(functional)
+                with patch('builtins.__import__', side_effect=no_pynput):
+                    bridge.register(['ctrl', 'alt', 'shift', 'f23'])
+                    assert isinstance(bridge.listener, WindowsHotkey)
+                    assert bridge.listener.active
+                    bridge.stop()
             # Real wheel dispatch: focused controls stay unchanged; containing page scrolls.
             wheel_page = QScrollArea()
             wheel_page.setWidgetResizable(True)
@@ -202,6 +216,22 @@ def main():
                 functional.donations()
                 opened.assert_not_called()
             assert not donation_errors, donation_errors
+            update_errors = []
+            def inspect_update():
+                dialog = app.activeModalWidget()
+                try:
+                    assert dialog and dialog.windowTitle() == 'Uppdateringsstatus'
+                    install = dialog.findChild(QPushButton, 'installUpdate')
+                    assert install and not install.isEnabled(), 'No candidate must mean disabled installation'
+                except Exception as exc:
+                    update_errors.append(str(exc))
+                finally:
+                    if dialog:
+                        dialog.reject()
+            with patch('qt_app.threading.Thread'), patch('updater.pending_ready_for_restart', return_value=False):
+                QTimer.singleShot(100, inspect_update)
+                functional.check_updates()
+            assert not update_errors, update_errors
             functional.close()
             functional.deleteLater()
             print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')
