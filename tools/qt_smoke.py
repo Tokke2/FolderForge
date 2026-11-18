@@ -7,9 +7,9 @@ import sys
 import tempfile
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPushButton, QScrollArea
 
 
 def main():
@@ -20,6 +20,7 @@ def main():
             shutil.copy2(source / name, root / name)
         (root / 'Icon').mkdir()
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
+        shutil.copy2(source / 'Icon/swish-folderforge.png', root / 'Icon/swish-folderforge.png')
         def snapshot():
             return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                     for p in root.rglob('*') if p.is_file() and '__pycache__' not in p.parts}
@@ -118,6 +119,29 @@ def main():
             diagnostics.system_check()
             assert 'qt_version' in diagnostics.details.toPlainText()
             diagnostics.reject()
+            donation_errors = []
+            def inspect_donation():
+                donation = app.activeModalWidget()
+                try:
+                    assert isinstance(donation, QDialog)
+                    assert donation.windowTitle() == 'Donationer – Stöd FolderForge'
+                    qr = donation.findChild(QLabel, 'swishQr')
+                    assert qr and not qr.pixmap().isNull(), 'Offline Swish QR not rendered'
+                    assert donation.findChild(QScrollArea), 'Small screens need scrolling without clipping'
+                    controls = donation.findChildren(QPushButton)
+                    assert any('PayPal' in c.text() for c in controls)
+                    assert any('Ko-fi' in c.text() for c in controls)
+                except Exception as exc:
+                    donation_errors.append(str(exc))
+                finally:
+                    if donation:
+                        donation.reject()
+            from unittest.mock import patch
+            with patch('qt_app.webbrowser.open') as opened:
+                QTimer.singleShot(100, inspect_donation)
+                functional.donations()
+                opened.assert_not_called()
+            assert not donation_errors, donation_errors
             functional.close()
             functional.deleteLater()
             print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')

@@ -49,3 +49,25 @@ class SupportTests(unittest.TestCase):
             self.assertEqual(call.func.attr, 'open')
             self.assertIsInstance(parents[call], ast.Lambda)
         self.assertIn('Mottagarlänkarna är fasta', self.code)
+
+
+class QtSupportTests(unittest.TestCase):
+    def test_menu_and_fixed_offline_payment_choices(self):
+        source = Path('qt_app.py').read_text(encoding='utf-8')
+        tree = ast.parse(source)
+        method = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'donations')
+        code = ast.get_source_segment(source, method)
+        self.assertIn("help_menu.addAction('Donationer – Stöd FolderForge', self.donations)", source)
+        for expected in ('swish-folderforge.png', '0721817177', 'Kontrollera alltid mottagarens namn',
+                         'QScrollArea', 'pixmap.isNull()', 'dialog.exec()'):
+            self.assertIn(expected, code)
+        for forbidden in ('qrserver', 'urlopen', 'requests.', 'QLineEdit', 'QWebEngine'):
+            self.assertNotIn(forbidden, code)
+        calls = [n for n in ast.walk(method) if isinstance(n, ast.Call)
+                 and isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name)
+                 and n.func.value.id == 'webbrowser']
+        self.assertEqual({n.args[0].value for n in calls},
+            {'https://paypal.me/Rickard3dPrint', 'https://ko-fi.com/tokke2'})
+        parents = {child: parent for parent in ast.walk(method) for child in ast.iter_child_nodes(parent)}
+        for call in calls:
+            self.assertIsInstance(parents[call], ast.Lambda)

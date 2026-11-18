@@ -1,4 +1,4 @@
-"""Opt-in functional Qt client. Tk remains the default and full-feature fallback."""
+"""Default Qt client with an explicit, separately launched Tk reserve."""
 from pathlib import Path
 import threading
 import logging
@@ -502,21 +502,57 @@ class QtWindow(PreviewWindow):
     def donations(self):
         dialog = QDialog(self)
         dialog.setWindowTitle('Donationer – Stöd FolderForge')
-        layout = QVBoxLayout(dialog)
-        layout.addWidget(label('Gillar du FolderForge?\n\nHar appen gjort din vardag enklare? '
-            'En frivillig gåva visar uppskattning och uppmuntrar fortsatt utveckling. '
-            'Du väljer själv belopp. Alla funktioner fungerar lika bra utan donation.\n'
-            'Tack för att du använder FolderForge!\n– Rickard Längkvist'))
+        dialog.setWindowIcon(self.windowIcon())
+        outer = QVBoxLayout(dialog)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+        hero = label('STÖD FOLDERFORGE\n\nGör vardagen enklare – tillsammans')
+        hero.setObjectName('donationHero')
+        hero.setStyleSheet('QLabel { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,'
+            'stop:0 #145A32,stop:0.65 #176B46,stop:1 #674122); color: white;'
+            'border-radius: 14px; padding: 18px; font-weight: bold; }')
+        layout.addWidget(hero)
+        layout.addWidget(label('Har FolderForge sparat tid åt dig? En frivillig gåva visar '
+            'uppskattning och uppmuntrar fortsatt utveckling, testning och förbättringar.\n\n'
+            'Du väljer själv belopp. Inga nivåer eller extrafunktioner säljs. '
+            'Alla funktioner fungerar precis lika bra utan donation.'))
+        layout.addWidget(label('Swish – skanna med Swish-appen'))
         qr = QLabel()
+        qr.setObjectName('swishQr')
         qr.setAlignment(Qt.AlignCenter)
-        qr.setPixmap(QPixmap(str(BASE_DIR / 'Icon/swish-folderforge.png')).scaled(
-            240, 240, Qt.KeepAspectRatio, Qt.FastTransformation))
+        qr.setAccessibleName('Swish QR-kod för gåva till 0721817177, valfritt belopp')
+        pixmap = QPixmap(str(BASE_DIR / 'Icon/swish-folderforge.png'))
+        if pixmap.isNull():
+            logging.getLogger('qt.support').error('Swish QR-bilden saknas eller kunde inte läsas')
+            qr.setText('QR-koden kunde inte läsas. Använd Swish-numret nedan.')
+            qr.setWordWrap(True)
+        else:
+            qr.setPixmap(pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.FastTransformation))
         layout.addWidget(qr)
-        layout.addWidget(label('Swish 0721817177 · välj belopp i Swish. Kontrollera mottagaren innan betalning.'))
-        button(layout, 'PayPal', lambda: webbrowser.open('https://paypal.me/Rickard3dPrint', new=2))
-        button(layout, 'Ko-fi', lambda: webbrowser.open('https://ko-fi.com/tokke2', new=2))
-        button(layout, 'Stäng', dialog.reject)
-        fit_to_screen(dialog, 560, 650)
+        layout.addWidget(label('Swish: 0721817177\n'
+            'Ange valfritt belopp i Swish. Kontrollera alltid mottagarens namn '
+            'och belopp innan du godkänner betalningen.'))
+        paypal = button(layout, 'Stöd via PayPal ↗',
+            lambda: webbrowser.open('https://paypal.me/Rickard3dPrint', new=2))
+        kofi = button(layout, 'Bjud på en kaffe via Ko-fi ↗',
+            lambda: webbrowser.open('https://ko-fi.com/tokke2', new=2))
+        for control, color in ((paypal, '#075A91'), (kofi, '#A62F39')):
+            control.setMinimumHeight(44)
+            control.setStyleSheet('QPushButton { background: ' + color +
+                '; color: white; padding: 10px; border: 2px solid transparent; border-radius: 9px;'
+                'font-weight: bold; } QPushButton:focus { border: 2px solid #FFD54F; }')
+        layout.addWidget(label('Mottagarlänkarna är fasta och kan inte ändras i appen. '
+            'Knapparna öppnar din webbläsare först när du klickar. QR-koden finns lokalt; '
+            'ingen extern QR-tjänst kontaktas. FolderForge hanterar inte betalningen '
+            'och får ingen betalningsbekräftelse.'))
+        layout.addWidget(label('Tack för att du använder FolderForge!\n– Rickard Längkvist'))
+        button(outer, 'Stäng', dialog.reject)
+        fit_to_screen(dialog, 560, 720)
         dialog.exec()
 
     def update_status(self):
