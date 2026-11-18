@@ -65,3 +65,14 @@ class QtDefaultTests(unittest.TestCase):
         for token in ('apply_pending(ROOT)', 'confirm_startup(ROOT)', 'window.can_restart()',
                       'launch_update_trial(ROOT', 'restart_timer.start(2000)'):
             self.assertIn(token, source)
+
+
+class ProductNameTests(unittest.TestCase):
+    def test_production_uses_product_name_without_gui_framework(self):
+        source = Path('qt_app.py').read_text(encoding='utf-8')
+        self.assertIn("self.setWindowTitle(f'FolderForge {APP_VERSION}')", source)
+        self.assertIn("self.exit_action.setText('Avsluta FolderForge')", source)
+        for old in ('Skapa standardprojekt – Qt', 'Avsluta FolderForge Qt',
+                    'Uppdateringsstatus – Qt', 'FolderForge {APP_VERSION} · Qt'):
+            self.assertNotIn(old, source)
+        self.assertIn("tray.setToolTip('FolderForge' if production", Path('qt_preview.py').read_text(encoding='utf-8'))

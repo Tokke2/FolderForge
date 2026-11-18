@@ -118,7 +118,7 @@ class ProjectDialog(QDialog):
     def __init__(self, window):
         super().__init__(window)
         self.window = window
-        self.setWindowTitle('Skapa standardprojekt – Qt')
+        self.setWindowTitle('Skapa standardprojekt')
         self.setModal(True)
         layout = QVBoxLayout(self)
         scroll = QScrollArea()
@@ -234,7 +234,7 @@ class QtWindow(PreviewWindow):
         self._export_bridge = ExportBridge(self)
         self._export_bridge.ready.connect(self.export_ready)
         self._export_bridge.failed.connect(self.export_failed)
-        self.setWindowTitle(f'FolderForge {APP_VERSION} · Qt')
+        self.setWindowTitle(f'FolderForge {APP_VERSION}')
         self.tabs = ResponsiveTabs()
         self.setCentralWidget(self.tabs)
         create = page(self.tabs, 'Skapa')
@@ -302,7 +302,7 @@ class QtWindow(PreviewWindow):
             action.triggered.connect(lambda checked, n=index: self.toggle_tab(n, checked))
             self.tab_actions.append(action)
         help_menu = self.menuBar().addMenu('Hjälp')
-        self.exit_action.setText('Avsluta FolderForge Qt')
+        self.exit_action.setText('Avsluta FolderForge')
         help_menu.addAction(self.exit_action)
         help_menu.addAction('Donationer – Stöd FolderForge', self.donations)
         help_menu.addAction('Uppdateringsstatus', self.update_status)
@@ -315,7 +315,7 @@ class QtWindow(PreviewWindow):
             QUrl.fromLocalFile(str(self.workspace.base / 'logs/folderforge-errors.log'))))
         help_menu.addAction('Exportera felsökningspaket…', self.export_diagnostics)
         help_menu.addAction('Om FolderForge', lambda: QMessageBox.information(self, 'FolderForge',
-            f'FolderForge {APP_VERSION} · Qt\n© Rickard Längkvist\n'
+            f'FolderForge {APP_VERSION}\n© Rickard Längkvist\n'
             'Explicit Tk-reserv finns via Starta-FolderForge-Tk.py.'))
         self.setAcceptDrops(True)
         self.refresh_history()
@@ -737,7 +737,7 @@ class QtWindow(PreviewWindow):
     def update_status(self):
         from updater import get_update_status
         dialog = QDialog(self)
-        dialog.setWindowTitle('Uppdateringsstatus – Qt')
+        dialog.setWindowTitle('Uppdateringsstatus')
         layout = QVBoxLayout(dialog)
         text = QPlainTextEdit()
         text.setReadOnly(True)
