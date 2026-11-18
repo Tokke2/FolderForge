@@ -5,9 +5,9 @@ import logging
 import webbrowser
 
 from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtGui import QDesktopServices, QPixmap, QIcon
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy,
-    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
+    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 from app_core import (build_project_name, ExistingProject, StructureEngine, project_year_choices, validate_project_year)
@@ -55,6 +55,8 @@ class ResponsiveTabs(QWidget):
     def addTab(self, widget, title):
         index = self.stack.addWidget(widget)
         control = QPushButton(title)
+        icons = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
+        control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.png'))))
         control.setCheckable(True)
         control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         control.clicked.connect(lambda checked=False, n=index: self.setCurrentIndex(n))
@@ -142,7 +144,8 @@ class ProjectDialog(QDialog):
         self.create_button.setText('Skapa projekt…')
         actions.accepted.connect(self.create)
         actions.rejected.connect(self.reject)
-        layout.addWidget(actions)
+        body.addWidget(actions)
+        body.addStretch()
         self.name.textChanged.connect(self.refresh)
         for widget in (self.location, self.year, self.vehicle, self.template):
             widget.currentTextChanged.connect(self.refresh)
@@ -219,23 +222,60 @@ class QtWindow(PreviewWindow):
         self.tabs = ResponsiveTabs()
         self.setCentralWidget(self.tabs)
         create = page(self.tabs, 'Skapa')
-        create.addWidget(label('FolderForge · Qt\nSkapa projektmappar med dina mallar.'))
-        button(create, 'Sök uppdatering nu', self.check_updates)
+        heading = label('Skapa ett projekt')
+        heading.setObjectName('pageHeading')
+        create.addWidget(heading)
+        create.addWidget(label('En tydlig struktur. Redo på några sekunder.'))
         self._created = []
+        for title, description, caption, callback in [
+            ('Använd din standardmall', 'Skapa projekt med din sparade mappstruktur.',
+             'Skapa standardprojekt', self.open_project),
+            ('Egen struktur', 'Klistra in ett mappträd för ett enstaka projekt. Din standard ändras inte.',
+             'Klistra in struktur', self.open_custom_project),
+        ]:
+            card = QFrame()
+            card.setObjectName('projectCard')
+            body = QVBoxLayout(card)
+            body.addWidget(label(title))
+            body.addWidget(label(description))
+            if caption == 'Skapa standardprojekt':
+                self.default_template_label = label('Mall: ' + workspace.config.default_template)
+                body.addWidget(self.default_template_label)
+            button(body, caption, callback)
+            create.addWidget(card)
+        self.save_root_label = label('Sparplats: ' + workspace.config.save_root)
+        create.addWidget(self.save_root_label)
         button(create, 'Ångra senast skapade projekt…', self.undo_last)
-        button(create, 'Skapa standardprojekt', self.open_project)
-        create.addWidget(label('Sparplats: ' + workspace.config.save_root))
+        button(create, 'Sök uppdatering nu', self.check_updates)
         create.addStretch()
         history = page(self.tabs, 'Historik')
+        history.addWidget(label('Senaste projekt'))
+        self.history_filter = QLineEdit()
+        self.history_filter.setPlaceholderText('Filtrera projektnamn eller sökväg…')
+        self.history_filter.textChanged.connect(self.refresh_history)
+        history.addWidget(self.history_filter)
         self.history_list = QListWidget()
         self.history_list.itemDoubleClicked.connect(self.open_history)
         history.addWidget(self.history_list)
         button(history, 'Öppna markerad mapp', lambda: self.open_history(self.history_list.currentItem()))
+        button(history, 'Exportera markerad mappstruktur', self.export_history)
+        button(history, 'Ta bort markerad historikpost…', lambda: self.remove_history(False))
+        button(history, 'Rensa historiken…', lambda: self.remove_history(True))
         button(history, 'Uppdatera listan', self.refresh_history)
         self.template_page()
         self.export_page()
         self.settings_page()
         self.menuBar().clear()
+        file_menu = self.menuBar().addMenu('Arkiv')
+        file_menu.addAction('Skapa standardprojekt', self.open_project)
+        file_menu.addAction('Klistra in struktur', self.open_custom_project)
+        file_menu.addAction('Öppna sparplats', lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(self.workspace.config.save_root)))
+        file_menu.addAction(self.exit_action)
+        view_menu = self.menuBar().addMenu('Visa')
+        for index, title in enumerate(('Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent')):
+            action = view_menu.addAction(title)
+            action.triggered.connect(lambda checked=False, n=index: self.tabs.setCurrentIndex(n))
         help_menu = self.menuBar().addMenu('Hjälp')
         self.exit_action.setText('Avsluta FolderForge Qt')
         help_menu.addAction(self.exit_action)
@@ -243,6 +283,7 @@ class QtWindow(PreviewWindow):
         help_menu.addAction('Uppdateringsstatus', self.update_status)
         help_menu.addAction('Sök uppdatering nu', self.check_updates)
         help_menu.addAction('Felsökning och fellista…', self.diagnostics)
+        help_menu.addAction('Rensa cache (smartfilter)…', self.cache_dialog)
         help_menu.addAction('Detaljerad loggning i 15 minuter', self.enable_debug)
         help_menu.addAction('Om FolderForge', lambda: QMessageBox.information(self, 'FolderForge',
             f'FolderForge {APP_VERSION} · Qt\n© Rickard Längkvist\n'
@@ -313,14 +354,80 @@ class QtWindow(PreviewWindow):
         self.dialog = ProjectDialog(self)
         self.dialog.show()
 
+    def open_custom_project(self):
+        self.open_project()
+        self.dialog.custom.setFocus()
+
     def refresh_history(self):
+        selected = self.history_list.currentItem()
+        previous = selected.data(Qt.UserRole) if selected else None
         self.history_list.clear()
+        query = self.history_filter.text().casefold()
         for entry in self.workspace.history.get_all():
-            self.history_list.addItem(entry['path'])
+            path = entry['path']
+            if query not in path.casefold():
+                continue
+            item = QListWidgetItem(Path(path).name + '\n' + path + '\n' + str(entry.get('created', '')))
+            item.setData(Qt.UserRole, path)
+            item.setToolTip(path)
+            self.history_list.addItem(item)
+            if previous == path:
+                self.history_list.setCurrentItem(item)
 
     def open_history(self, item):
+        if item and not QDesktopServices.openUrl(QUrl.fromLocalFile(item.data(Qt.UserRole))):
+            QMessageBox.warning(self, 'Kunde inte öppna', 'Kontrollera att mappen finns och är tillgänglig.')
+
+    def export_history(self):
+        item = self.history_list.currentItem()
         if item:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(item.text()))
+            self.tabs.setCurrentIndex(3)
+            self.start_export(Path(item.data(Qt.UserRole)))
+
+    def remove_history(self, all_entries=False):
+        item = self.history_list.currentItem()
+        if not all_entries and not item:
+            return
+        if QMessageBox.question(self, 'Rensa historik' if all_entries else 'Ta bort historikpost',
+                'Ta bort alla historikposter? Projektmapparna påverkas inte.' if all_entries else
+                'Ta bort denna historikpost? Projektmappen påverkas inte.',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            self.workspace.require_lock()
+            if all_entries:
+                self.workspace.history.clear()
+            else:
+                self.workspace.history.remove(item.data(Qt.UserRole))
+            self.refresh_history()
+        except (OSError, RuntimeError) as exc:
+            logging.getLogger('qt.history').exception('Historiken kunde inte ändras')
+            QMessageBox.warning(self, 'Historik', str(exc))
+
+    def cache_dialog(self):
+        from cache_cleanup import status_text, clean_cache
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Rensa cache – smartfilter')
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(label('Daglig automatisk rensning behålls. Smartfiltret skyddar projekt, '
+                               'inställningar, historik, uppdateringar och felloggar.'))
+        status = label(status_text(self.workspace.base))
+        layout.addWidget(status)
+        def clean():
+            if QMessageBox.question(dialog, 'Rensa cache', 'Rensa gamla filer enligt smartfiltret?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            try:
+                self.workspace.require_lock()
+                clean_cache(self.workspace.base, manual=True)
+                status.setText(status_text(self.workspace.base))
+            except Exception as exc:
+                logging.getLogger('qt.cache').exception('Cacherensning misslyckades')
+                QMessageBox.warning(dialog, 'Cacherensning', str(exc))
+        button(layout, 'Rensa nu med smartfilter', clean)
+        button(layout, 'Stäng', dialog.reject)
+        fit_to_screen(dialog, 550, 350)
+        dialog.exec()
 
     def template_page(self):
         layout = page(self.tabs, 'Mallar')
@@ -369,6 +476,7 @@ class QtWindow(PreviewWindow):
     def export_page(self):
         layout = page(self.tabs, 'Exportera')
         layout.addWidget(label('Välj en mapp för säker trälexport. Resultatet kan kopieras eller sparas.'))
+        layout.addWidget(label('Dra och släpp en mapp i fönstret, eller välj den nedan.'))
         self.export_text = QPlainTextEdit()
         self.export_text.setReadOnly(True)
         def choose():
@@ -386,6 +494,7 @@ class QtWindow(PreviewWindow):
                 except OSError as exc:
                     logging.getLogger('qt.export').exception('Textfilen kunde inte sparas')
                     QMessageBox.warning(self, 'Kunde inte exportera', str(exc))
+        button(layout, 'Kopiera struktur', lambda: QApplication.clipboard().setText(self.export_text.toPlainText()))
         button(layout, 'Spara text…', save)
 
     def settings_page(self):
@@ -449,7 +558,12 @@ class QtWindow(PreviewWindow):
                 QMessageBox.warning(self, 'Autostart misslyckades', str(exc))
         button(layout, 'Starta med operativsystemet…', lambda: startup(True))
         button(layout, 'Stäng av autostart…', lambda: startup(False))
-        layout.addWidget(label('Global snabbtangent, till exempel ctrl+alt+m'))
+        layout.addStretch()
+        layout = page(self.tabs, 'Snabbtangent')
+        layout.addWidget(label('Global snabbtangent'))
+        layout.addWidget(label('Visa FolderForge var du än arbetar. Ange exempelvis ctrl+alt+m.'))
+        self.hotkey_status = label('Snabbtangenten registreras vid start…')
+        layout.addWidget(self.hotkey_status)
         self.hotkey_edit = QLineEdit()
         self.hotkey_edit.setPlaceholderText('ctrl+alt+m')
         def save_hotkey():
@@ -485,6 +599,9 @@ class QtWindow(PreviewWindow):
             QPushButton:checked {{ background: #316FA5; color: white; }}
             QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
             QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 2px solid #708090; }}
+            QLabel#pageHeading {{ font-size: {round(23 * factor)}px; font-weight: bold; }}
+            QFrame#projectCard {{ background: {field}; border: 1px solid #708090; border-radius: 14px; }}
+            QFrame#projectCard QLabel {{ background: transparent; border: none; }}
             QTabBar::tab {{ padding: 10px; }}
             QTabBar::tab:selected, QMenu::item:selected {{ background: {accent}; color: white; }}
         """)
@@ -494,6 +611,8 @@ class QtWindow(PreviewWindow):
         try:
             self.workspace.save_settings()
             self.apply_accessibility()
+            self.default_template_label.setText('Mall: ' + self.workspace.config.default_template)
+            self.save_root_label.setText('Sparplats: ' + self.workspace.config.save_root)
             self.statusBar().showMessage('Inställningar sparade')
         except (OSError, RuntimeError) as exc:
             logging.getLogger('qt.settings').exception('Inställningar kunde inte sparas')
@@ -622,6 +741,7 @@ class QtWindow(PreviewWindow):
         from qt_integrations import HotkeyBridge
         self._hotkeys = HotkeyBridge(self)
         self._hotkeys.status.connect(self.statusBar().showMessage)
+        self._hotkeys.status.connect(self.hotkey_status.setText)
         self.hotkey_edit.setText('+'.join(self._hotkeys.keys))
         self.hotkey_edit.setModified(False)
         self._hotkeys.start()

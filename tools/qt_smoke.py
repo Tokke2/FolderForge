@@ -21,6 +21,8 @@ def main():
         (root / 'Icon').mkdir()
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
         shutil.copy2(source / 'Icon/swish-folderforge.png', root / 'Icon/swish-folderforge.png')
+        for icon in (source / 'Icon').glob('nav-*.png'):
+            shutil.copy2(icon, root / 'Icon' / icon.name)
         def snapshot():
             return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                     for p in root.rglob('*') if p.is_file() and '__pycache__' not in p.parts}
@@ -95,7 +97,25 @@ def main():
             assert dialog.name.selectedText() == 'abc123 vindruta'
             assert len(historik.ProjectHistory(root / 'data/history.json').get_all()) == 1
             assert Workspace(lock, root).raw['future_key'] == 'preserved'
-            assert functional.tabs.count() == 5
+            assert functional.tabs.count() == 6
+            assert [b.text() for b in functional.tabs.buttons] == [
+                'Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent']
+            assert all(not b.icon().isNull() for b in functional.tabs.buttons)
+            functional.history_filter.setText('NO-SUCH-PROJECT')
+            assert functional.history_list.count() == 0
+            functional.history_filter.clear()
+            assert functional.history_list.count() == 1
+            functional.history_list.setCurrentRow(0)
+            assert functional.history_list.currentItem().data(Qt.UserRole) == str(project)
+            with patch('qt_app.QMessageBox.question', return_value=QMessageBox.No):
+                functional.remove_history(True)
+            assert len(ws.history.get_all()) == 1
+            with patch('qt_app.QMessageBox.question', return_value=QMessageBox.Yes):
+                functional.remove_history(False)
+            assert not ws.history.get_all()
+            assert project.is_dir(), 'History removal must never delete a project'
+            ws.history.add(project)
+            functional.refresh_history()
             ws.config.text_size = '150%'
             ws.config.high_contrast = True
             functional.apply_accessibility()
