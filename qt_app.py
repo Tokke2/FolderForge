@@ -219,6 +219,7 @@ class ProjectDialog(QDialog):
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
             path = self.window.workspace.create_project(name, items, self.template.currentText())
+            self.window.select_profile(self.template.currentText())
             self.window.statusBar().showMessage(f'Skapad: {path}')
             stat = path.stat()
             self.window._created.append((path, stat.st_dev, stat.st_ino))

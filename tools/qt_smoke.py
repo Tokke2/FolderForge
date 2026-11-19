@@ -150,6 +150,7 @@ def main():
             assert dialog.name.selectedText() == 'abc123 vindruta'
             assert len(historik.ProjectHistory(root / 'data/history.json').get_all()) == 1
             assert Workspace(lock, root).raw['future_key'] == 'preserved'
+            assert Workspace(lock, root).config.last_template == dialog.template.currentText(), 'Remember even when user created with the initial default'
             assert functional.tabs.count() == 6
             assert [b.text() for b in functional.tabs.buttons] == [
                 'Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent']
