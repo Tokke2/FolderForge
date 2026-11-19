@@ -103,7 +103,16 @@ def main():
         path = base / 'data/windows-smoke-command.json'
         temporary = path.with_suffix('.tmp')
         temporary.write_text(json.dumps(dict(id=number, action=action, pid=status().get('pid'))))
-        os.replace(temporary, path)
+        # Windows briefly denies replacement while the GUI reads the command.
+        # Retry only this idempotent test-IPC write, never production actions.
+        for attempt in range(40):
+            try:
+                os.replace(temporary, path)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(.025)
     try:
         launch()
         first = wait(lambda s: s.get('state') == 'withdrawn' and s.get('tray'), 'Hidden GUI/tray not ready')

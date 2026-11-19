@@ -51,7 +51,16 @@ def main():
             path = root / 'data/qt-smoke-command.json'
             temporary = path.with_suffix('.tmp')
             temporary.write_text(json.dumps(dict(pid=read_status()['pid'], id=number, action=action)))
-            os.replace(temporary, path)
+            # Windows briefly denies replacement while the GUI reads the command.
+            # Retry only this idempotent test-IPC write, never production actions.
+            for attempt in range(40):
+                try:
+                    os.replace(temporary, path)
+                    break
+                except PermissionError:
+                    if attempt == 39:
+                        raise
+                    time.sleep(.025)
         def launch():
             if os.name == 'nt':
                 args = ['wscript.exe', str(root / 'Starta-FolderForge.vbs')]
