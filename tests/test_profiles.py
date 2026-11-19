@@ -78,3 +78,46 @@ class ProfileTests(unittest.TestCase):
         self.lock.is_primary = False
         with self.assertRaises(RuntimeError):
             self.ws.save_profile('Jobb', 'Bilder/\n', str(self.base / 'Work'))
+
+
+class RecentProfileTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.base = Path(self.temp.name)
+        self.lock = SimpleNamespace(is_primary=True)
+        self.ws = Workspace(self.lock, self.base)
+        self.ws.config.default_template = 'Skaderapport'
+        self.ws.save_settings()
+        self.ws.save_profile('Privat', 'Bilder/\n', str(self.base / 'Home'))
+
+    def test_last_choice_persists_without_changing_default(self):
+        self.ws.remember_profile('Privat')
+        reopened = Workspace(self.lock, self.base)
+        self.assertEqual(reopened.selected_profile(), 'Privat')
+        self.assertEqual(reopened.config.default_template, 'Skaderapport')
+        self.assertEqual(reopened.profile_root(reopened.selected_profile()), self.base / 'Home')
+
+    def test_default_is_fallback_and_does_not_override_recent(self):
+        self.assertEqual(self.ws.selected_profile(), 'Skaderapport')
+        self.ws.remember_profile('Privat')
+        self.ws.config.default_template = 'Python Projekt'
+        self.ws.save_settings()
+        self.assertEqual(self.ws.selected_profile(), 'Privat')
+        self.ws.templates.delete_template('Privat')
+        self.assertEqual(self.ws.selected_profile(), 'Python Projekt')
+
+    def test_remember_does_not_save_other_unsaved_settings(self):
+        original = self.ws.config.save_root
+        self.ws.config.save_root = str(self.base / 'NotYetSaved')
+        self.ws.remember_profile('Privat')
+        reopened = Workspace(self.lock, self.base)
+        self.assertEqual(reopened.config.save_root, original)
+        self.assertEqual(reopened.config.last_template, 'Privat')
+
+    def test_failure_keeps_previous_choice(self):
+        with patch('workspace.atomic_write_json', return_value=False), self.assertRaises(OSError):
+            self.ws.remember_profile('Privat')
+        self.assertEqual(self.ws.selected_profile(), 'Skaderapport')
+        with self.assertRaises(ValueError):
+            self.ws.remember_profile('saknas')

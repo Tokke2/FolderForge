@@ -26,6 +26,7 @@ def label(text):
 
 def button(layout, text, callback):
     result = QPushButton(text)
+    result.setObjectName('secondaryAction')
     result.clicked.connect(callback)
     layout.addWidget(result)
     return result
@@ -37,8 +38,8 @@ def page(tabs, title):
     scroll.setFrameShape(QFrame.NoFrame)
     widget = QWidget()
     layout = QVBoxLayout(widget)
-    layout.setContentsMargins(14, 12, 14, 12)
-    layout.setSpacing(12)
+    layout.setContentsMargins(12, 8, 12, 8)
+    layout.setSpacing(8)
     scroll.setWidget(widget)
     tabs.addTab(scroll, title)
     return layout
@@ -143,7 +144,7 @@ class ProjectDialog(QDialog):
         self.vehicle.addItems(['—'] + list(VEHICLE_CHOICES))
         self.template = QComboBox()
         self.template.addItems(list(window.workspace.templates.list_templates()))
-        self.template.setCurrentText(window.workspace.config.default_template)
+        self.template.setCurrentText(window.home_profile.currentText())
         for title, widget in (('&Projektnamn', self.name), ('&Fordon', self.vehicle),
                               ('&Lokal', self.location), ('&År', self.year), ('&Profil / mall', self.template)):
             form.addRow(title, widget)
@@ -184,6 +185,7 @@ class ProjectDialog(QDialog):
         for widget in (self.location, self.year, self.vehicle, self.template):
             widget.currentTextChanged.connect(self.refresh)
         self.custom.textChanged.connect(self.refresh)
+        self.template.currentTextChanged.connect(window.select_profile)
         self.refresh()
 
     def prepare(self):
@@ -286,15 +288,24 @@ class QtWindow(PreviewWindow):
         update.setObjectName('secondaryAction')
         update.clicked.connect(self.check_updates)
         shell_layout.addWidget(update)
+        self.update_summary = label('Kontrollerar lokal uppdateringsstatus…')
+        self.update_summary.setObjectName('updateSummary')
+        self.update_summary.setContentsMargins(12, 0, 12, 0)
+        shell_layout.addWidget(self.update_summary)
         shell_layout.addWidget(self.tabs, 1)
         footer = QFrame()
         footer.setObjectName('appFooter')
-        footer_layout = QVBoxLayout(footer)
+        footer_layout = QGridLayout(footer)
+        self._footer_layout = footer_layout
         footer_layout.setContentsMargins(12, 5, 12, 5)
         footer_layout.setSpacing(4)
-        footer_layout.addWidget(label('© Rickard Längkvist · Drag & Drop aktiv'))
-        minimize = button(footer_layout, 'Minimera till fältet', self.hide)
+        footer_layout.setColumnStretch(0, 1)
+        footer_layout.addWidget(label('© Rickard Längkvist · Drag & Drop aktiv'), 0, 0)
+        minimize = QPushButton('Minimera till fältet')
+        minimize.clicked.connect(self.hide)
+        footer_layout.addWidget(minimize, 1, 0)
         minimize.setObjectName('secondaryAction')
+        self._minimize_button = minimize
         shell_layout.addWidget(footer)
         self.setCentralWidget(shell)
         create = page(self.tabs, 'Skapa')
@@ -305,28 +316,34 @@ class QtWindow(PreviewWindow):
         self._created = []
         for title, description, caption, callback in [
             ('Använd din standardmall', 'Skapa projekt med din sparade mappstruktur.',
-             'Skapa standardprojekt', self.open_project),
+             'Skapa projekt', self.open_project),
             ('Egen struktur', 'Klistra in ett mappträd för ett enstaka projekt. Din standard ändras inte.',
              'Klistra in struktur', self.open_custom_project),
         ]:
             card = QFrame()
             card.setObjectName('projectCard')
             body = QVBoxLayout(card)
-            body.setContentsMargins(18, 16, 18, 16)
-            body.setSpacing(10)
+            body.setContentsMargins(14, 10, 14, 10)
+            body.setSpacing(6)
             card_title = label(title)
             card_title.setObjectName('cardHeading')
             body.addWidget(card_title)
             body.addWidget(label(description))
-            if caption == 'Skapa standardprojekt':
-                self.default_template_label = label('Profil / mall: ' + workspace.config.default_template)
+            if caption == 'Skapa projekt':
+                self.default_template_label = label('Profil')
                 body.addWidget(self.default_template_label)
+                self.home_profile = QComboBox()
+                self.home_profile.setAccessibleName('Aktiv profil på startsidan')
+                self.home_profile.addItems(list(workspace.templates.list_templates()))
+                self.home_profile.setCurrentText(workspace.selected_profile())
+                body.addWidget(self.home_profile)
+                self.save_root_label = label('')
+                body.addWidget(self.save_root_label)
             action = button(body, caption, callback)
-            if caption == 'Klistra in struktur':
-                action.setObjectName('secondaryAction')
+            action.setObjectName('primaryAction' if caption == 'Skapa projekt' else 'secondaryAction')
             create.addWidget(card)
-        self.save_root_label = label('Profilens sparplats: ' + str(workspace.profile_root()))
-        create.addWidget(self.save_root_label)
+        self.home_profile.currentTextChanged.connect(self.select_profile)
+        self.refresh_profile_path()
         button(create, 'Ångra senast skapade projekt…', self.undo_last)
         create.addStretch()
         history = page(self.tabs, 'Historik')
@@ -351,7 +368,7 @@ class QtWindow(PreviewWindow):
         file_menu.addAction('Skapa standardprojekt', self.open_project)
         file_menu.addAction('Klistra in struktur', self.open_custom_project)
         file_menu.addAction('Öppna sparplats', lambda: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(self.workspace.profile_root()))))
+            QUrl.fromLocalFile(str(self.workspace.profile_root(self.home_profile.currentText())))))
         file_menu.addAction('Minimera till systemfältet', self.hide)
         file_menu.addAction(self.exit_action)
         view_menu = self.menuBar().addMenu('Visa')
@@ -389,6 +406,10 @@ class QtWindow(PreviewWindow):
         self._placement_timer.setSingleShot(True)
         self._placement_timer.timeout.connect(self.save_placement)
         QApplication.instance().aboutToQuit.connect(self.save_placement)
+        self._update_summary_timer = QTimer(self)
+        self._update_summary_timer.timeout.connect(self.refresh_update_summary)
+        self._update_summary_timer.start(1500)
+        self.refresh_update_summary()
 
     def restore(self):
         from historik import read_json_safe
@@ -406,7 +427,7 @@ class QtWindow(PreviewWindow):
                 screen = best
         area = screen.availableGeometry().adjusted(12, 12, -12, -12)
         if rectangle is None:
-            rectangle = QRect(0, 0, min(760, area.width()), min(560, area.height()))
+            rectangle = QRect(0, 0, min(760, area.width()), min(700, area.height()))
             rectangle.moveCenter(area.center())
         width = min(max(300, rectangle.width()), area.width())
         height = min(max(250, rectangle.height()), area.height())
@@ -428,6 +449,9 @@ class QtWindow(PreviewWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, '_footer_layout') and hasattr(self, '_minimize_button'):
+            compact = self.width() >= 650
+            self._footer_layout.addWidget(self._minimize_button, 0 if compact else 1, 1 if compact else 0)
         if hasattr(self, '_placement_timer'):
             self._placement_timer.start(500)
 
@@ -439,6 +463,55 @@ class QtWindow(PreviewWindow):
     def closeEvent(self, event):
         self.save_placement()
         super().closeEvent(event)
+
+    def refresh_profile_path(self):
+        try:
+            root = self.workspace.profile_root(self.home_profile.currentText())
+            self.save_root_label.setText('Sparplats: ' + str(root))
+            self.save_root_label.setToolTip(str(root))
+        except ValueError as exc:
+            self.save_root_label.setText(str(exc))
+
+    def select_profile(self, name):
+        if not name:
+            return
+        try:
+            self.workspace.remember_profile(name)
+        except (OSError, ValueError, RuntimeError) as exc:
+            logging.getLogger('qt.profiles').exception('Profilvalet kunde inte sparas')
+            QMessageBox.warning(self, 'Profilvalet sparades inte', str(exc))
+            self.home_profile.blockSignals(True)
+            self.home_profile.setCurrentText(self.workspace.selected_profile())
+            self.home_profile.blockSignals(False)
+            self.refresh_profile_path()
+            return
+        self.home_profile.blockSignals(True)
+        self.home_profile.setCurrentText(name)
+        self.home_profile.blockSignals(False)
+        self.refresh_profile_path()
+
+    def refresh_profile_choices(self):
+        names = list(self.workspace.templates.list_templates())
+        active = self.home_profile.currentText()
+        active = active if active in names else self.workspace.selected_profile()
+        for combo, selected in ((self.home_profile, active),
+                                (self.default_profile, self.default_profile.currentText())):
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(names)
+            combo.setCurrentText(selected if selected in names else self.workspace.config.default_template)
+            combo.blockSignals(False)
+        self.refresh_profile_path()
+
+    def refresh_update_summary(self):
+        from updater import get_update_status
+        try:
+            state = get_update_status(self.workspace.base, APP_VERSION)
+            self.update_summary.setText('Uppdatering: ' + state['Status'])
+            self.update_summary.setToolTip('Senaste kontroll: ' + state['Senaste kontrollförsök'] +
+                '\n' + state['Hämtning'] + '\n' + state['Senaste fel'])
+        except (OSError, ValueError) as exc:
+            self.update_summary.setText('Uppdateringsstatus kunde inte läsas: ' + str(exc))
 
     def open_project(self):
         if self.dialog and self.dialog.isVisible():
@@ -583,17 +656,17 @@ class QtWindow(PreviewWindow):
                 self.templates.blockSignals(False)
                 load(name)
                 self.structure.document().setModified(False)
-                self.default_template_label.setText('Profil / mall: ' + self.workspace.config.default_template)
-                self.save_root_label.setText('Profilens sparplats: ' + str(self.workspace.profile_root()))
+                self.refresh_profile_choices()
                 self.statusBar().showMessage('Profil sparad – struktur och sparplats')
             except (OSError, ValueError, RuntimeError) as exc:
                 logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
                 QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
         button(layout, 'Spara profil (mall + sparplats)', save)
         def set_default():
-            self.workspace.config.default_template = self.templates.currentText()
-            self.save_settings()
-        button(layout, 'Använd vald profil som standard', set_default)
+            self.default_profile.setCurrentText(self.templates.currentText())
+            self.tabs.setCurrentIndex(4)
+            self.statusBar().showMessage('Välj standardprofil och tryck Spara inställningar')
+        button(layout, 'Välj standardprofil i Inställningar…', set_default)
         def remove():
             if QMessageBox.question(self, 'Ta bort egen mall?', self.templates.currentText(),
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
@@ -640,6 +713,13 @@ class QtWindow(PreviewWindow):
         layout = page(self.tabs, 'Inställningar')
         layout.addWidget(label('Allmän sparplats för äldre mallar utan egen profilsparplats. '
             'Profiler med egen sparplats påverkas inte. Ändringar sparas först med Spara.'))
+        layout.addWidget(label('Standardprofil (används när ingen tidigare profil finns kvar)'))
+        self.default_profile = QComboBox()
+        self.default_profile.setAccessibleName('Standardprofil')
+        self.default_profile.addItems(list(self.workspace.templates.list_templates()))
+        self.default_profile.setCurrentText(self.workspace.config.default_template)
+        layout.addWidget(self.default_profile)
+        layout.addWidget(label('Senast valda profil koms alltid ihåg mellan starter.'))
         self.root_edit = QLineEdit(self.workspace.config.save_root)
         layout.addWidget(self.root_edit)
         def choose():
@@ -670,6 +750,7 @@ class QtWindow(PreviewWindow):
             if not self.root_edit.text().strip():
                 QMessageBox.warning(self, 'Sparplats', 'Välj en sparplats först.')
                 return
+            self.workspace.config.default_template = self.default_profile.currentText()
             self.workspace.config.save_root = self.root_edit.text().strip()
             self.workspace.config.open_after_creation = self.open_after.isChecked()
             self.workspace.config.plate_mode = self.plate_mode.isChecked()
@@ -762,9 +843,12 @@ class QtWindow(PreviewWindow):
             QFrame#appHeader, QFrame#appFooter {{ background: {field}; border: none; }}
             QFrame#appHeader QLabel, QFrame#appFooter QLabel {{ background: transparent; color: {muted}; }}
             QLabel#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
-            QPushButton {{ background: {accent}; color: white; padding: 10px; border: 2px solid transparent; border-radius: 9px; }}
+            QPushButton {{ background: {accent}; color: white; padding: 7px; border: 2px solid transparent; border-radius: 9px; }}
             QPushButton:hover {{ border-color: {border}; }}
             QPushButton#secondaryAction, QPushButton#navigationTab {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
+            QPushButton#primaryAction {{ background: {accent}; color: white; font-weight: bold; padding: 10px; }}
+            QPushButton#secondaryAction:hover {{ border: 1px solid {accent}; }}
+            QLabel#updateSummary {{ color: {muted}; font-size: {round(13 * factor)}px; }}
             QPushButton#navigationTab:checked {{ background: {accent}; color: white; border: 1px solid {accent}; }}
             QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
             QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 1px solid {border}; border-radius: 6px; }}
@@ -785,8 +869,7 @@ class QtWindow(PreviewWindow):
         try:
             self.workspace.save_settings()
             self.apply_accessibility()
-            self.default_template_label.setText('Profil / mall: ' + self.workspace.config.default_template)
-            self.save_root_label.setText('Profilens sparplats: ' + str(self.workspace.profile_root()))
+            self.refresh_profile_choices()
             self.statusBar().showMessage('Inställningar sparade')
         except (OSError, RuntimeError) as exc:
             logging.getLogger('qt.settings').exception('Inställningar kunde inte sparas')
@@ -958,6 +1041,7 @@ class QtWindow(PreviewWindow):
         config = self.workspace.config
         return (self._busy_tasks == 0 and not self.structure.document().isModified()
                 and not self.profile_root_edit.isModified() and not self.template_name.isModified()
+                and self.default_profile.currentText() == config.default_template
                 and self.root_edit.text().strip() == config.save_root
                 and self.open_after.isChecked() == config.open_after_creation
                 and self.plate_mode.isChecked() == config.plate_mode

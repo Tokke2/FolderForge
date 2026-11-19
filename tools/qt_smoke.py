@@ -259,6 +259,29 @@ def main():
             assert (profile_root / 'DEF456 2026/Underlag').is_dir()
             assert not (root / 'Projects/DEF456 2026').exists()
             profile_dialog.reject()
+            assert functional.home_profile.currentText() == 'CI Profil'
+            assert str(profile_root) in functional.save_root_label.text()
+            assert Workspace(lock, root).selected_profile() == 'CI Profil'
+            assert ws.config.default_template == 'Skaderapport', 'Recent choice must not overwrite default'
+            functional.home_profile.setCurrentText('Skaderapport')
+            assert Workspace(lock, root).selected_profile() == 'Skaderapport'
+            functional.home_profile.setCurrentText('CI Profil')
+            functional.open_project()
+            assert functional.dialog.template.currentText() == 'CI Profil'
+            functional.dialog.reject()
+            functional.default_profile.setCurrentText('Python Projekt')
+            assert not functional.can_restart(), 'Unsaved default-profile change must defer updates'
+            functional.default_profile.setCurrentText(ws.config.default_template)
+            primary = functional.findChildren(QPushButton, 'primaryAction')
+            assert len(primary) == 1 and primary[0].text() == 'Skapa projekt'
+            for state in ('Söker senaste stabila release…', 'Hämtar uppdatering…',
+                          'Uppdatering hämtad – väntar på omstart'):
+                report = {'Status': state, 'Senaste kontrollförsök': 'Nu',
+                          'Hämtning': '1 KiB', 'Senaste fel': 'Inget'}
+                with patch('updater.get_update_status', return_value=report):
+                    functional.refresh_update_summary()
+                assert state in functional.update_summary.text()
+
             functional.close()
             functional.deleteLater()
             print('Qt functional smoke OK: shared lock, real isolated project, persistent history/settings, templates, five pages')

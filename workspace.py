@@ -33,6 +33,28 @@ class Workspace:
             raise OSError('Inställningarna kunde inte sparas')
         self.raw = result
 
+    def selected_profile(self):
+        profiles = self.templates.list_templates()
+        for name in (self.config.last_template, self.config.default_template):
+            if name in profiles:
+                return name
+        return next(iter(profiles))
+
+    def remember_profile(self, name):
+        self.require_lock()
+        if name not in self.templates.list_templates():
+            raise ValueError('Vald profil saknas.')
+        if self.config.last_template == name:
+            return
+        # Persist ONLY the choice; do not save unrelated in-progress settings.
+        current = read_json_safe(self.settings_file, self.raw)
+        result = dict(current) if isinstance(current, dict) else dict(self.raw)
+        result['last_template'] = name
+        if not atomic_write_json(self.settings_file, result):
+            raise OSError('Senast använda profil kunde inte sparas.')
+        self.raw = result
+        self.config.last_template = name
+
     def profile_root(self, template=None):
         """Legacy templates inherit the global path; profiles store their own path."""
         selected = template or self.config.default_template

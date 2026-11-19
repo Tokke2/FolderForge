@@ -281,3 +281,19 @@ Att spara en profil flyttar inga projekt och skapar inte dess projektmappar.
 Det uttryckliga äldre Tk-reservgränssnittet behåller profilinformationen när en
 mall redigeras, men använder fortfarande sin allmänna sparplats vid skapande.
 Använd det ordinarie gränssnittet för profilspecifika sparplatser.
+
+### Aktiv profil och standardprofil
+
+På **Skapa** väljer du profil direkt och ser dess aktuella sparplats. Det senaste
+profilvalet sparas automatiskt, även mellan omstarter. Samma profil förväljs i
+projektdialogen. Profilval sparar inte andra osparade inställningar.
+
+**Standardprofil** väljs under **Inställningar → Standardprofil**, följt av
+**Spara inställningar**. Den används när ingen tidigare profil har valts, eller
+när den senast valda profilen inte längre finns. Ett byte av standardprofil
+skriver alltså inte över ditt senaste profilval.
+
+Uppdateringsstatus visas alltid ovanför flikarna: kontroll, hämtning eller väntan
+på omstart. Håll musen över statusen för senaste kontroll, hämtning och fel.
+**Sök uppdatering nu** öppnar detaljer och installationsknappen. Primärknappen
+**Skapa projekt** är tydligast; övriga åtgärder har en lugnare utformning.
