@@ -51,9 +51,11 @@ class ResponsiveTabs(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.header = QGridLayout()
         layout.addLayout(self.header)
         self.stack = QStackedWidget()
+        self.stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         layout.addWidget(self.stack)
         self.buttons = []
         self.columns = 0
@@ -66,7 +68,7 @@ class ResponsiveTabs(QWidget):
         control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.png'))))
         control.setObjectName('navigationTab')
         control.setCheckable(True)
-        control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        control.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         control.clicked.connect(lambda checked=False, n=index: self.setCurrentIndex(n))
         self.buttons.append(control)
         self.reflow(force=True)
@@ -104,7 +106,7 @@ class ResponsiveTabs(QWidget):
 
     def reflow(self, force=False):
         visible = [b for n, b in enumerate(self.buttons) if n not in self.hidden_tabs]
-        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 48 for b in visible), default=180)
+        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 72 for b in visible), default=180)
         columns = max(1, min(len(visible), max(1, self.width() - 24) // needed))
         if not force and columns == self.columns:
             return
@@ -932,6 +934,7 @@ class QtWindow(PreviewWindow):
             control.setIconSize(icon_size)
         self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self._global_update_button.setIconSize(icon_size)
+        self.theme_toggle.setFixedWidth(round(42 * factor))
         self.theme_toggle.setToolTip('Växla till ljust tema' if dark else 'Växla till mörkt tema')
         QTimer.singleShot(0, lambda: self.tabs.reflow(force=True))
         QTimer.singleShot(0, lambda: self.reflow_home(force=True))
