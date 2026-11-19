@@ -12,7 +12,8 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
 
 from app_core import (build_project_name, ExistingProject, StructureEngine, project_year_choices, validate_project_year)
 from qt_preview import PreviewWindow, fit_to_screen, install_field_wheel_guard
-from settings import APP_VERSION, BASE_DIR, LOKAL_CHOICES, VEHICLE_CHOICES
+from settings import (APP_VERSION, BASE_DIR, LOKAL_CHOICES, VEHICLE_CHOICES,
+    UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY)
 from workspace import Workspace
 
 
@@ -33,8 +34,11 @@ def button(layout, text, callback):
 def page(tabs, title):
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.NoFrame)
     widget = QWidget()
     layout = QVBoxLayout(widget)
+    layout.setContentsMargins(14, 12, 14, 12)
+    layout.setSpacing(12)
     scroll.setWidget(widget)
     tabs.addTab(scroll, title)
     return layout
@@ -58,6 +62,7 @@ class ResponsiveTabs(QWidget):
         control = QPushButton(title)
         icons = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
         control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.png'))))
+        control.setObjectName('navigationTab')
         control.setCheckable(True)
         control.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         control.clicked.connect(lambda checked=False, n=index: self.setCurrentIndex(n))
@@ -251,7 +256,47 @@ class QtWindow(PreviewWindow):
         self._export_bridge.failed.connect(self.export_failed)
         self.setWindowTitle(f'FolderForge {APP_VERSION}')
         self.tabs = ResponsiveTabs()
-        self.setCentralWidget(self.tabs)
+        shell = QWidget()
+        shell.setObjectName('appShell')
+        shell_layout = QVBoxLayout(shell)
+        shell_layout.setContentsMargins(0, 0, 0, 0)
+        shell_layout.setSpacing(6)
+        header = QFrame()
+        header.setObjectName('appHeader')
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(18, 10, 18, 10)
+        logo = QLabel('FolderForge')
+        logo.setObjectName('appLogo')
+        image = QPixmap(str(BASE_DIR / 'Icon/folderforge-logo.png'))
+        if not image.isNull():
+            logo.setPixmap(image.scaled(220, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        logo.setAccessibleName('FolderForge')
+        header_layout.addWidget(logo)
+        header_layout.addWidget(label('v' + APP_VERSION))
+        header_layout.addStretch()
+        self.theme_toggle = QPushButton('◐')
+        self.theme_toggle.setAccessibleName('Växla ljust och mörkt tema')
+        self.theme_toggle.setToolTip('Växla ljust och mörkt tema')
+        self.theme_toggle.setFixedWidth(42)
+        self.theme_toggle.setObjectName('secondaryAction')
+        self.theme_toggle.clicked.connect(self.toggle_theme)
+        header_layout.addWidget(self.theme_toggle)
+        shell_layout.addWidget(header)
+        update = QPushButton('Sök uppdatering nu')
+        update.setObjectName('secondaryAction')
+        update.clicked.connect(self.check_updates)
+        shell_layout.addWidget(update)
+        shell_layout.addWidget(self.tabs, 1)
+        footer = QFrame()
+        footer.setObjectName('appFooter')
+        footer_layout = QVBoxLayout(footer)
+        footer_layout.setContentsMargins(12, 5, 12, 5)
+        footer_layout.setSpacing(4)
+        footer_layout.addWidget(label('© Rickard Längkvist · Drag & Drop aktiv'))
+        minimize = button(footer_layout, 'Minimera till fältet', self.hide)
+        minimize.setObjectName('secondaryAction')
+        shell_layout.addWidget(footer)
+        self.setCentralWidget(shell)
         create = page(self.tabs, 'Skapa')
         heading = label('Skapa ett projekt')
         heading.setObjectName('pageHeading')
@@ -267,17 +312,22 @@ class QtWindow(PreviewWindow):
             card = QFrame()
             card.setObjectName('projectCard')
             body = QVBoxLayout(card)
-            body.addWidget(label(title))
+            body.setContentsMargins(18, 16, 18, 16)
+            body.setSpacing(10)
+            card_title = label(title)
+            card_title.setObjectName('cardHeading')
+            body.addWidget(card_title)
             body.addWidget(label(description))
             if caption == 'Skapa standardprojekt':
                 self.default_template_label = label('Profil / mall: ' + workspace.config.default_template)
                 body.addWidget(self.default_template_label)
-            button(body, caption, callback)
+            action = button(body, caption, callback)
+            if caption == 'Klistra in struktur':
+                action.setObjectName('secondaryAction')
             create.addWidget(card)
         self.save_root_label = label('Profilens sparplats: ' + str(workspace.profile_root()))
         create.addWidget(self.save_root_label)
         button(create, 'Ångra senast skapade projekt…', self.undo_last)
-        button(create, 'Sök uppdatering nu', self.check_updates)
         create.addStretch()
         history = page(self.tabs, 'Historik')
         history.addWidget(label('Senaste projekt'))
@@ -689,30 +739,46 @@ class QtWindow(PreviewWindow):
         button(layout, 'Återställ standardkombination i fältet', reset_hotkey)
         layout.addStretch()
 
+    def toggle_theme(self):
+        self.workspace.config.theme = 'Light' if self.workspace.config.theme == 'Dark' else 'Dark'
+        self.theme.setCurrentText(self.workspace.config.theme)
+        self.save_settings()
+
     def apply_accessibility(self):
         config = self.workspace.config
         factor = int(config.text_size.rstrip('%')) / 100
         dark = config.theme == 'Dark'
         if config.theme == 'System':
             dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        index = 1 if dark else 0
+        background, foreground = UI_BACKGROUND[index], UI_TEXT[index]
+        field, border, muted, accent = UI_SURFACE[index], UI_BORDER[index], UI_MUTED[index], UI_PRIMARY[index]
+        focus = '#FFCE66' if dark else '#005FCC'
         if config.high_contrast:
-            background, foreground, field, accent, focus = '#000000', '#FFFFFF', '#000000', '#164B73', '#FFFF00'
-        elif dark:
-            background, foreground, field, accent, focus = '#101C2C', '#EDF4FA', '#203249', '#215C95', '#FFCE66'
-        else:
-            background, foreground, field, accent, focus = '#F4F7FB', '#172B42', '#FFFFFF', '#155A94', '#005FCC'
+            background, foreground, field, border, muted, accent, focus = (
+                '#000000', '#FFFFFF', '#000000', '#FFFFFF', '#FFFFFF', '#164B73', '#FFFF00')
         self.setStyleSheet(f"""
             QWidget {{ background: {background}; color: {foreground}; font-size: {round(15 * factor)}px; }}
-            QPushButton {{ background: {accent}; color: white; padding: 12px; border: 2px solid transparent; border-radius: 7px; }}
-            QPushButton:checked {{ background: #316FA5; color: white; }}
+            QFrame#appHeader, QFrame#appFooter {{ background: {field}; border: none; }}
+            QFrame#appHeader QLabel, QFrame#appFooter QLabel {{ background: transparent; color: {muted}; }}
+            QLabel#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
+            QPushButton {{ background: {accent}; color: white; padding: 10px; border: 2px solid transparent; border-radius: 9px; }}
+            QPushButton:hover {{ border-color: {border}; }}
+            QPushButton#secondaryAction, QPushButton#navigationTab {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
+            QPushButton#navigationTab:checked {{ background: {accent}; color: white; border: 1px solid {accent}; }}
             QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
-            QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 2px solid #708090; }}
+            QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 1px solid {border}; border-radius: 6px; }}
             QLabel#pageHeading {{ font-size: {round(23 * factor)}px; font-weight: bold; }}
-            QFrame#projectCard {{ background: {field}; border: 1px solid #708090; border-radius: 14px; }}
+            QLabel#cardHeading {{ font-size: {round(16 * factor)}px; font-weight: bold; }}
+            QFrame#projectCard {{ background: {field}; border: 1px solid {border}; border-radius: 14px; }}
             QFrame#projectCard QLabel {{ background: transparent; border: none; }}
-            QTabBar::tab {{ padding: 10px; }}
-            QTabBar::tab:selected, QMenu::item:selected {{ background: {accent}; color: white; }}
+            QStatusBar {{ color: {muted}; background: {field}; }}
+            QMenu {{ background: {field}; border: 1px solid {border}; }}
+            QMenu::item:selected {{ background: {accent}; color: white; }}
         """)
+        for n, control in enumerate(self.tabs.buttons):
+            names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
+            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + ('-dark.png' if dark else '-light.png')))))
         QTimer.singleShot(0, lambda: self.tabs.reflow(force=True))
 
     def save_settings(self):

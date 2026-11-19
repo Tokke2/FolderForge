@@ -22,6 +22,7 @@ def main():
         (root / 'Icon').mkdir()
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
         shutil.copy2(source / 'Icon/swish-folderforge.png', root / 'Icon/swish-folderforge.png')
+        shutil.copy2(source / 'Icon/folderforge-logo.png', root / 'Icon/folderforge-logo.png')
         for icon in (source / 'Icon').glob('nav-*.png'):
             shutil.copy2(icon, root / 'Icon' / icon.name)
         def snapshot():
@@ -79,6 +80,9 @@ def main():
             ws.raw['future_key'] = 'preserved'
             ws.save_settings()
             functional = QtWindow(ws)
+            assert functional.findChild(QLabel, 'appLogo').pixmap() is not None
+            assert functional.findChild(QWidget, 'appHeader')
+            assert functional.findChild(QWidget, 'appFooter')
             if sys.platform == 'win32':
                 import builtins
                 from qt_integrations import HotkeyBridge, WindowsHotkey
@@ -178,7 +182,7 @@ def main():
             ws.config.high_contrast = False
             ws.config.theme = 'Light'
             functional.apply_accessibility()
-            assert '#F4F7FB' in functional.styleSheet()
+            assert '#F3F6FA' in functional.styleSheet()
             ws.config.theme = functional.theme.currentText()
             ws.config.text_size = functional.text_size.currentText()
             ws.config.high_contrast = functional.high_contrast.isChecked()

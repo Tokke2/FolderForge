@@ -76,3 +76,14 @@ class ProductNameTests(unittest.TestCase):
                     'Uppdateringsstatus – Qt', 'FolderForge {APP_VERSION} · Qt'):
             self.assertNotIn(old, source)
         self.assertIn("tray.setToolTip('FolderForge' if production", Path('qt_preview.py').read_text(encoding='utf-8'))
+
+
+class FamiliarDesignTests(unittest.TestCase):
+    def test_production_reuses_legacy_design_palette_and_shell(self):
+        source = Path('qt_app.py').read_text(encoding='utf-8')
+        for shared in ('UI_BACKGROUND[index]', 'UI_SURFACE[index]', 'UI_BORDER[index]',
+                       'UI_TEXT[index]', 'UI_MUTED[index]', 'UI_PRIMARY[index]'):
+            self.assertIn(shared, source)
+        for element in ('appHeader', 'appFooter', 'appLogo', 'projectCard', 'navigationTab',
+                        'folderforge-logo.png', 'Minimera till fältet'):
+            self.assertIn(element, source)
