@@ -83,6 +83,9 @@ class ResponsiveTabs(QWidget):
         self.stack.setCurrentIndex(index)
         for n, control in enumerate(self.buttons):
             control.setChecked(n == index)
+            names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
+            variant = '-dark.png' if n == index or getattr(self, 'dark_theme', False) else '-light.png'
+            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + variant))))
 
     def setTabVisible(self, index, visible):
         if visible:
@@ -917,15 +920,14 @@ class QtWindow(PreviewWindow):
             QMenu {{ background: {field}; border: 1px solid {border}; }}
             QMenu::item:selected {{ background: {accent}; color: white; }}
         """)
-        for n, control in enumerate(self.tabs.buttons):
-            names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
-            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + ('-dark.png' if dark else '-light.png')))))
+        self.tabs.dark_theme = dark or config.high_contrast
+        self.tabs.setCurrentIndex(self.tabs.currentIndex())
         icon_size = QSize(round(22 * factor), round(22 * factor))
         for control in self.tabs.buttons:
             control.setIconSize(icon_size)
         for control, name in self._action_icons:
             # Primary button is always blue with white text, regardless of page theme.
-            variant = '-dark.png' if control.objectName() == 'primaryAction' or dark else '-light.png'
+            variant = '-dark.png' if control.objectName() == 'primaryAction' or dark or config.high_contrast else '-light.png'
             control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant))))
             control.setIconSize(icon_size)
         self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
