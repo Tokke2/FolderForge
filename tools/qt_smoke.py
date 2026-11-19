@@ -132,6 +132,27 @@ def main():
             wheel_page.close()
             wheel_page.deleteLater()
             functional.restore()
+            assert functional.font().family(), 'Use a real system UI font'
+            assert not functional._global_update_button.icon().isNull()
+            for width, columns in ((760, 1), (1100, 2), (500, 1)):
+                functional.resize(width, 700)
+                QTest.qWait(50)
+                functional.reflow_home(force=True)
+                assert functional._home_columns == columns, (width, functional._home_columns)
+                assert functional._home_grid.count() == 2
+            ws.config.text_size = '150%'
+            functional.apply_accessibility()
+            functional.resize(1100, 700)
+            QTest.qWait(50)
+            functional.reflow_home(force=True)
+            assert functional._home_columns == 1, 'Large text needs single-column reading width'
+            assert functional.tabs.buttons[0].iconSize().width() == 33
+            ws.config.text_size = '100%'
+            functional.apply_accessibility()
+            functional.restore()
+            QTest.qWait(50)
+            assert functional.screen().availableGeometry().contains(functional.frameGeometry()), (
+                functional.screen().availableGeometry(), functional.frameGeometry())
             QTest.qWait(50)
             functional.open_project()
             dialog = functional.dialog

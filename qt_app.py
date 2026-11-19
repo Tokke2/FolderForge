@@ -3,11 +3,12 @@ from pathlib import Path
 import threading
 import logging
 import webbrowser
+import sys
 
-from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt
-from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QKeySequence
+from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt, QSize
+from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QKeySequence, QFontDatabase, QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy, QKeySequenceEdit,
-    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame,
+    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame, QStyle,
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
 
 from app_core import (build_project_name, ExistingProject, StructureEngine, project_year_choices, validate_project_year)
@@ -288,6 +289,7 @@ class QtWindow(PreviewWindow):
         update = QPushButton('Sök uppdatering nu')
         update.setObjectName('secondaryAction')
         update.clicked.connect(self.check_updates)
+        self._global_update_button = update
         shell_layout.addWidget(update)
         self.update_summary = label('Kontrollerar lokal uppdateringsstatus…')
         self.update_summary.setObjectName('updateSummary')
@@ -313,7 +315,15 @@ class QtWindow(PreviewWindow):
         heading = label('Skapa ett projekt')
         heading.setObjectName('pageHeading')
         create.addWidget(heading)
-        create.addWidget(label('En tydlig struktur. Redo på några sekunder.'))
+        subtitle = label('En tydlig struktur. Redo på några sekunder.')
+        subtitle.setObjectName('mutedText')
+        create.addWidget(subtitle)
+        self._home_grid = QGridLayout()
+        self._home_grid.setSpacing(12)
+        self._project_cards = []
+        self._home_columns = 0
+        self._action_icons = []
+        create.addLayout(self._home_grid)
         self._created = []
         for title, description, caption, callback in [
             ('Använd din standardmall', 'Skapa projekt med din sparade mappstruktur.',
@@ -329,20 +339,27 @@ class QtWindow(PreviewWindow):
             card_title = label(title)
             card_title.setObjectName('cardHeading')
             body.addWidget(card_title)
-            body.addWidget(label(description))
+            description_label = label(description)
+            description_label.setObjectName('mutedText')
+            body.addWidget(description_label)
             if caption == 'Skapa projekt':
                 self.default_template_label = label('Profil')
                 body.addWidget(self.default_template_label)
                 self.home_profile = QComboBox()
                 self.home_profile.setAccessibleName('Aktiv profil på startsidan')
+                self.home_profile.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+                self.home_profile.setMinimumContentsLength(16)
                 self.home_profile.addItems(list(workspace.templates.list_templates()))
                 self.home_profile.setCurrentText(workspace.selected_profile())
                 body.addWidget(self.home_profile)
                 self.save_root_label = label('')
                 body.addWidget(self.save_root_label)
+            body.addStretch()
             action = button(body, caption, callback)
             action.setObjectName('primaryAction' if caption == 'Skapa projekt' else 'secondaryAction')
-            create.addWidget(card)
+            self._action_icons.append((action, 'create' if caption == 'Skapa projekt' else 'templates'))
+            self._project_cards.append(card)
+        self.reflow_home(force=True)
         self.home_profile.currentTextChanged.connect(self.select_profile)
         self.refresh_profile_path()
         button(create, 'Ångra senast skapade projekt…', self.undo_last)
@@ -411,6 +428,11 @@ class QtWindow(PreviewWindow):
         self._update_summary_timer.timeout.connect(self.refresh_update_summary)
         self._update_summary_timer.start(1500)
         self.refresh_update_summary()
+        QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+
+    def system_theme_changed(self, scheme):
+        if self.workspace.config.theme == 'System':
+            self.apply_accessibility()
 
     def restore(self):
         from historik import read_json_safe
@@ -426,9 +448,14 @@ class QtWindow(PreviewWindow):
                        * item.availableGeometry().intersected(rectangle).height(), default=screen)
             if best.availableGeometry().intersects(rectangle):
                 screen = best
-        area = screen.availableGeometry().adjusted(12, 12, -12, -12)
+        # Reserve native title/frame space too; availableGeometry already excludes taskbar.
+        self.winId()
+        margins = self.windowHandle().frameMargins()
+        area = screen.availableGeometry().adjusted(12 + margins.left(),
+            12 + max(30, margins.top()), -12 - margins.right(), -12 - margins.bottom())
         if rectangle is None:
-            rectangle = QRect(0, 0, min(760, area.width()), min(700, area.height()))
+            initial_width = min(1120, max(760, round(area.width() * .82)))
+            rectangle = QRect(0, 0, min(initial_width, area.width()), min(740, area.height()))
             rectangle.moveCenter(area.center())
         width = min(max(300, rectangle.width()), area.width())
         height = min(max(250, rectangle.height()), area.height())
@@ -439,6 +466,7 @@ class QtWindow(PreviewWindow):
         self.raise_()
         self.activateWindow()
         self.tabs.reflow(force=True)
+        self.reflow_home(force=True)
 
     def save_placement(self):
         if not self.workspace.lock.is_primary or not self.isVisible() or self.isMinimized() or self.isMaximized():
@@ -453,6 +481,8 @@ class QtWindow(PreviewWindow):
         if hasattr(self, '_footer_layout') and hasattr(self, '_minimize_button'):
             compact = self.width() >= 650
             self._footer_layout.addWidget(self._minimize_button, 0 if compact else 1, 1 if compact else 0)
+        if hasattr(self, '_project_cards'):
+            self.reflow_home()
         if hasattr(self, '_placement_timer'):
             self._placement_timer.start(500)
 
@@ -464,6 +494,19 @@ class QtWindow(PreviewWindow):
     def closeEvent(self, event):
         self.save_placement()
         super().closeEvent(event)
+
+    def reflow_home(self, force=False):
+        factor = int(self.workspace.config.text_size.rstrip('%')) / 100
+        columns = 2 if self.width() >= round(980 * factor) else 1
+        if not force and columns == self._home_columns:
+            return
+        while self._home_grid.count():
+            self._home_grid.takeAt(0)
+        self._home_grid.setColumnStretch(0, 3 if columns == 2 else 1)
+        self._home_grid.setColumnStretch(1, 2 if columns == 2 else 0)
+        for n, card in enumerate(self._project_cards):
+            self._home_grid.addWidget(card, n // columns, n % columns)
+        self._home_columns = columns
 
     def refresh_profile_path(self):
         try:
@@ -822,7 +865,7 @@ class QtWindow(PreviewWindow):
         layout.addStretch()
 
     def toggle_theme(self):
-        self.workspace.config.theme = 'Light' if self.workspace.config.theme == 'Dark' else 'Dark'
+        self.workspace.config.theme = 'Light' if self._dark_theme else 'Dark'
         self.theme.setCurrentText(self.workspace.config.theme)
         self.save_settings()
 
@@ -832,6 +875,14 @@ class QtWindow(PreviewWindow):
         dark = config.theme == 'Dark'
         if config.theme == 'System':
             dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        self._dark_theme = dark
+        font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
+        if sys.platform == 'win32' and 'Segoe UI' in QFontDatabase.families():
+            font.setFamily('Segoe UI')
+        font.setPointSizeF(11 * factor)
+        font.setWeight(QFont.Normal)
+        self.setFont(font)
+        family = font.family().replace('"', '')
         index = 1 if dark else 0
         background, foreground = UI_BACKGROUND[index], UI_TEXT[index]
         field, border, muted, accent = UI_SURFACE[index], UI_BORDER[index], UI_MUTED[index], UI_PRIMARY[index]
@@ -840,21 +891,26 @@ class QtWindow(PreviewWindow):
             background, foreground, field, border, muted, accent, focus = (
                 '#000000', '#FFFFFF', '#000000', '#FFFFFF', '#FFFFFF', '#164B73', '#FFFF00')
         self.setStyleSheet(f"""
-            QWidget {{ background: {background}; color: {foreground}; font-size: {round(15 * factor)}px; }}
+            QWidget {{ background: {background}; color: {foreground}; font-family: "{family}"; font-size: {round(15 * factor)}px; font-weight: 400; }}
             QFrame#appHeader, QFrame#appFooter {{ background: {field}; border: none; }}
             QFrame#appHeader QLabel, QFrame#appFooter QLabel {{ background: transparent; color: {muted}; }}
             QLabel#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
-            QPushButton {{ background: {accent}; color: white; padding: 7px; border: 2px solid transparent; border-radius: 9px; }}
+            QPushButton {{ background: {accent}; color: white; padding: 8px 12px; border: 2px solid transparent; border-radius: 8px; }}
             QPushButton:hover {{ border-color: {border}; }}
             QPushButton#secondaryAction, QPushButton#navigationTab {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
-            QPushButton#primaryAction {{ background: {accent}; color: white; font-weight: bold; padding: 10px; }}
+            QPushButton#primaryAction {{ background: {accent}; color: white; font-weight: 600; padding: 11px 14px; }}
             QPushButton#secondaryAction:hover {{ border: 1px solid {accent}; }}
+            QPushButton:disabled {{ background: {field}; color: {muted}; border: 1px solid {border}; }}
+            QPushButton#navigationTab {{ font-weight: 600; }}
+            QLabel#mutedText {{ color: {muted}; }}
+            QLineEdit:selection, QPlainTextEdit:selection {{ background: {accent}; color: white; }}
+            QToolTip {{ background: {field}; color: {foreground}; border: 1px solid {border}; padding: 6px; }}
             QLabel#updateSummary {{ color: {muted}; font-size: {round(13 * factor)}px; }}
             QPushButton#navigationTab:checked {{ background: {accent}; color: white; border: 1px solid {accent}; }}
             QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
             QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 1px solid {border}; border-radius: 6px; }}
-            QLabel#pageHeading {{ font-size: {round(23 * factor)}px; font-weight: bold; }}
-            QLabel#cardHeading {{ font-size: {round(16 * factor)}px; font-weight: bold; }}
+            QLabel#pageHeading {{ font-size: {round(23 * factor)}px; font-weight: 600; }}
+            QLabel#cardHeading {{ font-size: {round(17 * factor)}px; font-weight: 600; }}
             QFrame#projectCard {{ background: {field}; border: 1px solid {border}; border-radius: 14px; }}
             QFrame#projectCard QLabel {{ background: transparent; border: none; }}
             QStatusBar {{ color: {muted}; background: {field}; }}
@@ -864,7 +920,19 @@ class QtWindow(PreviewWindow):
         for n, control in enumerate(self.tabs.buttons):
             names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
             control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + ('-dark.png' if dark else '-light.png')))))
+        icon_size = QSize(round(22 * factor), round(22 * factor))
+        for control in self.tabs.buttons:
+            control.setIconSize(icon_size)
+        for control, name in self._action_icons:
+            # Primary button is always blue with white text, regardless of page theme.
+            variant = '-dark.png' if control.objectName() == 'primaryAction' or dark else '-light.png'
+            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant))))
+            control.setIconSize(icon_size)
+        self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        self._global_update_button.setIconSize(icon_size)
+        self.theme_toggle.setToolTip('Växla till ljust tema' if dark else 'Växla till mörkt tema')
         QTimer.singleShot(0, lambda: self.tabs.reflow(force=True))
+        QTimer.singleShot(0, lambda: self.reflow_home(force=True))
 
     def save_settings(self):
         try:
