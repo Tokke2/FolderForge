@@ -85,5 +85,5 @@ class FamiliarDesignTests(unittest.TestCase):
                        'UI_TEXT[index]', 'UI_MUTED[index]', 'UI_PRIMARY[index]'):
             self.assertIn(shared, source)
         for element in ('appHeader', 'appFooter', 'appLogo', 'projectCard', 'navigationTab',
-                        'folderforge-logo.png', 'Minimera till fältet'):
+                        'folderforge-logo.svg', 'Minimera till fältet'):
             self.assertIn(element, source)

@@ -23,6 +23,8 @@ def main():
         shutil.copy2(source / 'Icon/projektmapp_icon_256.png', root / 'Icon/projektmapp_icon_256.png')
         shutil.copy2(source / 'Icon/swish-folderforge.png', root / 'Icon/swish-folderforge.png')
         shutil.copy2(source / 'Icon/folderforge-logo.png', root / 'Icon/folderforge-logo.png')
+        for vector in (source / 'Icon').glob('*.svg'):
+            shutil.copy2(vector, root / 'Icon' / vector.name)
         for icon in (source / 'Icon').glob('nav-*.png'):
             shutil.copy2(icon, root / 'Icon' / icon.name)
         def snapshot():
@@ -80,7 +82,7 @@ def main():
             ws.raw['future_key'] = 'preserved'
             ws.save_settings()
             functional = QtWindow(ws)
-            assert functional.findChild(QLabel, 'appLogo').pixmap() is not None
+            assert functional.findChild(QWidget, 'appLogo').renderer().isValid()
             assert functional.findChild(QWidget, 'appHeader')
             assert functional.findChild(QWidget, 'appFooter')
             if sys.platform == 'win32':
@@ -133,6 +135,14 @@ def main():
             wheel_page.deleteLater()
             functional.restore()
             assert functional.font().family(), 'Use a real system UI font'
+            # SVG rasterises for each requested pixel density, not from a fixed small bitmap.
+            vector_icon = functional.tabs.buttons[0].icon()
+            for density in (1.0, 1.25, 1.5, 2.0):
+                from PySide6.QtCore import QSize
+                rendered = vector_icon.pixmap(QSize(24, 24), density)
+                assert not rendered.isNull()
+                assert rendered.width() >= round(24 * density), (density, rendered.size())
+
             assert not functional._global_update_button.icon().isNull()
             for width, columns in ((760, 1), (1100, 2), (500, 1)):
                 functional.resize(width, 700)

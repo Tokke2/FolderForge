@@ -6,6 +6,7 @@ import webbrowser
 import sys
 
 from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt, QSize
+from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QKeySequence, QFontDatabase, QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy, QKeySequenceEdit,
     QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame, QStyle,
@@ -65,7 +66,7 @@ class ResponsiveTabs(QWidget):
         index = self.stack.addWidget(widget)
         control = QPushButton(title)
         icons = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
-        control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.png'))))
+        control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.svg'))))
         control.setObjectName('navigationTab')
         control.setCheckable(True)
         control.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -86,7 +87,7 @@ class ResponsiveTabs(QWidget):
         for n, control in enumerate(self.buttons):
             control.setChecked(n == index)
             names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
-            variant = '-dark.png' if n == index or getattr(self, 'dark_theme', False) else '-light.png'
+            variant = '-dark.svg' if n == index or getattr(self, 'dark_theme', False) else '-light.svg'
             control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + variant))))
 
     def setTabVisible(self, index, visible):
@@ -274,11 +275,13 @@ class QtWindow(PreviewWindow):
         header.setObjectName('appHeader')
         header_layout = QHBoxLayout(header)
         header_layout.setContentsMargins(18, 10, 18, 10)
-        logo = QLabel('FolderForge')
+        logo_path = BASE_DIR / 'Icon/folderforge-logo.svg'
+        logo = QSvgWidget(str(logo_path))
+        if not logo.renderer().isValid():
+            logo.deleteLater()
+            logo = QLabel('FolderForge')
         logo.setObjectName('appLogo')
-        image = QPixmap(str(BASE_DIR / 'Icon/folderforge-logo.png'))
-        if not image.isNull():
-            logo.setPixmap(image.scaled(220, 44, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        logo.setFixedSize(220, 47)
         logo.setAccessibleName('FolderForge')
         header_layout.addWidget(logo)
         header_layout.addWidget(label('v' + APP_VERSION))
@@ -899,7 +902,7 @@ class QtWindow(PreviewWindow):
             QWidget {{ background: {background}; color: {foreground}; font-family: "{family}"; font-size: {round(15 * factor)}px; font-weight: 400; }}
             QFrame#appHeader, QFrame#appFooter {{ background: {field}; border: none; }}
             QFrame#appHeader QLabel, QFrame#appFooter QLabel {{ background: transparent; color: {muted}; }}
-            QLabel#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
+            QWidget#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
             QPushButton {{ background: {accent}; color: white; padding: 8px 12px; border: 2px solid transparent; border-radius: 8px; }}
             QPushButton:hover {{ border-color: {border}; }}
             QPushButton#secondaryAction, QPushButton#navigationTab {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
@@ -929,7 +932,7 @@ class QtWindow(PreviewWindow):
             control.setIconSize(icon_size)
         for control, name in self._action_icons:
             # Primary button is always blue with white text, regardless of page theme.
-            variant = '-dark.png' if control.objectName() == 'primaryAction' or dark or config.high_contrast else '-light.png'
+            variant = '-dark.svg' if control.objectName() == 'primaryAction' or dark or config.high_contrast else '-light.svg'
             control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant))))
             control.setIconSize(icon_size)
         self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))

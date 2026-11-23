@@ -6,7 +6,7 @@ Qt types are imported only when this optional module is explicitly selected.
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QTimer, Qt, QObject, QPointF
-from PySide6.QtGui import QAction, QIcon, QWheelEvent
+from PySide6.QtGui import QAction, QIcon, QWheelEvent, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox,
     QFormLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
     QAbstractSpinBox, QPlainTextEdit, QTextEdit, QScrollArea, QSystemTrayIcon, QVBoxLayout, QWidget)
@@ -131,7 +131,7 @@ class PreviewWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('FolderForge · Qt-prototyp · TESTLÄGE')
-        self.setWindowIcon(QIcon(str(ROOT / 'Icon/projektmapp_icon_256.png')))
+        self.setWindowIcon(QIcon(str(ROOT / 'Icon/folderforge-symbol.svg')))
         self.dialog = None
         content = QWidget()
         layout = QVBoxLayout(content)
@@ -210,6 +210,7 @@ def run(window_factory=None, production=False):
     if production:
         from qt_diagnostics import install_qt_message_logging
         install_qt_message_logging()
+    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     install_field_wheel_guard(app)
     app.setApplicationName('FolderForge' if production else 'FolderForge Qt-prototyp')
