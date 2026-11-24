@@ -85,6 +85,18 @@ def main():
             assert functional.findChild(QWidget, 'appLogo').renderer().isValid()
             assert functional.findChild(QWidget, 'appHeader')
             assert functional.findChild(QWidget, 'appFooter')
+            assert not functional._update_summary_timer.isActive(), 'Hidden startup must not poll UI status'
+            functional.show()
+            app.processEvents()
+            assert functional._update_summary_timer.isActive()
+            functional.hide()
+            app.processEvents()
+            assert not functional._update_summary_timer.isActive()
+            from qt_app import navigation_icon
+            first_icon = navigation_icon('create', '-light.svg')
+            assert navigation_icon('create', '-light.svg') is first_icon
+            assert navigation_icon.cache_info().maxsize == 32
+
             if sys.platform == 'win32':
                 import builtins
                 from qt_integrations import HotkeyBridge, WindowsHotkey

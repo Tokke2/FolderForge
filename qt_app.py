@@ -4,6 +4,7 @@ import threading
 import logging
 import webbrowser
 import sys
+from functools import lru_cache
 
 from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt, QSize
 from PySide6.QtSvgWidgets import QSvgWidget
@@ -17,6 +18,12 @@ from qt_preview import PreviewWindow, fit_to_screen, install_field_wheel_guard
 from settings import (APP_VERSION, BASE_DIR, LOKAL_CHOICES, VEHICLE_CHOICES,
     UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY)
 from workspace import Workspace
+
+
+@lru_cache(maxsize=32)
+def navigation_icon(name, variant):
+    """Bounded cache: share SVG engines without retaining widgets or raster copies."""
+    return QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant)))
 
 
 def label(text):
@@ -66,7 +73,7 @@ class ResponsiveTabs(QWidget):
         index = self.stack.addWidget(widget)
         control = QPushButton(title)
         icons = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
-        control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + icons[index] + '-light.svg'))))
+        control.setIcon(navigation_icon(icons[index], '-light.svg'))
         control.setObjectName('navigationTab')
         control.setCheckable(True)
         control.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -88,7 +95,7 @@ class ResponsiveTabs(QWidget):
             control.setChecked(n == index)
             names = ['create', 'history', 'templates', 'export', 'settings', 'keyboard']
             variant = '-dark.svg' if n == index or getattr(self, 'dark_theme', False) else '-light.svg'
-            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + names[n] + variant))))
+            control.setIcon(navigation_icon(names[n], variant))
 
     def setTabVisible(self, index, visible):
         if visible:
@@ -434,9 +441,25 @@ class QtWindow(PreviewWindow):
         QApplication.instance().aboutToQuit.connect(self.save_placement)
         self._update_summary_timer = QTimer(self)
         self._update_summary_timer.timeout.connect(self.refresh_update_summary)
-        self._update_summary_timer.start(1500)
+        self._update_summary_timer.setInterval(1500)
+        self._update_summary_timer.setTimerType(Qt.CoarseTimer)
         self.refresh_update_summary()
         QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, '_update_summary_timer'):
+            self.refresh_update_summary()
+            self._update_summary_timer.start()
+
+    def hideEvent(self, event):
+        # A hidden tray window does not need UI status polling. The independent
+        # updater, restart safety checks and native hotkeys remain active.
+        if hasattr(self, '_update_summary_timer'):
+            self._update_summary_timer.stop()
+        if hasattr(self, '_placement_timer'):
+            self._placement_timer.stop()
+        super().hideEvent(event)
 
     def system_theme_changed(self, scheme):
         if self.workspace.config.theme == 'System':
@@ -488,7 +511,9 @@ class QtWindow(PreviewWindow):
         super().resizeEvent(event)
         if hasattr(self, '_footer_layout') and hasattr(self, '_minimize_button'):
             compact = self.width() >= 650
-            self._footer_layout.addWidget(self._minimize_button, 0 if compact else 1, 1 if compact else 0)
+            if compact != getattr(self, '_footer_compact', None):
+                self._footer_layout.addWidget(self._minimize_button, 0 if compact else 1, 1 if compact else 0)
+                self._footer_compact = compact
         if hasattr(self, '_project_cards'):
             self.reflow_home()
         if hasattr(self, '_placement_timer'):
@@ -559,9 +584,13 @@ class QtWindow(PreviewWindow):
         from updater import get_update_status
         try:
             state = get_update_status(self.workspace.base, APP_VERSION)
-            self.update_summary.setText('Uppdatering: ' + state['Status'])
-            self.update_summary.setToolTip('Senaste kontroll: ' + state['Senaste kontrollförsök'] +
+            text = 'Uppdatering: ' + state['Status']
+            tooltip = ('Senaste kontroll: ' + state['Senaste kontrollförsök'] +
                 '\n' + state['Hämtning'] + '\n' + state['Senaste fel'])
+            if self.update_summary.text() != text:
+                self.update_summary.setText(text)
+            if self.update_summary.toolTip() != tooltip:
+                self.update_summary.setToolTip(tooltip)
         except (OSError, ValueError) as exc:
             self.update_summary.setText('Uppdateringsstatus kunde inte läsas: ' + str(exc))
 
@@ -933,7 +962,7 @@ class QtWindow(PreviewWindow):
         for control, name in self._action_icons:
             # Primary button is always blue with white text, regardless of page theme.
             variant = '-dark.svg' if control.objectName() == 'primaryAction' or dark or config.high_contrast else '-light.svg'
-            control.setIcon(QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant))))
+            control.setIcon(navigation_icon(name, variant))
             control.setIconSize(icon_size)
         self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         self._global_update_button.setIconSize(icon_size)
