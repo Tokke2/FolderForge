@@ -9,14 +9,24 @@ from functools import lru_cache
 from PySide6.QtCore import QObject, Signal, QRect, QTimer, QUrl, Qt, QSize
 from PySide6.QtSvgWidgets import QSvgWidget
 from PySide6.QtGui import QDesktopServices, QPixmap, QIcon, QKeySequence, QFontDatabase, QFont
-from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout, QStackedWidget, QSizePolicy, QKeySequenceEdit,
-    QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QFrame, QStyle,
-    QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QGridLayout,
+    QStackedWidget, QSizePolicy, QKeySequenceEdit, QFileDialog, QFormLayout,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow,
+    QFrame, QProgressBar, QStyle, QMessageBox, QPlainTextEdit, QPushButton,
+    QScrollArea, QTabWidget, QVBoxLayout, QWidget,
+)
 
-from app_core import (build_project_name, ExistingProject, StructureEngine, project_year_choices, validate_project_year)
+from app_core import (
+    build_project_name, ExistingProject, StructureEngine,
+    project_year_choices, validate_project_year,
+)
 from qt_preview import PreviewWindow, fit_to_screen, install_field_wheel_guard
-from settings import (APP_VERSION, BASE_DIR, LOKAL_CHOICES, VEHICLE_CHOICES,
-    UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY)
+from settings import (
+    APP_VERSION, BASE_DIR, DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES,
+    VEHICLE_CHOICES, UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED,
+    UI_PRIMARY,
+)
 from workspace import Workspace
 
 
@@ -26,19 +36,57 @@ def navigation_icon(name, variant):
     return QIcon(str(BASE_DIR / ('Icon/nav-' + name + variant)))
 
 
-def label(text):
+def toggle_damage_word(current_text: str, chip: str) -> str:
+    """Slår ruta-/skadeordet av/på i projektnamnet (SIDORUTA/BAKRUTA utesluter varandra)."""
+    upp = chip.upper()
+    words = (current_text or '').split()
+    if any(w.upper() == upp for w in words):
+        words = [w for w in words if w.upper() != upp]
+    else:
+        if upp in RUTA_CHOICES:
+            words = [w for w in words if w.upper() not in RUTA_CHOICES]
+        words.append(upp)
+    return ' '.join(words)
+
+
+def label(text, object_name=None):
     result = QLabel(text)
     result.setWordWrap(True)
     result.setTextFormat(Qt.PlainText)
+    if object_name:
+        result.setObjectName(object_name)
     return result
 
 
-def button(layout, text, callback):
+def button(layout, text, callback, icon_name=None, icon_registry=None):
     result = QPushButton(text)
     result.setObjectName('secondaryAction')
     result.clicked.connect(callback)
     layout.addWidget(result)
+    if icon_name and icon_registry is not None:
+        icon_registry.append((result, icon_name))
     return result
+
+
+def card_frame():
+    frame = QFrame()
+    frame.setObjectName('projectCard')
+    body = QVBoxLayout(frame)
+    body.setContentsMargins(14, 12, 14, 12)
+    body.setSpacing(8)
+    return frame, body
+
+
+def monospace_font(factor=1.0):
+    mono = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+    families = set(QFontDatabase.families())
+    for candidate in ('Cascadia Mono', 'Consolas', 'SF Mono', 'JetBrains Mono', 'DejaVu Sans Mono'):
+        if candidate in families:
+            mono.setFamily(candidate)
+            break
+    mono.setPointSizeF(10.5 * factor)
+    mono.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+    return mono
 
 
 def page(tabs, title):
@@ -48,7 +96,7 @@ def page(tabs, title):
     widget = QWidget()
     layout = QVBoxLayout(widget)
     layout.setContentsMargins(12, 8, 12, 8)
-    layout.setSpacing(8)
+    layout.setSpacing(10)
     scroll.setWidget(widget)
     tabs.addTab(scroll, title)
     return layout
@@ -59,12 +107,15 @@ class ResponsiveTabs(QWidget):
     def __init__(self):
         super().__init__()
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 4, 10, 0)
+        layout.setSpacing(6)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         self.header = QGridLayout()
+        self.header.setSpacing(6)
         layout.addLayout(self.header)
         self.stack = QStackedWidget()
         self.stack.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        layout.addWidget(self.stack)
+        layout.addWidget(self.stack, 1)
         self.buttons = []
         self.columns = 0
         self.hidden_tabs = set()
@@ -114,8 +165,8 @@ class ResponsiveTabs(QWidget):
 
     def reflow(self, force=False):
         visible = [b for n, b in enumerate(self.buttons) if n not in self.hidden_tabs]
-        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 72 for b in visible), default=180)
-        columns = max(1, min(len(visible), max(1, self.width() - 24) // needed))
+        needed = max((b.fontMetrics().horizontalAdvance(b.text()) + 68 for b in visible), default=170)
+        columns = max(1, min(len(visible), max(1, self.width() - 20) // needed))
         if not force and columns == self.columns:
             return
         while self.header.count():
@@ -139,67 +190,152 @@ class ProjectDialog(QDialog):
         super().__init__(window)
         self.window = window
         self.setWindowTitle('Skapa standardprojekt')
+        self.setWindowIcon(window.windowIcon())
         self.setModal(True)
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 10, 12, 10)
+        outer.setSpacing(8)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
         content = QWidget()
         body = QVBoxLayout(content)
-        form = QFormLayout()
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+        body.setContentsMargins(4, 2, 4, 4)
+        body.setSpacing(8)
+
+        name_card, name_layout = card_frame()
+        name_title = label('&Projektnamn / registreringsnummer', 'cardHeading')
         self.name = QLineEdit()
         self.name.setAccessibleName('Projektnamn')
-        self.location = QComboBox()
-        self.location.addItems(['—'] + list(LOKAL_CHOICES))
-        self.year = QComboBox()
-        self.year.setEditable(True)
-        self.year.addItems(['—'] + project_year_choices())
+        self.name.setPlaceholderText('T.ex. ABC123 eller kund-/projektnamn…')
+        name_title.setBuddy(self.name)
+        name_layout.addWidget(name_title)
+        name_layout.addWidget(self.name)
+
+        # Val av ruta / skadetyp (precis som i Tk/ttk-versionen, med ömsesidigt uteslutande SIDORUTA/BAKRUTA)
+        chips_caption = label('Ruta / skadetyp · valfria snabbval (klicka för att lägga till eller ta bort)', 'mutedText')
+        name_layout.addWidget(chips_caption)
+        chips_grid = QGridLayout()
+        chips_grid.setSpacing(6)
+        self.damage_buttons = {}
+        for idx, chip in enumerate(DAMAGE_TYPE_CHIPS):
+            chip_btn = QPushButton(chip)
+            chip_btn.setObjectName('damageChip')
+            chip_btn.setCheckable(True)
+            chip_btn.setFocusPolicy(Qt.TabFocus)
+            chip_btn.clicked.connect(lambda _checked=False, c=chip: self.toggle_damage(c))
+            chips_grid.addWidget(chip_btn, 0, idx)
+            chips_grid.setColumnStretch(idx, 1)
+            self.damage_buttons[chip] = chip_btn
+        name_layout.addLayout(chips_grid)
+        body.addWidget(name_card)
+
+        # Kompakt 2-kolumnskort för Fordon, Profil, Lokal och År (minimerar scroll)
+        details_card, details_layout = card_frame()
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(6)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
         self.vehicle = QComboBox()
         self.vehicle.addItems(['—'] + list(VEHICLE_CHOICES))
         self.template = QComboBox()
         self.template.addItems(list(window.workspace.templates.list_templates()))
         self.template.setCurrentText(window.home_profile.currentText())
-        for title, widget in (('&Projektnamn', self.name), ('&Fordon', self.vehicle),
-                              ('&Lokal', self.location), ('&År', self.year), ('&Profil / mall', self.template)):
-            form.addRow(title, widget)
-        body.addLayout(form)
-        body.addWidget(label('Tillfällig egen struktur (frivilligt, ändrar inte dina sparade mallar):'))
-        self.custom = QPlainTextEdit()
-        self.custom.setPlaceholderText('Lämna tomt för vald mall, eller klistra in ett indraget mappträd.')
-        self.custom.setMaximumHeight(130)
-        body.addWidget(self.custom)
+        self.location = QComboBox()
+        self.location.addItems(['—'] + list(LOKAL_CHOICES))
+        self.year = QComboBox()
+        self.year.setEditable(True)
+        self.year.addItems(['—'] + project_year_choices())
+
+        for row, col, caption, widget in (
+            (0, 0, '&Fordon', self.vehicle),
+            (0, 1, '&Profil / mall', self.template),
+            (2, 0, '&Lokal', self.location),
+            (2, 1, '&År (välj eller skriv)', self.year),
+        ):
+            lbl = label(caption, 'mutedText')
+            lbl.setBuddy(widget)
+            grid.addWidget(lbl, row, col)
+            grid.addWidget(widget, row + 1, col)
+        details_layout.addLayout(grid)
+        body.addWidget(details_card)
+
+        custom_card, custom_layout = card_frame()
+        custom_header = QHBoxLayout()
+        custom_header.addWidget(label('Tillfällig egen struktur (frivilligt – ändrar inte sparade profiler)', 'mutedText'), 1)
+
         def show_structure():
             dialog = QDialog(self)
             dialog.setWindowTitle('Mappstruktur för projektet')
+            dialog.setWindowIcon(self.windowIcon())
             preview_layout = QVBoxLayout(dialog)
             text = QPlainTextEdit()
             text.setReadOnly(True)
+            text.setFont(monospace_font())
             structure = self.custom.toPlainText() if self.custom.toPlainText().strip() else (
                 self.window.workspace.templates.list_templates().get(self.template.currentText(), ''))
             text.setPlainText(structure)
             preview_layout.addWidget(text)
             button(preview_layout, 'Stäng', dialog.reject)
-            fit_to_screen(dialog, 600, 550)
+            fit_to_screen(dialog, 620, 560)
             dialog.exec()
-        button(body, 'Visa vald mappstruktur', show_structure)
-        self.preview = label('')
-        body.addWidget(self.preview)
-        self.error = label('')
-        body.addWidget(self.error)
+            dialog.deleteLater()
+
+        inspect_btn = QPushButton('Visa struktur…')
+        inspect_btn.setObjectName('secondaryAction')
+        inspect_btn.clicked.connect(show_structure)
+        custom_header.addWidget(inspect_btn)
+        custom_layout.addLayout(custom_header)
+        self.custom = QPlainTextEdit()
+        self.custom.setFont(monospace_font())
+        self.custom.setPlaceholderText('Lämna tomt för vald profil, eller klistra in ett indraget mappträd.')
+        self.custom.setMaximumHeight(96)
+        custom_layout.addWidget(self.custom)
+        body.addWidget(custom_card)
+        body.addStretch()
         scroll.setWidget(content)
-        layout.addWidget(scroll)
+        outer.addWidget(scroll, 1)
+
+        # Alltid synlig nederdel utan rullning: live-förhandsvisning + Skapa/Avbryt
+        footer_card, footer_layout = card_frame()
+        self.preview = label('')
+        self.preview.setObjectName('previewBox')
+        footer_layout.addWidget(self.preview)
+        self.error = label('', 'errorText')
+        footer_layout.addWidget(self.error)
         actions = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         self.create_button = actions.button(QDialogButtonBox.Save)
         self.create_button.setText('Skapa projekt…')
         actions.accepted.connect(self.create)
         actions.rejected.connect(self.reject)
-        body.addWidget(actions)
-        body.addStretch()
-        self.name.textChanged.connect(self.refresh)
+        footer_layout.addWidget(actions)
+        outer.addWidget(footer_card)
+
+        self.name.textChanged.connect(self.on_name_changed)
         for widget in (self.location, self.year, self.vehicle, self.template):
             widget.currentTextChanged.connect(self.refresh)
         self.custom.textChanged.connect(self.refresh)
         self.template.currentTextChanged.connect(window.select_profile)
+        self.sync_damage_chips()
+        self.refresh()
+
+    def toggle_damage(self, chip):
+        updated = toggle_damage_word(self.name.text(), chip)
+        self.name.setText(updated)
+        self.name.setFocus()
+        self.name.setCursorPosition(len(updated))
+
+    def sync_damage_chips(self):
+        words = {w.upper() for w in self.name.text().split()}
+        for chip, btn in self.damage_buttons.items():
+            btn.blockSignals(True)
+            btn.setChecked(chip.upper() in words)
+            btn.blockSignals(False)
+
+    def on_name_changed(self):
+        self.sync_damage_chips()
         self.refresh()
 
     def prepare(self):
@@ -215,13 +351,17 @@ class ProjectDialog(QDialog):
         try:
             name, items = self.prepare()
             folders, files = StructureEngine.count_items(items)
-            self.preview.setText(f'Slutnamn: {name}\n{folders} mappar, {files} filer\n'
+            self.preview.setText(f'Slutnamn: {name}\n{folders} mappar · {files} filer · '
                 f'Sparas i: {self.window.workspace.profile_root(self.template.currentText()) / name}')
+            self.preview.setVisible(True)
             self.error.clear()
+            self.error.setVisible(False)
             self.create_button.setEnabled(True)
         except (ValueError, OSError) as exc:
             self.preview.clear()
+            self.preview.setVisible(False)
             self.error.setText(str(exc))
+            self.error.setVisible(True)
             self.create_button.setEnabled(False)
 
     def create(self):
@@ -253,7 +393,7 @@ class ProjectDialog(QDialog):
 
     def showEvent(self, event):
         super().showEvent(event)
-        fit_to_screen(self, 640, 680)
+        fit_to_screen(self, 700, 620)
         QTimer.singleShot(0, self.focus_name)
 
     def focus_name(self):
@@ -268,31 +408,62 @@ class QtWindow(PreviewWindow):
         self.workspace = workspace
         self._hotkeys = None
         self._busy_tasks = 0
+        self._action_icons = []
+        self._mono_editors = []
+        self._last_update_mtime = None
         self._export_bridge = ExportBridge(self)
         self._export_bridge.ready.connect(self.export_ready)
         self._export_bridge.failed.connect(self.export_failed)
         self.setWindowTitle(f'FolderForge {APP_VERSION}')
         self.tabs = ResponsiveTabs()
+
         shell = QWidget()
         shell.setObjectName('appShell')
         shell_layout = QVBoxLayout(shell)
         shell_layout.setContentsMargins(0, 0, 0, 0)
-        shell_layout.setSpacing(6)
+        shell_layout.setSpacing(2)
+
+        # Kompakt, knivskarp toppanel (sparar höjd på alla sidor och växlar vektor-logotyp efter tema)
         header = QFrame()
         header.setObjectName('appHeader')
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(18, 10, 18, 10)
+        header_layout.setContentsMargins(16, 8, 16, 8)
+        header_layout.setSpacing(10)
         logo_path = BASE_DIR / 'Icon/folderforge-logo.svg'
         logo = QSvgWidget(str(logo_path))
-        if not logo.renderer().isValid():
+        if logo.renderer().isValid():
+            logo.renderer().setAspectRatioMode(Qt.KeepAspectRatio)
+            self._logo_svg = logo
+        else:
             logo.deleteLater()
             logo = QLabel('FolderForge')
+            self._logo_svg = None
         logo.setObjectName('appLogo')
-        logo.setFixedSize(220, 47)
+        logo.setFixedSize(212, 44)
         logo.setAccessibleName('FolderForge')
+        self._logo_widget = logo
         header_layout.addWidget(logo)
-        header_layout.addWidget(label('v' + APP_VERSION))
-        header_layout.addStretch()
+        version_badge = label('v' + APP_VERSION, 'versionBadge')
+        header_layout.addWidget(version_badge)
+        header_layout.addStretch(1)
+
+        self.update_summary = label('Kontrollerar lokal uppdateringsstatus…', 'updateSummary')
+        self.update_summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        header_layout.addWidget(self.update_summary)
+
+        update = QPushButton('Sök uppdatering nu')
+        update.setObjectName('secondaryAction')
+        update.clicked.connect(self.check_updates)
+        self._global_update_button = update
+        header_layout.addWidget(update)
+
+        self.fit_screen_button = QPushButton('Maxhöjd')
+        self.fit_screen_button.setObjectName('secondaryAction')
+        self.fit_screen_button.setToolTip('Anpassa fönstret till skärmens fulla höjd och optimala bredd')
+        self.fit_screen_button.clicked.connect(self.fit_window_to_screen)
+        self._action_icons.append((self.fit_screen_button, 'fit'))
+        header_layout.addWidget(self.fit_screen_button)
+
         self.theme_toggle = QPushButton('◐')
         self.theme_toggle.setAccessibleName('Växla ljust och mörkt tema')
         self.theme_toggle.setToolTip('Växla ljust och mörkt tema')
@@ -301,24 +472,17 @@ class QtWindow(PreviewWindow):
         self.theme_toggle.clicked.connect(self.toggle_theme)
         header_layout.addWidget(self.theme_toggle)
         shell_layout.addWidget(header)
-        update = QPushButton('Sök uppdatering nu')
-        update.setObjectName('secondaryAction')
-        update.clicked.connect(self.check_updates)
-        self._global_update_button = update
-        shell_layout.addWidget(update)
-        self.update_summary = label('Kontrollerar lokal uppdateringsstatus…')
-        self.update_summary.setObjectName('updateSummary')
-        self.update_summary.setContentsMargins(12, 0, 12, 0)
-        shell_layout.addWidget(self.update_summary)
+
         shell_layout.addWidget(self.tabs, 1)
+
         footer = QFrame()
         footer.setObjectName('appFooter')
         footer_layout = QGridLayout(footer)
         self._footer_layout = footer_layout
-        footer_layout.setContentsMargins(12, 5, 12, 5)
+        footer_layout.setContentsMargins(14, 4, 14, 4)
         footer_layout.setSpacing(4)
         footer_layout.setColumnStretch(0, 1)
-        footer_layout.addWidget(label('© Rickard Längkvist · Drag & Drop aktiv'), 0, 0)
+        footer_layout.addWidget(label('© Rickard Längkvist · Släpp valfri mapp i fönstret för snabb trälexport', 'mutedText'), 0, 0)
         minimize = QPushButton('Minimera till fältet')
         minimize.clicked.connect(self.hide)
         footer_layout.addWidget(minimize, 1, 0)
@@ -326,39 +490,43 @@ class QtWindow(PreviewWindow):
         self._minimize_button = minimize
         shell_layout.addWidget(footer)
         self.setCentralWidget(shell)
+
+        # ── Sida 0: Skapa (kompakt, noll scroll på normala skärmar) ──
         create = page(self.tabs, 'Skapa')
-        heading = label('Skapa ett projekt')
-        heading.setObjectName('pageHeading')
-        create.addWidget(heading)
-        subtitle = label('En tydlig struktur. Redo på några sekunder.')
-        subtitle.setObjectName('mutedText')
-        create.addWidget(subtitle)
+        hero_row = QHBoxLayout()
+        hero_texts = QVBoxLayout()
+        hero_texts.setSpacing(2)
+        heading = label('Skapa ett projekt', 'pageHeading')
+        hero_texts.addWidget(heading)
+        subtitle = label('En tydlig struktur – skapad och organiserad på några sekunder.', 'mutedText')
+        hero_texts.addWidget(subtitle)
+        hero_row.addLayout(hero_texts, 1)
+        undo_btn = QPushButton('Ångra senast skapade projekt…')
+        undo_btn.setObjectName('secondaryAction')
+        undo_btn.clicked.connect(self.undo_last)
+        self._action_icons.append((undo_btn, 'undo'))
+        hero_row.addWidget(undo_btn, 0, Qt.AlignTop)
+        create.addLayout(hero_row)
+
         self._home_grid = QGridLayout()
         self._home_grid.setSpacing(12)
         self._project_cards = []
         self._home_columns = 0
-        self._action_icons = []
         create.addLayout(self._home_grid)
         self._created = []
         for title, description, caption, callback in [
-            ('Använd din standardmall', 'Skapa projekt med din sparade mappstruktur.',
+            ('Använd din standardmall', 'Skapa projekt med sparad mappstruktur, ruta/skadetyp, fordon, lokal och år.',
              'Skapa projekt', self.open_project),
-            ('Egen struktur', 'Klistra in ett mappträd för ett enstaka projekt. Din standard ändras inte.',
+            ('Egen struktur', 'Klistra in ett mappträd för ett enstaka projekt. Dina sparade profiler ändras inte.',
              'Klistra in struktur', self.open_custom_project),
         ]:
-            card = QFrame()
-            card.setObjectName('projectCard')
-            body = QVBoxLayout(card)
-            body.setContentsMargins(14, 10, 14, 10)
-            body.setSpacing(6)
-            card_title = label(title)
-            card_title.setObjectName('cardHeading')
+            card, body = card_frame()
+            card_title = label(title, 'cardHeading')
             body.addWidget(card_title)
-            description_label = label(description)
-            description_label.setObjectName('mutedText')
+            description_label = label(description, 'mutedText')
             body.addWidget(description_label)
             if caption == 'Skapa projekt':
-                self.default_template_label = label('Profil')
+                self.default_template_label = label('Aktiv profil', 'mutedText')
                 body.addWidget(self.default_template_label)
                 self.home_profile = QComboBox()
                 self.home_profile.setAccessibleName('Aktiv profil på startsidan')
@@ -367,8 +535,11 @@ class QtWindow(PreviewWindow):
                 self.home_profile.addItems(list(workspace.templates.list_templates()))
                 self.home_profile.setCurrentText(workspace.selected_profile())
                 body.addWidget(self.home_profile)
-                self.save_root_label = label('')
+                self.save_root_label = label('', 'mutedText')
                 body.addWidget(self.save_root_label)
+            else:
+                quick_note = label('Tips: Du kan också skapa nya permanenta profiler under Inställningar → Profiler.', 'mutedText')
+                body.addWidget(quick_note)
             body.addStretch()
             action = button(body, caption, callback)
             action.setObjectName('primaryAction' if caption == 'Skapa projekt' else 'secondaryAction')
@@ -377,35 +548,58 @@ class QtWindow(PreviewWindow):
         self.reflow_home(force=True)
         self.home_profile.currentTextChanged.connect(self.select_profile)
         self.refresh_profile_path()
-        button(create, 'Ångra senast skapade projekt…', self.undo_last)
         create.addStretch()
+
+        # ── Sida 1: Historik (2 tydliga kolumner: lista + detaljpanel) ──
         history = page(self.tabs, 'Historik')
-        history.addWidget(label('Senaste projekt'))
+        hist_grid = QGridLayout()
+        hist_grid.setSpacing(12)
+        hist_grid.setColumnStretch(0, 3)
+        hist_grid.setColumnStretch(1, 2)
+
+        hist_left, hist_left_body = card_frame()
+        hist_left_body.addWidget(label('Senaste projekt', 'cardHeading'))
         self.history_filter = QLineEdit()
         self.history_filter.setPlaceholderText('Filtrera projektnamn eller sökväg…')
         self.history_filter.textChanged.connect(self.refresh_history)
-        history.addWidget(self.history_filter)
+        hist_left_body.addWidget(self.history_filter)
         self.history_list = QListWidget()
+        self.history_list.setAlternatingRowColors(True)
         self.history_list.itemDoubleClicked.connect(self.open_history)
-        history.addWidget(self.history_list)
-        button(history, 'Öppna markerad mapp', lambda: self.open_history(self.history_list.currentItem()))
-        button(history, 'Exportera markerad mappstruktur', self.export_history)
-        button(history, 'Ta bort markerad historikpost…', lambda: self.remove_history(False))
-        button(history, 'Rensa historiken…', lambda: self.remove_history(True))
-        button(history, 'Uppdatera listan', self.refresh_history)
+        self.history_list.currentItemChanged.connect(self._update_history_detail)
+        hist_left_body.addWidget(self.history_list, 1)
+        hist_grid.addWidget(hist_left, 0, 0)
+
+        hist_right, hist_right_body = card_frame()
+        hist_right_body.addWidget(label('Detaljer & åtgärder', 'cardHeading'))
+        self.history_detail = label('Markera ett projekt i listan för att se sökväg och status.', 'mutedText')
+        hist_right_body.addWidget(self.history_detail)
+        button(hist_right_body, 'Öppna markerad mapp', lambda: self.open_history(self.history_list.currentItem()), 'folder', self._action_icons)
+        button(hist_right_body, 'Exportera markerad mappstruktur', self.export_history, 'export', self._action_icons)
+        button(hist_right_body, 'Uppdatera listan', self.refresh_history, 'refresh', self._action_icons)
+        button(hist_right_body, 'Ta bort markerad historikpost…', lambda: self.remove_history(False), 'trash', self._action_icons)
+        button(hist_right_body, 'Rensa historiken…', lambda: self.remove_history(True), 'trash', self._action_icons)
+        hist_right_body.addStretch(1)
+        hist_grid.addWidget(hist_right, 0, 1)
+        history.addLayout(hist_grid, 1)
+
         self.template_page()
         self.export_page()
         self.settings_page()
+
         self.menuBar().clear()
         file_menu = self.menuBar().addMenu('Arkiv')
         file_menu.addAction('Skapa standardprojekt', self.open_project)
         file_menu.addAction('Klistra in struktur', self.open_custom_project)
+        file_menu.addAction('Hantera profiler…', self.open_profiles_subtab)
         file_menu.addAction('Öppna sparplats', lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(str(self.workspace.profile_root(self.home_profile.currentText())))))
         file_menu.addAction('Minimera till systemfältet', self.hide)
         file_menu.addAction(self.exit_action)
+
         view_menu = self.menuBar().addMenu('Visa')
         self.tab_actions = []
+        view_menu.addAction('Anpassa till skärm (maxhöjd)', self.fit_window_to_screen)
         view_menu.addAction('Visa alla sidor', self.show_all_tabs)
         view_menu.addSeparator()
         for index, title in enumerate(('Skapa', 'Historik', 'Mallar', 'Exportera', 'Inställningar', 'Snabbtangent')):
@@ -416,6 +610,7 @@ class QtWindow(PreviewWindow):
             self.tabs.setTabVisible(index, visible)
             action.triggered.connect(lambda checked, n=index: self.toggle_tab(n, checked))
             self.tab_actions.append(action)
+
         help_menu = self.menuBar().addMenu('Hjälp')
         self.exit_action.setText('Avsluta FolderForge')
         help_menu.addAction(self.exit_action)
@@ -432,6 +627,7 @@ class QtWindow(PreviewWindow):
         help_menu.addAction('Om FolderForge', lambda: QMessageBox.information(self, 'FolderForge',
             f'FolderForge {APP_VERSION}\n© Rickard Längkvist\n'
             'Explicit Tk-reserv finns via Starta-FolderForge-Tk.py.'))
+
         self.setAcceptDrops(True)
         self.refresh_history()
         self.apply_accessibility()
@@ -441,20 +637,40 @@ class QtWindow(PreviewWindow):
         QApplication.instance().aboutToQuit.connect(self.save_placement)
         self._update_summary_timer = QTimer(self)
         self._update_summary_timer.timeout.connect(self.refresh_update_summary)
-        self._update_summary_timer.setInterval(1500)
+        self._update_summary_timer.setInterval(2000)
         self._update_summary_timer.setTimerType(Qt.CoarseTimer)
-        self.refresh_update_summary()
+        self.refresh_update_summary(force=True)
         QApplication.styleHints().colorSchemeChanged.connect(self.system_theme_changed)
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() and any(u.isLocalFile() and Path(u.toLocalFile()).is_dir() for u in event.mimeData().urls()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                folder = Path(url.toLocalFile())
+                if folder.is_dir():
+                    self.tabs.setCurrentIndex(3)
+                    self.start_export(folder)
+                    event.acceptProposedAction()
+                    return
+
+    def open_profiles_subtab(self):
+        self.tabs.setCurrentIndex(4)
+        if hasattr(self, 'settings_subtabs'):
+            self.settings_subtabs.setCurrentIndex(1)
 
     def showEvent(self, event):
         super().showEvent(event)
         if hasattr(self, '_update_summary_timer'):
-            self.refresh_update_summary()
+            self.refresh_update_summary(force=True)
             self._update_summary_timer.start()
 
     def hideEvent(self, event):
-        # A hidden tray window does not need UI status polling. The independent
-        # updater, restart safety checks and native hotkeys remain active.
+        # A hidden tray window does not need UI status polling.
         if hasattr(self, '_update_summary_timer'):
             self._update_summary_timer.stop()
         if hasattr(self, '_placement_timer'):
@@ -464,6 +680,38 @@ class QtWindow(PreviewWindow):
     def system_theme_changed(self, scheme):
         if self.workspace.config.theme == 'System':
             self.apply_accessibility()
+
+    def _screen_work_area(self, screen):
+        self.winId()
+        margins = self.windowHandle().frameMargins()
+        top_frame = max(32, margins.top())
+        return screen.availableGeometry().adjusted(
+            4 + margins.left(),
+            4 + top_frame,
+            -4 - margins.right(),
+            -4 - margins.bottom(),
+        )
+
+    def _default_screen_geometry(self, area):
+        factor = int(self.workspace.config.text_size.rstrip('%')) / 100
+        # Starta i maxhöjd beroende på skärm och anpassa bredden efter skärmens storlek och textskala.
+        ratio = 0.88 if area.width() < 1440 else (0.78 if area.width() < 2100 else 0.68)
+        preferred_width = min(round(1460 * factor), max(round(860 * factor), round(area.width() * ratio)))
+        width = min(preferred_width, area.width())
+        height = area.height()
+        rect = QRect(0, 0, width, height)
+        rect.moveCenter(area.center())
+        rect.moveTop(area.top())
+        return rect
+
+    def fit_window_to_screen(self):
+        screen = self.screen() or QApplication.primaryScreen()
+        area = self._screen_work_area(screen)
+        rect = self._default_screen_geometry(area)
+        self.setGeometry(rect)
+        self.tabs.reflow(force=True)
+        self.reflow_home(force=True)
+        self.save_placement()
 
     def restore(self):
         from historik import read_json_safe
@@ -479,15 +727,9 @@ class QtWindow(PreviewWindow):
                        * item.availableGeometry().intersected(rectangle).height(), default=screen)
             if best.availableGeometry().intersects(rectangle):
                 screen = best
-        # Reserve native title/frame space too; availableGeometry already excludes taskbar.
-        self.winId()
-        margins = self.windowHandle().frameMargins()
-        area = screen.availableGeometry().adjusted(12 + margins.left(),
-            12 + max(30, margins.top()), -12 - margins.right(), -12 - margins.bottom())
+        area = self._screen_work_area(screen)
         if rectangle is None:
-            initial_width = min(1120, max(760, round(area.width() * .82)))
-            rectangle = QRect(0, 0, min(initial_width, area.width()), min(740, area.height()))
-            rectangle.moveCenter(area.center())
+            rectangle = self._default_screen_geometry(area)
         width = min(max(300, rectangle.width()), area.width())
         height = min(max(250, rectangle.height()), area.height())
         x = max(area.left(), min(rectangle.x(), area.right() - width + 1))
@@ -571,8 +813,10 @@ class QtWindow(PreviewWindow):
         names = list(self.workspace.templates.list_templates())
         active = self.home_profile.currentText()
         active = active if active in names else self.workspace.selected_profile()
-        for combo, selected in ((self.home_profile, active),
-                                (self.default_profile, self.default_profile.currentText())):
+        combos = [(self.home_profile, active), (self.default_profile, self.default_profile.currentText())]
+        if hasattr(self, 'settings_profile_picker'):
+            combos.append((self.settings_profile_picker, self.settings_profile_picker.currentText()))
+        for combo, selected in combos:
             combo.blockSignals(True)
             combo.clear()
             combo.addItems(names)
@@ -580,13 +824,23 @@ class QtWindow(PreviewWindow):
             combo.blockSignals(False)
         self.refresh_profile_path()
 
-    def refresh_update_summary(self):
+    def refresh_update_summary(self, force=False):
         from updater import get_update_status
+        state_file = self.workspace.base / 'data/update-state.json'
+        mtime = None
+        try:
+            mtime = state_file.stat().st_mtime_ns
+        except OSError:
+            pass
+        if not force and mtime is not None and mtime == self._last_update_mtime:
+            return
+        self._last_update_mtime = mtime
         try:
             state = get_update_status(self.workspace.base, APP_VERSION)
             text = 'Uppdatering: ' + state['Status']
             tooltip = ('Senaste kontroll: ' + state['Senaste kontrollförsök'] +
-                '\n' + state['Hämtning'] + '\n' + state['Senaste fel'])
+                '\n' + state['Hämtning'] + '\n' + state.get('Verifierade filändringar', '') +
+                '\n' + state['Senaste fel'])
             if self.update_summary.text() != text:
                 self.update_summary.setText(text)
             if self.update_summary.toolTip() != tooltip:
@@ -599,6 +853,8 @@ class QtWindow(PreviewWindow):
             self.dialog.raise_()
             self.dialog.activateWindow()
             return
+        if self.dialog is not None:
+            self.dialog.deleteLater()
         self.dialog = ProjectDialog(self)
         self.dialog.show()
 
@@ -619,6 +875,27 @@ class QtWindow(PreviewWindow):
         self.open_project()
         self.dialog.custom.setFocus()
 
+    def _update_history_detail(self, current, _previous=None):
+        if not hasattr(self, 'history_detail'):
+            return
+        if current is None:
+            self.history_detail.setText('Markera ett projekt i listan för att se sökväg och status.')
+            return
+        raw_path = current.data(Qt.UserRole)
+        created = current.data(Qt.UserRole + 1) or 'Okänt datum'
+        folder = Path(raw_path)
+        if folder.is_dir():
+            try:
+                children = list(folder.iterdir())
+                dirs = sum(1 for p in children if p.is_dir())
+                files = sum(1 for p in children if p.is_file())
+                state_str = f'Finns på disk ({dirs} undermappar, {files} filer i roten)'
+            except OSError:
+                state_str = 'Finns på disk'
+        else:
+            state_str = 'Mappen hittas inte på angiven sökväg'
+        self.history_detail.setText(f'Projekt: {folder.name}\nSökväg: {folder}\nSkapad: {created}\nStatus: {state_str}')
+
     def refresh_history(self):
         selected = self.history_list.currentItem()
         previous = selected.data(Qt.UserRole) if selected else None
@@ -628,12 +905,17 @@ class QtWindow(PreviewWindow):
             path = entry['path']
             if query not in path.casefold():
                 continue
-            item = QListWidgetItem(Path(path).name + '\n' + path + '\n' + str(entry.get('created', '')))
+            created = str(entry.get('created', ''))
+            item = QListWidgetItem(f'{Path(path).name}  ·  {created}\n{path}')
             item.setData(Qt.UserRole, path)
+            item.setData(Qt.UserRole + 1, created)
             item.setToolTip(path)
             self.history_list.addItem(item)
             if previous == path:
                 self.history_list.setCurrentItem(item)
+        if self.history_list.count() and self.history_list.currentItem() is None:
+            self.history_list.setCurrentRow(0)
+        self._update_history_detail(self.history_list.currentItem())
 
     def open_history(self, item):
         if item and not QDesktopServices.openUrl(QUrl.fromLocalFile(item.data(Qt.UserRole))):
@@ -668,14 +950,17 @@ class QtWindow(PreviewWindow):
     def cache_dialog(self):
         from cache_cleanup import status_text, clean_cache
         dialog = QDialog(self)
-        dialog.setWindowTitle('Rensa cache – smartfilter')
+        dialog.setWindowTitle('Rensa cache & loggarkiv – smartfilter')
+        dialog.setWindowIcon(self.windowIcon())
         layout = QVBoxLayout(dialog)
         layout.addWidget(label('Daglig automatisk rensning behålls. Smartfiltret skyddar projekt, '
-                               'inställningar, historik, uppdateringar och felloggar.'))
+                               'inställningar, historik, uppdateringar och aktiva felloggar. '
+                               'Arkiverade loggar äldre än 7 dagar rensas automatiskt.'))
         status = label(status_text(self.workspace.base))
         layout.addWidget(status)
+
         def clean():
-            if QMessageBox.question(dialog, 'Rensa cache', 'Rensa gamla filer enligt smartfiltret?',
+            if QMessageBox.question(dialog, 'Rensa cache', 'Rensa gamla filer och loggarkiv äldre än 7 dagar enligt smartfiltret?',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
             try:
@@ -685,100 +970,142 @@ class QtWindow(PreviewWindow):
             except Exception as exc:
                 logging.getLogger('qt.cache').exception('Cacherensning misslyckades')
                 QMessageBox.warning(dialog, 'Cacherensning', str(exc))
+
         button(layout, 'Rensa nu med smartfilter', clean)
         button(layout, 'Stäng', dialog.reject)
-        fit_to_screen(dialog, 550, 350)
+        fit_to_screen(dialog, 560, 360)
         dialog.exec()
+        dialog.deleteLater()
+
+    def _sync_all_template_lists(self, selected_name=None):
+        names = list(self.workspace.templates.list_templates())
+        for combo in (self.templates, getattr(self, 'settings_profile_picker', None)):
+            if combo is not None:
+                current = selected_name or combo.currentText()
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItems(names)
+                if current in names:
+                    combo.setCurrentText(current)
+                combo.blockSignals(False)
+        self.refresh_profile_choices()
 
     def template_page(self):
         layout = page(self.tabs, 'Mallar')
-        layout.addWidget(label('Profiler – varje mall har en sparplats'))
-        layout.addWidget(label('Välj profil vid skapandet så används både strukturen och sparplatsen. '
-            'Äldre mallar utan egen sparplats använder den allmänna sparplatsen i Inställningar. '
-            'Ge en inbyggd mall ett eget namn för att spara en profil.'))
+        grid = QGridLayout()
+        grid.setSpacing(12)
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 3)
+
+        left_card, left_body = card_frame()
+        left_body.addWidget(label('Mallar & profiler', 'cardHeading'))
+        left_body.addWidget(label('Välj profil för att redigera både mappstruktur och egen sparplats. '
+            'Ge en inbyggd mall ett nytt namn för att spara en egen profil.', 'mutedText'))
+        left_body.addWidget(label('Befintlig mall / profil', 'mutedText'))
         self.templates = QComboBox()
         self.templates.addItems(list(self.workspace.templates.list_templates()))
+        left_body.addWidget(self.templates)
+        left_body.addWidget(label('Profilnamn', 'mutedText'))
         self.template_name = QLineEdit()
         self.template_name.setPlaceholderText('Profilnamn (nytt namn skapar en egen profil)')
-        self.structure = QPlainTextEdit()
-        layout.addWidget(self.templates)
-        layout.addWidget(self.template_name)
-        layout.addWidget(self.structure)
-        layout.addWidget(label('Sparplats för profilen'))
+        left_body.addWidget(self.template_name)
+        left_body.addWidget(label('Sparplats för profilen', 'mutedText'))
         self.profile_root_edit = QLineEdit()
         self.profile_root_edit.setAccessibleName('Profilens sparplats')
-        layout.addWidget(self.profile_root_edit)
+        left_body.addWidget(self.profile_root_edit)
+
         def choose_profile_root():
             path = QFileDialog.getExistingDirectory(self, 'Välj profilens sparplats', self.profile_root_edit.text())
             if path:
                 self.profile_root_edit.setText(path)
                 self.profile_root_edit.setModified(True)
-        button(layout, 'Välj profilens sparplats…', choose_profile_root)
-        def load(name):
-            self.template_name.setText(name)
-            self.structure.setPlainText(self.workspace.templates.list_templates().get(name, ''))
-            try:
-                root = self.workspace.profile_root(name) if name else Path(self.workspace.config.save_root)
-                self.profile_root_edit.setText(str(root))
-            except ValueError:
-                self.profile_root_edit.clear()
-            self.profile_root_edit.setModified(False)
-            self.template_name.setModified(False)
-        self.templates.currentTextChanged.connect(load)
-        def save():
-            try:
-                self.workspace.require_lock()
-                name = self.template_name.text().strip()
-                self.workspace.save_profile(name, self.structure.toPlainText(), self.profile_root_edit.text())
-                self.templates.blockSignals(True)
-                self.templates.clear()
-                self.templates.addItems(list(self.workspace.templates.list_templates()))
-                self.templates.setCurrentText(name)
-                self.templates.blockSignals(False)
-                load(name)
-                self.structure.document().setModified(False)
-                self.refresh_profile_choices()
-                self.statusBar().showMessage('Profil sparad – struktur och sparplats')
-            except (OSError, ValueError, RuntimeError) as exc:
-                logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
-                QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
-        button(layout, 'Spara profil (mall + sparplats)', save)
+
+        button(left_body, 'Välj profilens sparplats…', choose_profile_root, 'folder', self._action_icons)
+        button(left_body, 'Spara profil (mall + sparplats)', self._save_template_page_profile, 'save', self._action_icons)
+
         def set_default():
             self.default_profile.setCurrentText(self.templates.currentText())
             self.tabs.setCurrentIndex(4)
+            if hasattr(self, 'settings_subtabs'):
+                self.settings_subtabs.setCurrentIndex(0)
             self.statusBar().showMessage('Välj standardprofil och tryck Spara inställningar')
-        button(layout, 'Välj standardprofil i Inställningar…', set_default)
-        def remove():
-            if QMessageBox.question(self, 'Ta bort egen mall?', self.templates.currentText(),
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-                return
-            try:
-                if not self.workspace.templates.delete_template(self.templates.currentText()):
-                    raise ValueError('Inbyggda mallar kan inte tas bort')
-                if self.workspace.config.default_template == self.templates.currentText():
-                    self.workspace.config.default_template = 'Skaderapport'
-                    self.workspace.save_settings()
-                self.templates.clear()
-                self.templates.addItems(list(self.workspace.templates.list_templates()))
-                self.save_settings()
-            except (OSError, ValueError) as exc:
-                QMessageBox.warning(self, 'Kunde inte ta bort mall', str(exc))
-        button(layout, 'Ta bort vald egen mall…', remove)
-        load(self.templates.currentText())
+
+        button(left_body, 'Välj standardprofil i Inställningar…', set_default, 'settings', self._action_icons)
+        button(left_body, 'Ta bort vald egen mall…', self._remove_template_page_profile, 'trash', self._action_icons)
+        left_body.addStretch(1)
+        grid.addWidget(left_card, 0, 0)
+
+        right_card, right_body = card_frame()
+        right_body.addWidget(label('Mappstruktur (indrag med 4 mellanslag per nivå)', 'cardHeading'))
+        self.structure = QPlainTextEdit()
+        self._mono_editors.append(self.structure)
+        right_body.addWidget(self.structure, 1)
+        grid.addWidget(right_card, 0, 1)
+        layout.addLayout(grid, 1)
+
+        self.templates.currentTextChanged.connect(self._load_template_into_editor)
+        self._load_template_into_editor(self.templates.currentText())
+
+    def _load_template_into_editor(self, name):
+        self.template_name.setText(name)
+        self.structure.setPlainText(self.workspace.templates.list_templates().get(name, ''))
+        try:
+            root = self.workspace.profile_root(name) if name else Path(self.workspace.config.save_root)
+            self.profile_root_edit.setText(str(root))
+        except ValueError:
+            self.profile_root_edit.clear()
+        self.profile_root_edit.setModified(False)
+        self.template_name.setModified(False)
+        self.structure.document().setModified(False)
+
+    def _save_template_page_profile(self):
+        try:
+            self.workspace.require_lock()
+            name = self.template_name.text().strip()
+            self.workspace.save_profile(name, self.structure.toPlainText(), self.profile_root_edit.text())
+            self._sync_all_template_lists(name)
+            self._load_template_into_editor(name)
+            if hasattr(self, '_load_settings_profile'):
+                self._load_settings_profile(name)
+            self.statusBar().showMessage('Profil sparad – struktur och sparplats')
+        except (OSError, ValueError, RuntimeError) as exc:
+            logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
+            QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
+
+    def _remove_template_page_profile(self):
+        target = self.templates.currentText()
+        if QMessageBox.question(self, 'Ta bort egen mall?', target,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            if not self.workspace.templates.delete_template(target):
+                raise ValueError('Inbyggda mallar kan inte tas bort')
+            if self.workspace.config.default_template == target:
+                self.workspace.config.default_template = 'Skaderapport'
+                self.workspace.save_settings()
+            self._sync_all_template_lists()
+            self._load_template_into_editor(self.templates.currentText())
+            if hasattr(self, '_load_settings_profile'):
+                self._load_settings_profile(self.settings_profile_picker.currentText())
+            self.save_settings()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Kunde inte ta bort mall', str(exc))
 
     def export_page(self):
         layout = page(self.tabs, 'Exportera')
-        layout.addWidget(label('Välj en mapp för säker trälexport. Resultatet kan kopieras eller sparas.'))
-        layout.addWidget(label('Dra och släpp en mapp i fönstret, eller välj den nedan.'))
-        self.export_text = QPlainTextEdit()
-        self.export_text.setReadOnly(True)
+        card, body = card_frame()
+        top_bar = QHBoxLayout()
+        info_col = QVBoxLayout()
+        info_col.setSpacing(2)
+        info_col.addWidget(label('Exportera mappstruktur', 'cardHeading'))
+        info_col.addWidget(label('Dra och släpp en mapp i fönstret eller välj den nedan för säker trälexport.', 'mutedText'))
+        top_bar.addLayout(info_col, 1)
+
         def choose():
             folder = QFileDialog.getExistingDirectory(self, 'Välj mapp')
             if folder:
-                # Bounded traversal uses the exact shared Tk engine.
                 self.start_export(Path(folder))
-        button(layout, 'Välj mapp', choose)
-        layout.addWidget(self.export_text)
+
         def save():
             path, _ = QFileDialog.getSaveFileName(self, 'Spara struktur', 'struktur.txt', 'Text (*.txt)')
             if path:
@@ -787,59 +1114,84 @@ class QtWindow(PreviewWindow):
                 except OSError as exc:
                     logging.getLogger('qt.export').exception('Textfilen kunde inte sparas')
                     QMessageBox.warning(self, 'Kunde inte exportera', str(exc))
-        button(layout, 'Kopiera struktur', lambda: QApplication.clipboard().setText(self.export_text.toPlainText()))
-        button(layout, 'Spara text…', save)
+
+        button(top_bar, 'Välj mapp', choose, 'folder', self._action_icons)
+        button(top_bar, 'Kopiera struktur', lambda: QApplication.clipboard().setText(self.export_text.toPlainText()), 'copy', self._action_icons)
+        button(top_bar, 'Spara text…', save, 'save', self._action_icons)
+        body.addLayout(top_bar)
+        self.export_text = QPlainTextEdit()
+        self.export_text.setReadOnly(True)
+        self._mono_editors.append(self.export_text)
+        body.addWidget(self.export_text, 1)
+        layout.addWidget(card, 1)
 
     def settings_page(self):
         layout = page(self.tabs, 'Inställningar')
-        layout.addWidget(label('Allmän sparplats för äldre mallar utan egen profilsparplats. '
-            'Profiler med egen sparplats påverkas inte. Ändringar sparas först med Spara.'))
-        layout.addWidget(label('Standardprofil (används när ingen tidigare profil finns kvar)'))
+        self.settings_subtabs = QTabWidget()
+        self.settings_subtabs.setObjectName('settingsSubtabs')
+
+        # ── Underflik 1: Allmänt & Utseende (2 kolumner, noll scroll) ──
+        general_tab = QWidget()
+        general_outer = QVBoxLayout(general_tab)
+        general_outer.setContentsMargins(8, 8, 8, 8)
+        general_outer.setSpacing(10)
+        gen_grid = QGridLayout()
+        gen_grid.setSpacing(12)
+        gen_grid.setColumnStretch(0, 1)
+        gen_grid.setColumnStretch(1, 1)
+
+        storage_card, storage_body = card_frame()
+        storage_body.addWidget(label('Sparplats & projektflöde', 'cardHeading'))
+        storage_body.addWidget(label('Standardprofil (reserv om senaste profil tagits bort)', 'mutedText'))
         self.default_profile = QComboBox()
         self.default_profile.setAccessibleName('Standardprofil')
         self.default_profile.addItems(list(self.workspace.templates.list_templates()))
         self.default_profile.setCurrentText(self.workspace.config.default_template)
-        layout.addWidget(self.default_profile)
-        layout.addWidget(label('Senast valda profil koms alltid ihåg mellan starter.'))
+        storage_body.addWidget(self.default_profile)
+        storage_body.addWidget(label('Allmän sparplats (för äldre mallar utan egen profilsparplats)', 'mutedText'))
+        root_row = QHBoxLayout()
         self.root_edit = QLineEdit(self.workspace.config.save_root)
-        layout.addWidget(self.root_edit)
+        root_row.addWidget(self.root_edit, 1)
+
         def choose():
             path = QFileDialog.getExistingDirectory(self, 'Sparplats', self.root_edit.text())
             if path:
                 self.root_edit.setText(path)
-        button(layout, 'Välj sparplats…', choose)
+
+        button(root_row, 'Välj sparplats…', choose, 'folder', self._action_icons)
+        storage_body.addLayout(root_row)
         self.open_after = QCheckBox('Öppna mappen efter skapande')
         self.open_after.setChecked(self.workspace.config.open_after_creation)
-        self.plate_mode = QCheckBox('Normalisera registreringsnummer')
+        self.plate_mode = QCheckBox('Normalisera registreringsnummer (t.ex. abc 123 → ABC123)')
         self.plate_mode.setChecked(self.workspace.config.plate_mode)
-        layout.addWidget(self.open_after)
-        layout.addWidget(self.plate_mode)
+        storage_body.addWidget(self.open_after)
+        storage_body.addWidget(self.plate_mode)
+        button(storage_body, 'Skapa eller redigera profiler i underfliken Profiler →',
+               lambda: self.settings_subtabs.setCurrentIndex(1), 'profiles', self._action_icons)
+        storage_body.addStretch(1)
+        gen_grid.addWidget(storage_card, 0, 0)
+
+        display_card, display_body = card_frame()
+        display_body.addWidget(label('Utseende, DPI-skärpa & autostart', 'cardHeading'))
+        form_grid = QGridLayout()
+        form_grid.setSpacing(8)
+        form_grid.setColumnStretch(0, 1)
+        form_grid.setColumnStretch(1, 1)
         self.theme = QComboBox()
         self.theme.addItems(['Dark', 'Light', 'System'])
         self.theme.setCurrentText(self.workspace.config.theme)
         self.text_size = QComboBox()
         self.text_size.addItems(['100%', '110%', '125%', '150%'])
         self.text_size.setCurrentText(self.workspace.config.text_size)
-        self.high_contrast = QCheckBox('Hög kontrast')
+        form_grid.addWidget(label('Tema', 'mutedText'), 0, 0)
+        form_grid.addWidget(label('Text- och UI-skala', 'mutedText'), 0, 1)
+        form_grid.addWidget(self.theme, 1, 0)
+        form_grid.addWidget(self.text_size, 1, 1)
+        display_body.addLayout(form_grid)
+        self.high_contrast = QCheckBox('Hög kontrast (7:1 tillgänglighetsläge)')
         self.high_contrast.setChecked(self.workspace.config.high_contrast)
-        layout.addWidget(label('Tema'))
-        layout.addWidget(self.theme)
-        layout.addWidget(label('Textstorlek'))
-        layout.addWidget(self.text_size)
-        layout.addWidget(self.high_contrast)
-        def save():
-            if not self.root_edit.text().strip():
-                QMessageBox.warning(self, 'Sparplats', 'Välj en sparplats först.')
-                return
-            self.workspace.config.default_template = self.default_profile.currentText()
-            self.workspace.config.save_root = self.root_edit.text().strip()
-            self.workspace.config.open_after_creation = self.open_after.isChecked()
-            self.workspace.config.plate_mode = self.plate_mode.isChecked()
-            self.workspace.config.theme = self.theme.currentText()
-            self.workspace.config.text_size = self.text_size.currentText()
-            self.workspace.config.high_contrast = self.high_contrast.isChecked()
-            self.save_settings()
-        button(layout, 'Spara inställningar', save)
+        display_body.addWidget(self.high_contrast)
+
         def startup(enabled):
             if QMessageBox.question(self, 'Ändra autostart?',
                     ('Aktivera' if enabled else 'Avaktivera') + ' FolderForge vid inloggning?\n'
@@ -855,19 +1207,117 @@ class QtWindow(PreviewWindow):
                     raise RuntimeError(details)
                 QMessageBox.information(self, 'Autostart', details)
             except Exception as exc:
-                import logging
                 logging.getLogger('qt.autostart').exception('Ändring av autostart misslyckades')
                 QMessageBox.warning(self, 'Autostart misslyckades', str(exc))
-        button(layout, 'Starta med operativsystemet…', lambda: startup(True))
-        button(layout, 'Stäng av autostart…', lambda: startup(False))
-        layout.addStretch()
-        layout = page(self.tabs, 'Snabbtangent')
-        layout.addWidget(label('Global snabbtangent'))
-        layout.addWidget(label('Visa FolderForge var du än arbetar. Ange exempelvis ctrl+alt+m.'))
+
+        auto_row = QHBoxLayout()
+        button(auto_row, 'Starta med operativsystemet…', lambda: startup(True))
+        button(auto_row, 'Stäng av autostart…', lambda: startup(False))
+        display_body.addLayout(auto_row)
+        display_body.addStretch(1)
+        gen_grid.addWidget(display_card, 0, 1)
+        general_outer.addLayout(gen_grid, 1)
+
+        def save():
+            if not self.root_edit.text().strip():
+                QMessageBox.warning(self, 'Sparplats', 'Välj en sparplats först.')
+                return
+            self.workspace.config.default_template = self.default_profile.currentText()
+            self.workspace.config.save_root = self.root_edit.text().strip()
+            self.workspace.config.open_after_creation = self.open_after.isChecked()
+            self.workspace.config.plate_mode = self.plate_mode.isChecked()
+            self.workspace.config.theme = self.theme.currentText()
+            self.workspace.config.text_size = self.text_size.currentText()
+            self.workspace.config.high_contrast = self.high_contrast.isChecked()
+            self.save_settings()
+
+        button(general_outer, 'Spara inställningar', save, 'save', self._action_icons)
+        self.settings_subtabs.addTab(general_tab, 'Allmänt & Utseende')
+
+        # ── Underflik 2: Profiler (egen dedikerad underflik i Inställningar) ──
+        profiles_tab = QWidget()
+        prof_grid = QGridLayout(profiles_tab)
+        prof_grid.setContentsMargins(8, 8, 8, 8)
+        prof_grid.setSpacing(12)
+        prof_grid.setColumnStretch(0, 2)
+        prof_grid.setColumnStretch(1, 3)
+
+        prof_left, prof_left_body = card_frame()
+        prof_left_body.addWidget(label('Skapa & hantera profiler', 'cardHeading'))
+        prof_left_body.addWidget(label('Varje profil kopplar ihop ett eget mappstrukturträd med en egen sparplats.', 'mutedText'))
+        prof_left_body.addWidget(label('Utgå från befintlig profil / mall', 'mutedText'))
+        self.settings_profile_picker = QComboBox()
+        self.settings_profile_picker.setAccessibleName('Välj profil i Inställningar')
+        self.settings_profile_picker.addItems(list(self.workspace.templates.list_templates()))
+        prof_left_body.addWidget(self.settings_profile_picker)
+
+        def start_blank_profile():
+            self.settings_profile_name.clear()
+            self.settings_profile_name.setPlaceholderText('Ange namn på ny profil, t.ex. Verkstad Örebro')
+            self.settings_profile_root.setText(self.workspace.config.save_root)
+            self.settings_profile_structure.setPlainText('Bilder/\nUnderlag/\nDokument/\n')
+            self.settings_profile_name.setModified(True)
+            self.settings_profile_name.setFocus()
+
+        button(prof_left_body, 'Ny tom profil', start_blank_profile, 'create', self._action_icons)
+        prof_left_body.addWidget(label('Profilens namn', 'mutedText'))
+        self.settings_profile_name = QLineEdit()
+        self.settings_profile_name.setAccessibleName('Ny eller vald profils namn')
+        self.settings_profile_name.setPlaceholderText('T.ex. Verkstad, Besiktning eller Kundprojekt')
+        prof_left_body.addWidget(self.settings_profile_name)
+
+        prof_left_body.addWidget(label('Profilens sparplats', 'mutedText'))
+        prof_root_row = QHBoxLayout()
+        self.settings_profile_root = QLineEdit()
+        self.settings_profile_root.setAccessibleName('Sparplats för profil i Inställningar')
+        prof_root_row.addWidget(self.settings_profile_root, 1)
+
+        def choose_settings_profile_root():
+            path = QFileDialog.getExistingDirectory(self, 'Välj sparplats för profilen', self.settings_profile_root.text())
+            if path:
+                self.settings_profile_root.setText(path)
+                self.settings_profile_root.setModified(True)
+
+        button(prof_root_row, 'Bläddra…', choose_settings_profile_root, 'folder', self._action_icons)
+        prof_left_body.addLayout(prof_root_row)
+        self.settings_profile_summary = label('', 'mutedText')
+        prof_left_body.addWidget(self.settings_profile_summary)
+
+        button(prof_left_body, 'Skapa / spara profil', self._save_settings_profile, 'save', self._action_icons)
+        button(prof_left_body, 'Använd som aktiv & standardprofil', self._activate_settings_profile, 'profiles', self._action_icons)
+        button(prof_left_body, 'Ta bort egen profil…', self._delete_settings_profile, 'trash', self._action_icons)
+        prof_left_body.addStretch(1)
+        prof_grid.addWidget(prof_left, 0, 0)
+
+        prof_right, prof_right_body = card_frame()
+        prof_right_body.addWidget(label('Profilens mappstruktur', 'cardHeading'))
+        self.settings_profile_structure = QPlainTextEdit()
+        self._mono_editors.append(self.settings_profile_structure)
+        prof_right_body.addWidget(self.settings_profile_structure, 1)
+        prof_grid.addWidget(prof_right, 0, 1)
+
+        self.settings_profile_picker.currentTextChanged.connect(self._load_settings_profile)
+        self.settings_profile_structure.textChanged.connect(self._update_settings_profile_summary)
+        self._load_settings_profile(self.settings_profile_picker.currentText())
+        self.settings_subtabs.addTab(profiles_tab, 'Profiler')
+        layout.addWidget(self.settings_subtabs, 1)
+
+        # ── Sida 5: Snabbtangent (2 kolumner, noll scroll) ──
+        hk_layout = page(self.tabs, 'Snabbtangent')
+        hk_grid = QGridLayout()
+        hk_grid.setSpacing(12)
+        hk_grid.setColumnStretch(0, 1)
+        hk_grid.setColumnStretch(1, 1)
+
+        hk_left, hk_left_body = card_frame()
+        hk_left_body.addWidget(label('Global snabbtangent', 'cardHeading'))
+        hk_left_body.addWidget(label('Visa FolderForge direkt var du än arbetar i systemet.', 'mutedText'))
         self.hotkey_status = label('Snabbtangenten registreras vid start…')
-        layout.addWidget(self.hotkey_status)
+        hk_left_body.addWidget(self.hotkey_status)
         self.hotkey_edit = QLineEdit()
-        self.hotkey_edit.setPlaceholderText('ctrl+alt+m')
+        self.hotkey_edit.setPlaceholderText('ctrl+shift+m')
+        hk_left_body.addWidget(self.hotkey_edit)
+
         def save_hotkey():
             try:
                 if self._hotkeys is None:
@@ -876,15 +1326,20 @@ class QtWindow(PreviewWindow):
                 self.hotkey_edit.setModified(False)
                 self.statusBar().showMessage(self._hotkeys.last_status)
             except Exception as exc:
-                import logging
                 logging.getLogger('qt.hotkey').exception('Kunde inte ändra snabbtangent')
                 QMessageBox.warning(self, 'Snabbtangent', str(exc))
-        layout.addWidget(self.hotkey_edit)
-        button(layout, 'Spara snabbtangent', save_hotkey)
-        layout.addWidget(label('Eller spela in en tangentkombination nedan och överför den till fältet:'))
+
+        button(hk_left_body, 'Spara snabbtangent', save_hotkey, 'save', self._action_icons)
+        hk_left_body.addStretch(1)
+        hk_grid.addWidget(hk_left, 0, 0)
+
+        hk_right, hk_right_body = card_frame()
+        hk_right_body.addWidget(label('Spela in kombination', 'cardHeading'))
+        hk_right_body.addWidget(label('Klicka i rutan, tryck tangentkombinationen och överför den:', 'mutedText'))
         self.hotkey_recorder = QKeySequenceEdit()
         self.hotkey_recorder.setAccessibleName('Spela in snabbtangent')
-        layout.addWidget(self.hotkey_recorder)
+        hk_right_body.addWidget(self.hotkey_recorder)
+
         def recorded():
             text = self.hotkey_recorder.keySequence().toString(QKeySequence.PortableText)
             if ',' in text:
@@ -893,13 +1348,84 @@ class QtWindow(PreviewWindow):
             text = text.lower().replace('meta', 'cmd')
             self.hotkey_edit.setText(text)
             self.hotkey_edit.setModified(True)
-        button(layout, 'Använd inspelad kombination', recorded)
+
         def reset_hotkey():
             from settings import DEFAULT_HOTKEY
             self.hotkey_edit.setText('+'.join(DEFAULT_HOTKEY))
             self.hotkey_edit.setModified(True)
-        button(layout, 'Återställ standardkombination i fältet', reset_hotkey)
-        layout.addStretch()
+
+        button(hk_right_body, 'Använd inspelad kombination', recorded, 'keyboard', self._action_icons)
+        button(hk_right_body, 'Återställ standardkombination i fältet', reset_hotkey, 'undo', self._action_icons)
+        hk_right_body.addStretch(1)
+        hk_grid.addWidget(hk_right, 0, 1)
+        hk_layout.addLayout(hk_grid)
+        hk_layout.addStretch(1)
+
+    def _update_settings_profile_summary(self):
+        try:
+            items = StructureEngine.parse_structure(self.settings_profile_structure.toPlainText())
+            folders, files = StructureEngine.count_items(items)
+            self.settings_profile_summary.setText(f'Struktur: {folders} mappar, {files} filer')
+        except Exception as exc:
+            self.settings_profile_summary.setText(str(exc))
+
+    def _load_settings_profile(self, name):
+        self.settings_profile_name.setText(name)
+        self.settings_profile_structure.setPlainText(self.workspace.templates.list_templates().get(name, ''))
+        try:
+            root = self.workspace.profile_root(name) if name else Path(self.workspace.config.save_root)
+            self.settings_profile_root.setText(str(root))
+        except ValueError:
+            self.settings_profile_root.clear()
+        self.settings_profile_name.setModified(False)
+        self.settings_profile_root.setModified(False)
+        self.settings_profile_structure.document().setModified(False)
+        self._update_settings_profile_summary()
+
+    def _save_settings_profile(self):
+        try:
+            self.workspace.require_lock()
+            name = self.settings_profile_name.text().strip()
+            self.workspace.save_profile(name, self.settings_profile_structure.toPlainText(), self.settings_profile_root.text())
+            self._sync_all_template_lists(name)
+            self._load_settings_profile(name)
+            self._load_template_into_editor(name)
+            self.statusBar().showMessage(f'Profilen "{name}" sparades')
+        except (OSError, ValueError, RuntimeError) as exc:
+            logging.getLogger('qt.profiles').exception('Profil kunde inte sparas')
+            QMessageBox.warning(self, 'Kunde inte spara profil', str(exc))
+
+    def _activate_settings_profile(self):
+        name = self.settings_profile_name.text().strip()
+        if (self.settings_profile_name.isModified() or self.settings_profile_root.isModified()
+                or self.settings_profile_structure.document().isModified()
+                or name not in self.workspace.templates.list_templates()):
+            self._save_settings_profile()
+            if name not in self.workspace.templates.list_templates():
+                return
+        self.workspace.config.default_template = name
+        self.default_profile.setCurrentText(name)
+        self.select_profile(name)
+        self.save_settings()
+        self.statusBar().showMessage(f'"{name}" är nu aktiv och sparad som standardprofil')
+
+    def _delete_settings_profile(self):
+        target = self.settings_profile_picker.currentText()
+        if QMessageBox.question(self, 'Ta bort egen profil?', target,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        try:
+            if not self.workspace.templates.delete_template(target):
+                raise ValueError('Inbyggda standardmallar kan inte tas bort')
+            if self.workspace.config.default_template == target:
+                self.workspace.config.default_template = 'Skaderapport'
+                self.workspace.save_settings()
+            self._sync_all_template_lists()
+            self._load_settings_profile(self.settings_profile_picker.currentText())
+            self._load_template_into_editor(self.templates.currentText())
+            self.save_settings()
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, 'Kunde inte ta bort profil', str(exc))
 
     def toggle_theme(self):
         self.workspace.config.theme = 'Light' if self._dark_theme else 'Dark'
@@ -914,41 +1440,73 @@ class QtWindow(PreviewWindow):
             dark = QApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
         self._dark_theme = dark
         font = QFontDatabase.systemFont(QFontDatabase.GeneralFont)
-        if sys.platform == 'win32' and 'Segoe UI' in QFontDatabase.families():
-            font.setFamily('Segoe UI')
+        families = set(QFontDatabase.families())
+        if sys.platform == 'win32':
+            for preferred in ('Segoe UI Variable Text', 'Segoe UI'):
+                if preferred in families:
+                    font.setFamily(preferred)
+                    break
         font.setPointSizeF(11 * factor)
         font.setWeight(QFont.Normal)
+        font.setStyleStrategy(QFont.PreferAntialias | QFont.PreferQuality)
+        if hasattr(QFont, 'HintingPreference'):
+            font.setHintingPreference(QFont.HintingPreference.PreferVerticalHinting)
         self.setFont(font)
+        mono = monospace_font(factor)
+        for editor in self._mono_editors:
+            editor.setFont(mono)
         family = font.family().replace('"', '')
         index = 1 if dark else 0
         background, foreground = UI_BACKGROUND[index], UI_TEXT[index]
         field, border, muted, accent = UI_SURFACE[index], UI_BORDER[index], UI_MUTED[index], UI_PRIMARY[index]
         focus = '#FFCE66' if dark else '#005FCC'
+        alt_row = '#1D2C42' if dark else '#F7FAFE'
         if config.high_contrast:
-            background, foreground, field, border, muted, accent, focus = (
-                '#000000', '#FFFFFF', '#000000', '#FFFFFF', '#FFFFFF', '#164B73', '#FFFF00')
+            background, foreground, field, border, muted, accent, focus, alt_row = (
+                '#000000', '#FFFFFF', '#000000', '#FFFFFF', '#FFFFFF', '#164B73', '#FFFF00', '#0A0A0A')
+
+        # Växla vektor-logotyp efter aktivt tema så skärpa och kontrast är optimal utan vit ruta
+        if getattr(self, '_logo_svg', None) is not None:
+            svg_file = BASE_DIR / ('Icon/folderforge-logo-inverse.svg' if (dark or config.high_contrast) else 'Icon/folderforge-logo.svg')
+            if svg_file.is_file():
+                self._logo_svg.load(str(svg_file))
+                self._logo_svg.renderer().setAspectRatioMode(Qt.KeepAspectRatio)
+        self._logo_widget.setFixedSize(round(212 * factor), round(44 * factor))
+
         self.setStyleSheet(f"""
             QWidget {{ background: {background}; color: {foreground}; font-family: "{family}"; font-size: {round(15 * factor)}px; font-weight: 400; }}
-            QFrame#appHeader, QFrame#appFooter {{ background: {field}; border: none; }}
+            QFrame#appHeader {{ background: {field}; border-bottom: 1px solid {border}; }}
+            QFrame#appFooter {{ background: {field}; border-top: 1px solid {border}; }}
             QFrame#appHeader QLabel, QFrame#appFooter QLabel {{ background: transparent; color: {muted}; }}
-            QWidget#appLogo {{ background: white; color: #172638; border-radius: 8px; padding: 5px; font-weight: bold; }}
-            QPushButton {{ background: {accent}; color: white; padding: 8px 12px; border: 2px solid transparent; border-radius: 8px; }}
-            QPushButton:hover {{ border-color: {border}; }}
-            QPushButton#secondaryAction, QPushButton#navigationTab {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
-            QPushButton#primaryAction {{ background: {accent}; color: white; font-weight: 600; padding: 11px 14px; }}
-            QPushButton#secondaryAction:hover {{ border: 1px solid {accent}; }}
+            QWidget#appLogo {{ background: transparent; border: none; }}
+            QLabel#versionBadge {{ color: {muted}; font-weight: 600; font-size: {round(13 * factor)}px; padding: 2px 6px; border: 1px solid {border}; border-radius: 6px; }}
+            QPushButton {{ background: {accent}; color: white; padding: 7px 12px; border: 1px solid transparent; border-radius: 8px; font-weight: 500; }}
+            QPushButton:hover {{ border-color: {focus}; }}
+            QPushButton#secondaryAction, QPushButton#navigationTab, QPushButton#damageChip {{ background: {field}; color: {foreground}; border: 1px solid {border}; }}
+            QPushButton#primaryAction {{ background: {accent}; color: white; font-weight: 600; padding: 10px 14px; }}
+            QPushButton#secondaryAction:hover, QPushButton#damageChip:hover {{ border: 1px solid {accent}; }}
+            QPushButton#damageChip:checked {{ background: {accent}; color: white; border: 1px solid {accent}; font-weight: 600; }}
             QPushButton:disabled {{ background: {field}; color: {muted}; border: 1px solid {border}; }}
-            QPushButton#navigationTab {{ font-weight: 600; }}
+            QPushButton#navigationTab {{ font-weight: 600; padding: 7px 10px; }}
+            QPushButton#navigationTab:checked {{ background: {accent}; color: white; border: 1px solid {accent}; }}
+            QTabWidget#settingsSubtabs::pane {{ border: 1px solid {border}; border-radius: 10px; background: {background}; top: -1px; }}
+            QTabBar::tab {{ background: {field}; color: {foreground}; border: 1px solid {border}; border-bottom: none; border-top-left-radius: 8px; border-top-right-radius: 8px; padding: 7px 16px; margin-right: 4px; font-weight: 600; }}
+            QTabBar::tab:selected {{ background: {accent}; color: white; border-color: {accent}; }}
             QLabel#mutedText {{ color: {muted}; }}
+            QLabel#errorText {{ color: #E5534B; font-weight: 600; }}
+            QLabel#previewBox {{ font-weight: 600; color: {foreground}; }}
             QLineEdit:selection, QPlainTextEdit:selection {{ background: {accent}; color: white; }}
             QToolTip {{ background: {field}; color: {foreground}; border: 1px solid {border}; padding: 6px; }}
             QLabel#updateSummary {{ color: {muted}; font-size: {round(13 * factor)}px; }}
-            QPushButton#navigationTab:checked {{ background: {accent}; color: white; border: 1px solid {accent}; }}
-            QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {{ border: 2px solid {focus}; }}
-            QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px; border: 1px solid {border}; border-radius: 6px; }}
-            QLabel#pageHeading {{ font-size: {round(23 * factor)}px; font-weight: 600; }}
-            QLabel#cardHeading {{ font-size: {round(17 * factor)}px; font-weight: 600; }}
-            QFrame#projectCard {{ background: {field}; border: 1px solid {border}; border-radius: 14px; }}
+            QPushButton:focus, QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus, QListWidget:focus {{ border: 2px solid {focus}; }}
+            QLineEdit, QComboBox, QPlainTextEdit, QListWidget {{ background: {field}; padding: 6px 8px; border: 1px solid {border}; border-radius: 7px; alternate-background-color: {alt_row}; }}
+            QListWidget::item {{ padding: 6px 8px; border-bottom: 1px solid {border}; }}
+            QListWidget::item:selected {{ background: {accent}; color: white; }}
+            QProgressBar {{ background: {field}; border: 1px solid {border}; border-radius: 6px; text-align: center; min-height: 18px; }}
+            QProgressBar::chunk {{ background: {accent}; border-radius: 5px; }}
+            QLabel#pageHeading {{ font-size: {round(22 * factor)}px; font-weight: 700; }}
+            QLabel#cardHeading {{ font-size: {round(16 * factor)}px; font-weight: 700; }}
+            QFrame#projectCard {{ background: {field}; border: 1px solid {border}; border-radius: 12px; }}
             QFrame#projectCard QLabel {{ background: transparent; border: none; }}
             QStatusBar {{ color: {muted}; background: {field}; }}
             QMenu {{ background: {field}; border: 1px solid {border}; }}
@@ -960,12 +1518,17 @@ class QtWindow(PreviewWindow):
         for control in self.tabs.buttons:
             control.setIconSize(icon_size)
         for control, name in self._action_icons:
-            # Primary button is always blue with white text, regardless of page theme.
             variant = '-dark.svg' if control.objectName() == 'primaryAction' or dark or config.high_contrast else '-light.svg'
             control.setIcon(navigation_icon(name, variant))
             control.setIconSize(icon_size)
-        self._global_update_button.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
+        update_variant = '-dark.svg' if dark or config.high_contrast else '-light.svg'
+        refresh_icon = navigation_icon('refresh', update_variant)
+        self._global_update_button.setIcon(refresh_icon if not refresh_icon.isNull() else self.style().standardIcon(QStyle.SP_BrowserReload))
         self._global_update_button.setIconSize(icon_size)
+        if hasattr(self, 'settings_subtabs') and self.settings_subtabs.count() >= 2:
+            self.settings_subtabs.setTabIcon(0, navigation_icon('settings', update_variant))
+            self.settings_subtabs.setTabIcon(1, navigation_icon('profiles', update_variant))
+            self.settings_subtabs.setIconSize(QSize(round(18 * factor), round(18 * factor)))
         self.theme_toggle.setFixedWidth(round(42 * factor))
         self.theme_toggle.setToolTip('Växla till ljust tema' if dark else 'Växla till mörkt tema')
         QTimer.singleShot(0, lambda: self.tabs.reflow(force=True))
@@ -1014,7 +1577,11 @@ class QtWindow(PreviewWindow):
             qr.setText('QR-koden kunde inte läsas. Använd Swish-numret nedan.')
             qr.setWordWrap(True)
         else:
-            qr.setPixmap(pixmap.scaled(240, 240, Qt.KeepAspectRatio, Qt.FastTransformation))
+            dpr = max(1.0, self.devicePixelRatioF())
+            target_px = max(240, round(240 * dpr))
+            sharp_qr = pixmap.scaled(target_px, target_px, Qt.KeepAspectRatio, Qt.FastTransformation)
+            sharp_qr.setDevicePixelRatio(dpr)
+            qr.setPixmap(sharp_qr)
         layout.addWidget(qr)
         layout.addWidget(label('Swish: 0721817177\n'
             'Ange valfritt belopp i Swish. Kontrollera alltid mottagarens namn '
@@ -1036,9 +1603,10 @@ class QtWindow(PreviewWindow):
         button(outer, 'Stäng', dialog.reject)
         fit_to_screen(dialog, 560, 720)
         dialog.exec()
+        dialog.deleteLater()
 
     def update_status(self):
-        from updater import get_update_status, pending_ready_for_restart
+        from updater import get_update_status, pending_ready_for_restart, read_state
         existing = getattr(self, '_update_dialog', None)
         if existing is not None and existing.isVisible():
             existing.raise_()
@@ -1047,46 +1615,82 @@ class QtWindow(PreviewWindow):
         dialog = QDialog(self)
         self._update_dialog = dialog
         dialog.setWindowTitle('Uppdateringsstatus')
+        dialog.setWindowIcon(self.windowIcon())
         layout = QVBoxLayout(dialog)
+        headline = label('', 'cardHeading')
+        layout.addWidget(headline)
+        progress = QProgressBar()
+        progress.setRange(0, 100)
+        progress.setValue(0)
+        layout.addWidget(progress)
         text = QPlainTextEdit()
         text.setReadOnly(True)
-        layout.addWidget(text)
-        explanation = label('')
+        text.setFont(monospace_font())
+        layout.addWidget(text, 1)
+        explanation = label('', 'mutedText')
         layout.addWidget(explanation)
+
         def restart():
             if QMessageBox.question(dialog, 'Installera hämtad uppdatering?',
                     'Läs ändringslistan ovan. Appen stängs och startas om dold i systemfältet. '
-                    'Projekt, mallar och historik behålls. Fortsätt?',
+                    'Vid lyckad start tas säkerhetskopian bort automatiskt. Projekt, profiler och historik behålls. Fortsätt?',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) == QMessageBox.Yes:
                 dialog.accept()
                 QTimer.singleShot(0, self.restart_update)
+
         restart_button = button(layout, 'Installera hämtad uppdatering och starta om…', restart)
         restart_button.setObjectName('installUpdate')
+
         def refresh():
             report = get_update_status(self.workspace.base, APP_VERSION)
-            value = '\n\n'.join(f'{key}: {value}' for key, value in report.items())
-            if text.toPlainText() != value:
+            raw = read_state(self.workspace.base)
+            headline.setText(report.get('Status', ''))
+            received = raw.get('downloaded', 0)
+            total = raw.get('download_total')
+            status_code = raw.get('status')
+            if status_code in {'checking', 'resolving', 'comparing', 'verifying'}:
+                progress.setRange(0, 0)
+                progress.setVisible(True)
+            elif status_code == 'downloading':
+                if isinstance(total, (int, float)) and total > 0:
+                    progress.setRange(0, 100)
+                    progress.setValue(min(100, int(received * 100 / total)))
+                else:
+                    progress.setRange(0, 0)
+                progress.setVisible(True)
+            else:
+                progress.setRange(0, 100)
+                progress.setValue(100 if pending_ready_for_restart(self.workspace.base) else 0)
+                progress.setVisible(pending_ready_for_restart(self.workspace.base))
+            formatted = '\n\n'.join(f'{key}: {val}' for key, val in report.items())
+            if text.toPlainText() != formatted:
                 bar = text.verticalScrollBar()
                 position = bar.value()
-                text.setPlainText(value)
+                text.setPlainText(formatted)
                 bar.setValue(position)
             ready = pending_ready_for_restart(self.workspace.base)
             restart_button.setEnabled(ready)
-            explanation.setText('Uppdateringen är hämtad. Stäng detta fönster för automatisk omstart, '
-                'eller välj Installera ovan.' if ready else
-                'En kontroll hämtar först uppdateringen. Status och eventuella fel visas ovan. '
-                'Installationsknappen aktiveras när hämtningen är klar.')
+            explanation.setText(
+                'Uppdateringen är SHA-256-verifierad. Stäng detta fönster för automatisk omstart, '
+                'eller klicka på Installera ovan. Backupen rensas automatiskt när starten bekräftats.' if ready else
+                'Uppdateraren jämför releasetagg, commit-ID och varje appfils SHA-256 mot den publicerade latest-releasen.'
+            )
+
         timer = QTimer(dialog)
+        timer.setTimerType(Qt.CoarseTimer)
         timer.timeout.connect(refresh)
         timer.start(1000)
         refresh()
-        button(layout, 'Sök uppdatering nu', lambda: self._check_updates(False))
-        button(layout, 'Stäng', dialog.reject)
-        fit_to_screen(dialog, 660, 650)
+        btn_row = QHBoxLayout()
+        button(btn_row, 'Sök uppdatering nu', lambda: self._check_updates(False))
+        button(btn_row, 'Stäng', dialog.reject)
+        layout.addLayout(btn_row)
+        fit_to_screen(dialog, 720, 640)
         dialog.exec()
         timer.stop()
         self._update_dialog = None
         dialog.deleteLater()
+        self.refresh_update_summary(force=True)
 
     def restart_update(self):
         from updater import pending_ready_for_restart
@@ -1095,7 +1699,7 @@ class QtWindow(PreviewWindow):
             return
         if not self.can_restart():
             QMessageBox.information(self, 'Omstart väntar',
-                'Spara ändrade inställningar, mallar eller snabbtangent och stäng projektdialoger. '
+                'Spara ändrade inställningar, profiler/mallar eller snabbtangent och stäng projektdialoger. '
                 'Vänta tills eventuell export är klar. Försök sedan igen.')
             return
         QApplication.instance().exit(71)
@@ -1114,7 +1718,7 @@ class QtWindow(PreviewWindow):
                     logging.getLogger('qt.update').exception('Manuell uppdateringskontroll misslyckades')
             self._update_worker = threading.Thread(target=check, daemon=True, name='qt-release-check')
             self._update_worker.start()
-        self.statusBar().showMessage('Söker uppdatering – hämtning och eventuella fel visas i Uppdateringsstatus')
+        self.statusBar().showMessage('Söker uppdatering – hämtning och filjämförelse visas i Uppdateringsstatus')
         if show_status:
             self.update_status()
 
@@ -1124,18 +1728,20 @@ class QtWindow(PreviewWindow):
             return
         self._busy_tasks += 1
         self.statusBar().showMessage('Läser mappstruktur i bakgrunden…')
+
         def worker():
             try:
                 self._export_bridge.ready.emit(StructureEngine.generate_tree_string(folder))
             except Exception as exc:
                 logging.getLogger('qt.export').exception('Trälexport misslyckades')
                 self._export_bridge.failed.emit(str(exc))
+
         threading.Thread(target=worker, name='qt-tree-export', daemon=True).start()
 
     def export_ready(self, text):
         self._busy_tasks = max(0, self._busy_tasks - 1)
         self.export_text.setPlainText(text)
-        self.statusBar().showMessage('Struktur klar – du kan spara texten')
+        self.statusBar().showMessage('Struktur klar – du kan kopiera eller spara texten')
 
     def export_failed(self, message):
         self._busy_tasks = max(0, self._busy_tasks - 1)
@@ -1145,8 +1751,16 @@ class QtWindow(PreviewWindow):
         if any(isinstance(widget, QDialog) and widget.isVisible() for widget in QApplication.topLevelWidgets()):
             return False
         config = self.workspace.config
+        settings_prof_dirty = (
+            hasattr(self, 'settings_profile_name') and (
+                self.settings_profile_name.isModified()
+                or self.settings_profile_root.isModified()
+                or self.settings_profile_structure.document().isModified()
+            )
+        )
         return (self._busy_tasks == 0 and not self.structure.document().isModified()
                 and not self.profile_root_edit.isModified() and not self.template_name.isModified()
+                and not settings_prof_dirty
                 and self.default_profile.currentText() == config.default_template
                 and self.root_edit.text().strip() == config.save_root
                 and self.open_after.isChecked() == config.open_after_creation
@@ -1169,11 +1783,14 @@ class QtWindow(PreviewWindow):
     def diagnostics(self):
         from qt_help import DiagnosticsDialog
         dialog = DiagnosticsDialog(self)
+        dialog.setWindowIcon(self.windowIcon())
         dialog.exec()
+        dialog.deleteLater()
 
     def export_diagnostics(self):
         from qt_help import DiagnosticsDialog
         dialog = DiagnosticsDialog(self)
+        dialog.setWindowIcon(self.windowIcon())
         try:
             dialog.export()
         finally:
@@ -1206,30 +1823,3 @@ class QtWindow(PreviewWindow):
         except (OSError, ValueError) as exc:
             logging.getLogger('qt.projects').exception('Ångra/radering stoppades')
             QMessageBox.warning(self, 'Ångra stoppades', str(exc))
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls() and all(url.isLocalFile() for url in event.mimeData().urls()):
-            event.acceptProposedAction()
-
-    def dropEvent(self, event):
-        folders = [Path(url.toLocalFile()) for url in event.mimeData().urls() if url.isLocalFile()]
-        if folders and folders[0].is_dir():
-            self.start_export(folders[0])
-            self.tabs.setCurrentIndex(3)
-            event.acceptProposedAction()
-
-
-def run():
-    from qt_preview import run as run_host
-
-    def build(lock):
-        from logg import init_logging, start_log_archiver
-        import logg
-        if not logg._initierad:
-            init_logging()
-        start_log_archiver()
-        window = QtWindow(Workspace(lock))
-        window.start_integrations()
-        return window
-
-    return run_host(window_factory=build, production=True)

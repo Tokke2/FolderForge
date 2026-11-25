@@ -255,7 +255,7 @@ def main():
         assert valid_worker.wait(timeout=30) == 0, 'Valid candidate was not acknowledged'
         assert not updater.read_state(base).get('startup_pending'), 'Startup acknowledgement was not saved'
         assert not (base / 'data/update-transaction.json').exists()
-        assert (base / 'data/update-backup/folder.pyw').exists(), 'Known-good backup was removed too soon'
+        assert not (base / 'data/update-backup').exists(), 'Confirmed update must remove backup'
         assert sentinel.read_text() == 'user data must survive'
         command('exit', 5)
         psutil.Process(valid['pid']).wait(timeout=15)

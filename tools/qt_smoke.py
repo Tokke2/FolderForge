@@ -178,9 +178,18 @@ def main():
             QTest.qWait(50)
             functional.open_project()
             dialog = functional.dialog
+            assert set(dialog.damage_buttons) == {'STENSKOTT', 'VINDRUTA', 'SIDORUTA', 'BAKRUTA'}
+            dialog.name.setText('abc123')
+            dialog.damage_buttons['SIDORUTA'].click()
+            assert 'SIDORUTA' in dialog.name.text().upper()
+            dialog.damage_buttons['BAKRUTA'].click()
+            assert 'BAKRUTA' in dialog.name.text().upper()
+            assert 'SIDORUTA' not in dialog.name.text().upper()
             dialog.name.setText('abc123 vindruta')
+            assert dialog.damage_buttons['VINDRUTA'].isChecked()
             dialog.year.setEditText('2026')
             QTest.qWait(100)
+            dialog.name.setFocus()
             assert app.focusWidget() is dialog.name
             with patch('qt_app.QMessageBox.question', return_value=QMessageBox.Yes):
                 dialog.create()
@@ -312,6 +321,19 @@ def main():
             functional.home_profile.setCurrentText('CI Profil')
             functional.open_project()
             assert functional.dialog.template.currentText() == 'CI Profil'
+            # Verify Settings -> Profiler sub-tab and Maxhöjd screen fit.
+            functional.tabs.setCurrentIndex(4)
+            assert functional.settings_subtabs.count() == 2
+            assert functional.settings_subtabs.tabText(1) == 'Profiler'
+            functional.settings_subtabs.setCurrentIndex(1)
+            functional.settings_profile_name.setText('Inställningsprofil')
+            functional.settings_profile_root.setText(str(root / 'Settings Profile Projects'))
+            functional.settings_profile_structure.setPlainText('Foto/\nKvitton/\n')
+            functional.save_settings_profile()
+            assert ws.profile_root('Inställningsprofil') == root / 'Settings Profile Projects'
+            functional.fit_window_to_screen()
+            QTest.qWait(50)
+            assert functional.screen().availableGeometry().contains(functional.frameGeometry())
             functional.dialog.reject()
             functional.default_profile.setCurrentText('Python Projekt')
             assert not functional.can_restart(), 'Unsaved default-profile change must defer updates'

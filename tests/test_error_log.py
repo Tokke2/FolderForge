@@ -191,8 +191,10 @@ class ErrorLogTests(unittest.TestCase):
         self.assertIn('after midnight', path.read_text())
 
     def test_errors_imported_before_old_general_log_is_archived(self):
+        from datetime import date
         (self.folder / 'folderforge.log').write_text('2020-01-01 10:00:00 ERROR   unresolved old issue\n')
-        logg.init_logging()
+        with patch.object(logg, 'local_today', return_value=date(2020, 1, 5)):
+            logg.init_logging()
         self.assertIn('unresolved old issue', self.read_errors())
         self.assertIn('unresolved old issue', self.archive_contents())
         self.assertNotIn('unresolved old issue', (self.folder / 'folderforge.log').read_text())
@@ -249,12 +251,14 @@ class ErrorLogTests(unittest.TestCase):
         self.assertEqual(path.read_text(), original)
 
     def test_repeated_archive_is_idempotent(self):
+        from datetime import date
         path = self.folder / 'folderforge.log'
         path.write_text('2020-01-01 10:00:00 INFO   archived once\n')
-        handler = logg.DailyArchiveHandler(path)
-        self.addCleanup(handler.close)
-        first = list((self.folder / 'archive').rglob('*.log'))
-        handler.archive()
+        with patch.object(logg, 'local_today', return_value=date(2020, 1, 5)):
+            handler = logg.DailyArchiveHandler(path)
+            self.addCleanup(handler.close)
+            first = list((self.folder / 'archive').rglob('*.log'))
+            handler.archive()
         self.assertEqual(list((self.folder / 'archive').rglob('*.log')), first)
         self.assertEqual(self.archive_contents().count('archived once'), 1)
 
@@ -262,14 +266,24 @@ class ErrorLogTests(unittest.TestCase):
         logg.init_logging()
         self.assertIsNone(logg.archive_resolved_errors())
 
-    def test_cleanup_preserves_daily_archives_and_resolved_errors(self):
+    def test_archived_logs_older_than_seven_days_are_pruned_while_recent_and_active_stay(self):
+        from datetime import date
         import cache_cleanup
-        for relative in ['archive/2020-01-01/old.log', 'resolved-errors/2020-01-01/fixed.log']:
-            path = self.folder / 'logs' / relative
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text('history')
+        old_arch = self.folder / 'logs/archive/2026-11-10/old.log'
+        old_res = self.folder / 'logs/resolved-errors/2026-11-10/fixed.log'
+        recent_arch = self.folder / 'logs/archive/2026-11-20/recent.log'
+        active_err = self.folder / 'logs/folderforge-errors.log'
+        for p in (old_arch, old_res, recent_arch, active_err):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text('log-entry')
         candidates = [path for path, _ in cache_cleanup.candidates(self.folder, 9999999999)]
         self.assertEqual(candidates, [])
+        removed = logg.prune_archived_logs(self.folder / 'logs', today=date(2026, 11, 25))
+        self.assertEqual(removed, 2)
+        self.assertFalse(old_arch.exists())
+        self.assertFalse(old_res.exists())
+        self.assertTrue(recent_arch.exists())
+        self.assertTrue(active_err.exists())
 
     def test_resolution_ui_requires_confirmation(self):
         tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))

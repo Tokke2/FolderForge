@@ -127,6 +127,7 @@ def main():
         status = wait(lambda s: s.get('pid') != current_pid and s.get('tray') and not s.get('visible'), 'Updated Qt app not ready')
         current_pid = status['pid']
         assert updater.read_state(root).get('startup_verified_at'), 'Qt did not acknowledge update'
+        assert not (root / 'data/update-backup').exists(), 'Confirmed Qt update must remove backup'
         command('exit', 8)
         psutil.Process(current_pid).wait(timeout=15)
         print('Default Qt desktop OK: hidden startup, tray, duplicate, focus, close/minimize, exit, actual update acknowledgement')

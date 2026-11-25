@@ -1,3 +1,17 @@
+# FolderForge v0.0.3
+
+## Ändringar i v0.0.3
+- **Val av ruta/skadetyp i projektskaparen (`ProjectDialog`)**: Snabbvalschips för `STENSKOTT`, `VINDRUTA`, `SIDORUTA` och `BAKRUTA` (där `SIDORUTA`/`BAKRUTA` är ömsesidigt uteslutande) direkt under projektnamnet i Qt-klienten, synkade i realtid med fritextfältet.
+- **Maxhöjd vid start, adaptiv bredd & kompakt flerkolumnslayout**: Huvudfönstret öppnas i skärmens fulla tillgängliga höjd (`availableGeometry`) med bredd anpassad efter skärmstorlek och textskala (samt snabbknapp **Maxhöjd** i toppanelen och Visa-menyn). 2-kolumnskort i Skapa, Historik (med detaljpanel), Mallar, Exportera, Inställningar, Snabbtangent och Projektdialogen minimerar vertikal rullning.
+- **Egen underflik `Profiler` i Inställningar**: Inställningar är uppdelad i **Allmänt & Utseende** samt **Profiler**, där profiler (namn, egen sparplats och mappstruktur) kan skapas, redigeras, aktiveras som standard eller tas bort på ett ställe.
+- **Ny skarpare logotyp överallt, redigerbart tryckoriginal i vektor & nya ikoner**: Uppdaterad vektorlogotyp som växlar automatiskt mellan ljus (`folderforge-logo.svg`) och mörk (`folderforge-logo-inverse.svg`) variant utan vit bakgrundsruta, nytt lagerindelat och redigerbart tryckoriginal (`Icon/folderforge-print-editable.svg`), samt nya skarpa 24×24-vektorikoner i hela gränssnittet.
+- **Skarpare High-DPI, typsnitt och QR-rendering**: Exakt `devicePixelRatio`-skalning utan grumlig omskalning, tydligare kolumnkontrast och fastbreddstypsnitt (`Cascadia Mono`/`Consolas`/`DejaVu Sans Mono`) i alla strukturvyer.
+- **Säkrare uppdatering & automatisk borttagning av backup vid lyckad start**: Format- och kompileringsskydd på uppackade app- och ikonfiler, visuell förloppsindikator och SHA-256-filjämförelse i Uppdateringsstatus. När en uppdaterad start bekräftats raderas `data/update-backup` automatiskt (vid fel behålls backupen för säker återställning).
+- **Automatisk rensning av arkiverade loggar efter 7 dagar**: Loggarkiv i `logs/archive/` och `logs/resolved-errors/` äldre än 7 dagar rensas automatiskt vid arkivering och cacherensning; aktiva loggar och olösta fel i `logs/folderforge-errors.log` rörs aldrig.
+- **Snabbare, snålare minnes- och energihantering**: Eliminerar upprepade diskskrivningar i viloläge via händelsestyrd `QFileSystemWatcher` + `CoarseTimer`, begränsad `QPixmapCache`, `mtime`-cachad uppdateringssammanfattning och direkt frigöring av stängda dialoger.
+
+---
+
 # FolderForge v0.0.2
 
 ## Ändringar

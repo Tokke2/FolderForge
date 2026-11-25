@@ -65,9 +65,13 @@ class BrandAssetTests(unittest.TestCase):
 
     def test_release_bundle_documents_all_print_originals(self):
         guide = Path('RELEASE_INNEHALL.md').read_text(encoding='utf-8')
-        for name in ('folderforge-logo.svg', 'folderforge-logo-inverse.svg', 'folderforge-logo-mono.svg', 'folderforge-symbol.svg'):
+        for name in ('folderforge-logo.svg', 'folderforge-logo-inverse.svg', 'folderforge-logo-mono.svg', 'folderforge-symbol.svg', 'folderforge-print-editable.svg'):
             self.assertTrue((Path('Icon') / name).is_file())
             self.assertIn(name, guide)
+        editable_root = ET.parse('Icon/folderforge-print-editable.svg').getroot()
+        tags = {el.tag.split('}')[-1] for el in editable_root.iter()}
+        self.assertIn('text', tags)
+        self.assertIn('g', tags)
         self.assertIn('Source code (zip)', guide)
         self.assertIn('Inget separat grafikpaket', guide)
 

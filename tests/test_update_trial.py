@@ -49,13 +49,14 @@ class TrialTests(unittest.TestCase):
 
     def test_valid_live_trial_can_acknowledge_start(self):
         journal = self.install()
+        self.assertTrue((self.data / 'update-backup/folder.pyw').exists())
         journal['trial_pid'] = os.getpid()
         updater._write_transaction(self.base, journal)
         with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN=journal['token']):
             self.assertTrue(updater.confirm_startup(self.base))
         self.assertEqual(updater.read_transaction(self.base)['phase'], 'confirmed')
         self.assertFalse(updater.read_state(self.base)['startup_pending'])
-        self.assertTrue((self.data / 'update-backup/folder.pyw').exists())
+        self.assertFalse((self.data / 'update-backup').exists(), 'Confirmed update must remove backup')
 
     def test_bootstrap_at_trial_start_does_not_mutate_shipped_manifest(self):
         pending = self.data / 'update-pending'

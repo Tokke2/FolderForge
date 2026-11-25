@@ -209,14 +209,15 @@ def run(window_factory=None, production=False):
     import os
     import sys
     import time
-    from PySide6.QtCore import QLockFile, QStandardPaths, QUrl
-    from PySide6.QtGui import QDesktopServices, QPixmap
+    from PySide6.QtCore import QFileSystemWatcher, QLockFile, QStandardPaths, QUrl
+    from PySide6.QtGui import QDesktopServices, QPixmap, QPixmapCache
     if production:
         from qt_diagnostics import install_qt_message_logging
         install_qt_message_logging()
     if QApplication.instance() is None:
         QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication.instance() or QApplication(sys.argv)
+    QPixmapCache.setCacheLimit(16384)
     install_field_wheel_guard(app)
     app.setApplicationName('FolderForge' if production else 'FolderForge Qt-prototyp')
     app.setQuitOnLastWindowClosed(False)
@@ -284,6 +285,8 @@ def run(window_factory=None, production=False):
         if not win_icon.isNull():
             window.setWindowIcon(win_icon)
             app.setWindowIcon(win_icon)
+    else:
+        app.setWindowIcon(window.windowIcon())
     tray_icon = QIcon()
     if sys.platform == 'win32' and (ROOT / 'Icon/projektmapp.ico').is_file():
         tray_icon = QIcon(str(ROOT / 'Icon/projektmapp.ico'))
@@ -317,9 +320,15 @@ def run(window_factory=None, production=False):
             service_instance_health(lock.lock_dir, ROOT / 'folder.pyw')
             if lock.check_trigger():
                 window.restore()
+        try:
+            lock_watcher = QFileSystemWatcher([str(lock.lock_dir)], window)
+            lock_watcher.directoryChanged.connect(lambda _path: poll_instance())
+        except Exception:
+            pass
         health = QTimer(window)
+        health.setTimerType(Qt.CoarseTimer)
         health.timeout.connect(poll_instance)
-        health.start(500)
+        health.start(2000)
         if os.environ.get('FOLDERFORGE_QT_SMOKE') == '1':
             import threading
             stop = threading.Event()

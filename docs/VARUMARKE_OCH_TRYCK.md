@@ -2,16 +2,17 @@
 
 ## Ingår i samma release som appen
 
-Hämta **Source code (zip)** från befintliga v0.0.2 under Assets. Tryckoriginalen ligger redan i `Icon/` i samma ZIP som appen. **Inget separat grafikpaket eller någon extra SVG-nedladdning behövs.** Efter uppackning öppnar du rätt SVG-fil lokalt och lämnar den till tryckeriet. Se även `RELEASE_INNEHALL.md` i paketets rot.
+Hämta **Source code (zip)** från senaste releasen (`v0.0.3`, Latest) under Assets. Tryckoriginalen ligger redan i `Icon/` i samma ZIP som appen. **Inget separat grafikpaket eller någon extra SVG-nedladdning behövs.** Efter uppackning öppnar du rätt SVG-fil lokalt och lämnar den till tryckeriet. Se även `RELEASE_INNEHALL.md` i paketets rot.
 
 ## Levererade original
 
 | Fil i `Icon/` | Användning |
 |---|---|
-| `folderforge-logo.svg` | Primär logotyp med mörk text, transparent bakgrund. För ljusa underlag och tryck. |
-| `folderforge-logo-inverse.svg` | Vit/turkos text på transparent bakgrund, för mörka underlag. |
+| `folderforge-logo.svg` | Primär logotyp med mörk text och namngivna vektorformer, transparent bakgrund. För ljusa underlag och tryck. |
+| `folderforge-logo-inverse.svg` | Vit/turkos text på transparent bakgrund, för mörka underlag och appens mörka toppanel. |
 | `folderforge-logo-mono.svg` | Enfärgat svart original, med öppna negativa ytor i symbolen. |
 | `folderforge-symbol.svg` | Fristående symbol, samma original som appikonerna bygger på. |
+| `folderforge-print-editable.svg` | Redigerbart vektororiginal med separata lager och redigerbar `<text>` för tryckeri/designprogram. |
 | `folderforge-logo.png` | Högupplöst skärmvariant på vit bakgrund, läsbar även i mörk GitHub-vy. |
 | `folderforge-master.png` | 1024×1024 symbol med transparenta ytterhörn. |
 | `folderforge-tray.png` | 64×64 mörk, kontrastrik symbol för systemfält/menyrad. |

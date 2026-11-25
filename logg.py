@@ -40,8 +40,10 @@ from settings import APP_NAME, APP_VERSION, LOG_DIR
 LOG_FILE: Final[Path] = LOG_DIR / "folderforge.log"
 ERROR_LOG_FILE: Final[Path] = LOG_DIR / "folderforge-errors.log"
 LEGACY_LOG_DIR: Final[Path] = LOG_DIR.parent / "data" / "logs"
+ARCHIVE_RETENTION_DAYS: Final[int] = 7
 
-# Vanliga loggar arkiveras per lokalt kalenderdatum. Olösta fel roteras aldrig bort.
+# Vanliga loggar arkiveras per lokalt kalenderdatum och rensas efter 7 dagar.
+# Aktiva/olösta fel i folderforge-errors.log roteras eller raderas aldrig bort.
 _file_lock = threading.RLock()
 
 
@@ -160,6 +162,72 @@ def _archive_general(source, today):
         _atomic_text(source, "".join(retained))
 
 
+def _is_unsafe_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    try:
+        return bool(getattr(path.lstat(), "st_file_attributes", 0) & 0x400)
+    except OSError:
+        return False
+
+
+def prune_archived_logs(folder=None, today=None, max_age_days: int = ARCHIVE_RETENTION_DAYS) -> int:
+    """Rensa arkiverade loggar äldre än max_age_days (7 dagar). Rör aldrig aktiva loggar/olösta fel."""
+    folder = Path(folder or LOG_DIR)
+    if not folder.is_dir() or _is_unsafe_link(folder):
+        return 0
+    today = local_today() if today is None else today
+    cutoff_seconds = max_age_days * 24 * 60 * 60
+    now_ts = datetime.combine(today, datetime.min.time()).timestamp()
+    removed = 0
+    for subname in ("archive", "resolved-errors"):
+        root = folder / subname
+        if not root.is_dir() or _is_unsafe_link(root):
+            continue
+        try:
+            entries = list(root.iterdir())
+        except OSError:
+            continue
+        for entry in entries:
+            if _is_unsafe_link(entry):
+                continue
+            if entry.is_dir():
+                try:
+                    archive_day = date.fromisoformat(entry.name)
+                except ValueError:
+                    archive_day = None
+                if archive_day is not None:
+                    if (today - archive_day).days <= max_age_days:
+                        continue
+                    try:
+                        for child in list(entry.iterdir()):
+                            if not _is_unsafe_link(child) and child.is_file():
+                                child.unlink()
+                                removed += 1
+                        entry.rmdir()
+                    except OSError:
+                        pass
+                else:
+                    try:
+                        for child in list(entry.rglob("*")):
+                            if not _is_unsafe_link(child) and child.is_file():
+                                if now_ts - child.stat().st_mtime > cutoff_seconds:
+                                    child.unlink()
+                                    removed += 1
+                        if not any(entry.iterdir()):
+                            entry.rmdir()
+                    except OSError:
+                        pass
+            elif entry.is_file():
+                try:
+                    if now_ts - entry.stat().st_mtime > cutoff_seconds:
+                        entry.unlink()
+                        removed += 1
+                except OSError:
+                    pass
+    return removed
+
+
 class DailyArchiveHandler(logging.Handler):
     def __init__(self, path):
         super().__init__(logging.DEBUG)
@@ -172,6 +240,7 @@ class DailyArchiveHandler(logging.Handler):
         with _locked_logs(self.path.parent):
             for source in [self.path, *sorted(self.path.parent.glob(self.path.name + ".[0-9]*"))]:
                 _archive_general(source, today)
+            prune_archived_logs(self.path.parent, today)
             self.day = today
 
     def emit(self, record):

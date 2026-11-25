@@ -91,6 +91,23 @@ class QtDefaultTests(unittest.TestCase):
                       "QSystemTrayIcon.DoubleClick", "FolderForge redo i systemfältet"):
             self.assertIn(token, source)
 
+    def test_qt_project_dialog_has_ruta_damage_chips_and_settings_profiles_subtab(self):
+        source = Path('qt_app.py').read_text(encoding='utf-8')
+        for token in ('DAMAGE_TYPE_CHIPS', 'RUTA_CHOICES', 'toggle_damage_word',
+                      "self.settings_subtabs.addTab(profiles_tab, 'Profiler')",
+                      'folderforge-logo-inverse.svg', '_default_screen_geometry'):
+            self.assertIn(token, source)
+        import ast
+        tree = ast.parse(source)
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'toggle_damage_word')
+        ns = {'RUTA_CHOICES': ('SIDORUTA', 'BAKRUTA')}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), 'damage', 'exec'), ns)
+        toggle = ns['toggle_damage_word']
+        self.assertEqual(toggle('ABC123', 'VINDRUTA'), 'ABC123 VINDRUTA')
+        self.assertEqual(toggle('ABC123 vindruta', 'VINDRUTA'), 'ABC123')
+        self.assertEqual(toggle('ABC123 SIDORUTA', 'BAKRUTA'), 'ABC123 BAKRUTA')
+        self.assertEqual(toggle('ABC123 BAKRUTA', 'STENSKOTT'), 'ABC123 BAKRUTA STENSKOTT')
+
 
 class ProductNameTests(unittest.TestCase):
     def test_production_uses_product_name_without_gui_framework(self):

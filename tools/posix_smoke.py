@@ -155,7 +155,7 @@ def main():
                        'Healthy update did not start hidden')
         assert worker.wait(timeout=30) == 0, 'Tk startup acknowledgement failed'
         assert not updater.read_state(base).get('startup_pending')
-        assert (base / 'data/update-backup/folder.pyw').exists()
+        assert not (base / 'data/update-backup').exists(), 'Confirmed update must remove backup'
         assert keep.read_text() == 'preserve user data'
         command('exit', 4)
         psutil.Process(healthy['pid']).wait(timeout=15)
