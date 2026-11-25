@@ -415,10 +415,12 @@ class QtWindow(PreviewWindow):
         self._export_bridge.ready.connect(self.export_ready)
         self._export_bridge.failed.connect(self.export_failed)
         self.setWindowTitle(f'FolderForge {APP_VERSION}')
+        self.setMinimumSize(300, 250)
         self.tabs = ResponsiveTabs()
 
         shell = QWidget()
         shell.setObjectName('appShell')
+        shell.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
         shell_layout = QVBoxLayout(shell)
         shell_layout.setContentsMargins(0, 0, 0, 0)
         shell_layout.setSpacing(2)
@@ -426,9 +428,11 @@ class QtWindow(PreviewWindow):
         # Kompakt, knivskarp toppanel (sparar höjd på alla sidor och växlar vektor-logotyp efter tema)
         header = QFrame()
         header.setObjectName('appHeader')
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(16, 8, 16, 8)
-        header_layout.setSpacing(10)
+        header.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        header_layout = QGridLayout(header)
+        self._header_layout = header_layout
+        header_layout.setContentsMargins(14, 6, 14, 6)
+        header_layout.setSpacing(8)
         logo_path = BASE_DIR / 'Icon/folderforge-logo.svg'
         logo = QSvgWidget(str(logo_path))
         if logo.renderer().isValid():
@@ -439,30 +443,25 @@ class QtWindow(PreviewWindow):
             logo = QLabel('FolderForge')
             self._logo_svg = None
         logo.setObjectName('appLogo')
-        logo.setFixedSize(212, 44)
+        logo.setFixedSize(196, 40)
         logo.setAccessibleName('FolderForge')
         self._logo_widget = logo
-        header_layout.addWidget(logo)
-        version_badge = label('v' + APP_VERSION, 'versionBadge')
-        header_layout.addWidget(version_badge)
-        header_layout.addStretch(1)
+        self._version_badge = label('v' + APP_VERSION, 'versionBadge')
 
         self.update_summary = label('Kontrollerar lokal uppdateringsstatus…', 'updateSummary')
-        self.update_summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        header_layout.addWidget(self.update_summary)
+        self.update_summary.setMinimumWidth(0)
+        self.update_summary.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
 
         update = QPushButton('Sök uppdatering nu')
         update.setObjectName('secondaryAction')
         update.clicked.connect(self.check_updates)
         self._global_update_button = update
-        header_layout.addWidget(update)
 
         self.fit_screen_button = QPushButton('Maxhöjd')
         self.fit_screen_button.setObjectName('secondaryAction')
         self.fit_screen_button.setToolTip('Anpassa fönstret till skärmens fulla höjd och optimala bredd')
         self.fit_screen_button.clicked.connect(self.fit_window_to_screen)
         self._action_icons.append((self.fit_screen_button, 'fit'))
-        header_layout.addWidget(self.fit_screen_button)
 
         self.theme_toggle = QPushButton('◐')
         self.theme_toggle.setAccessibleName('Växla ljust och mörkt tema')
@@ -470,19 +469,24 @@ class QtWindow(PreviewWindow):
         self.theme_toggle.setFixedWidth(42)
         self.theme_toggle.setObjectName('secondaryAction')
         self.theme_toggle.clicked.connect(self.toggle_theme)
-        header_layout.addWidget(self.theme_toggle)
+        self._header_wide = None
+        self._reflow_header(force=True)
         shell_layout.addWidget(header)
 
         shell_layout.addWidget(self.tabs, 1)
 
         footer = QFrame()
         footer.setObjectName('appFooter')
+        footer.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         footer_layout = QGridLayout(footer)
         self._footer_layout = footer_layout
         footer_layout.setContentsMargins(14, 4, 14, 4)
         footer_layout.setSpacing(4)
         footer_layout.setColumnStretch(0, 1)
-        footer_layout.addWidget(label('© Rickard Längkvist · Släpp valfri mapp i fönstret för snabb trälexport', 'mutedText'), 0, 0)
+        footer_note = label('© Rickard Längkvist · Släpp valfri mapp i fönstret för snabb trälexport', 'mutedText')
+        footer_note.setMinimumWidth(0)
+        footer_note.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        footer_layout.addWidget(footer_note, 0, 0)
         minimize = QPushButton('Minimera till fältet')
         minimize.clicked.connect(self.hide)
         footer_layout.addWidget(minimize, 1, 0)
@@ -704,11 +708,60 @@ class QtWindow(PreviewWindow):
         rect.moveTop(area.top())
         return rect
 
+    def _reflow_header(self, force=False):
+        if not hasattr(self, '_header_layout'):
+            return
+        wide = self.width() >= 960
+        if not force and wide == self._header_wide:
+            return
+        grid = self._header_layout
+        while grid.count():
+            grid.takeAt(0)
+        for col in range(6):
+            grid.setColumnStretch(col, 0)
+        if wide:
+            self.update_summary.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(self._logo_widget, 0, 0)
+            grid.addWidget(self._version_badge, 0, 1)
+            grid.addWidget(self.update_summary, 0, 2)
+            grid.addWidget(self._global_update_button, 0, 3)
+            grid.addWidget(self.fit_screen_button, 0, 4)
+            grid.addWidget(self.theme_toggle, 0, 5)
+            grid.setColumnStretch(2, 1)
+        else:
+            self.update_summary.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            grid.addWidget(self._logo_widget, 0, 0)
+            grid.addWidget(self._version_badge, 0, 1)
+            grid.addWidget(self.fit_screen_button, 0, 3)
+            grid.addWidget(self.theme_toggle, 0, 4)
+            grid.addWidget(self.update_summary, 1, 0, 1, 3)
+            grid.addWidget(self._global_update_button, 1, 3, 1, 2)
+            grid.setColumnStretch(2, 1)
+        self._header_wide = wide
+
+    def _clamp_frame_to_screen(self, screen):
+        avail = screen.availableGeometry()
+        fg = self.frameGeometry()
+        if avail.contains(fg):
+            return
+        cg = self.geometry()
+        dx = max(0, fg.width() - cg.width())
+        dy = max(0, fg.height() - cg.height())
+        left_frame = max(0, cg.x() - fg.x())
+        top_frame = max(0, cg.y() - fg.y())
+        w = max(260, min(cg.width(), avail.width() - dx))
+        h = max(220, min(cg.height(), avail.height() - dy))
+        fx = max(avail.left(), min(fg.x(), avail.left() + avail.width() - (w + dx)))
+        fy = max(avail.top(), min(fg.y(), avail.top() + avail.height() - (h + dy)))
+        self.setGeometry(fx + left_frame, fy + top_frame, w, h)
+
     def fit_window_to_screen(self):
         screen = self.screen() or QApplication.primaryScreen()
         area = self._screen_work_area(screen)
         rect = self._default_screen_geometry(area)
         self.setGeometry(rect)
+        self._clamp_frame_to_screen(screen)
+        self._reflow_header()
         self.tabs.reflow(force=True)
         self.reflow_home(force=True)
         self.save_placement()
@@ -736,8 +789,10 @@ class QtWindow(PreviewWindow):
         y = max(area.top(), min(rectangle.y(), area.bottom() - height + 1))
         self.setGeometry(x, y, width, height)
         self.showNormal()
+        self._clamp_frame_to_screen(screen)
         self.raise_()
         self.activateWindow()
+        self._reflow_header()
         self.tabs.reflow(force=True)
         self.reflow_home(force=True)
 
@@ -751,6 +806,7 @@ class QtWindow(PreviewWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._reflow_header()
         if hasattr(self, '_footer_layout') and hasattr(self, '_minimize_button'):
             compact = self.width() >= 650
             if compact != getattr(self, '_footer_compact', None):
@@ -1129,6 +1185,8 @@ class QtWindow(PreviewWindow):
         layout = page(self.tabs, 'Inställningar')
         self.settings_subtabs = QTabWidget()
         self.settings_subtabs.setObjectName('settingsSubtabs')
+        self.settings_subtabs.setUsesScrollButtons(True)
+        self.settings_subtabs.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
 
         # ── Underflik 1: Allmänt & Utseende (2 kolumner, noll scroll) ──
         general_tab = QWidget()
@@ -1823,3 +1881,22 @@ class QtWindow(PreviewWindow):
         except (OSError, ValueError) as exc:
             logging.getLogger('qt.projects').exception('Ångra/radering stoppades')
             QMessageBox.warning(self, 'Ångra stoppades', str(exc))
+
+    save_settings_profile = property(lambda self: self._save_settings_profile)
+
+
+def run():
+    from qt_preview import run as run_host
+
+    def build(lock):
+        from logg import init_logging, start_log_archiver
+        import logg
+        if not logg._initierad:
+            init_logging()
+        start_log_archiver()
+        window = QtWindow(Workspace(lock))
+        window.start_integrations()
+        return window
+
+    return run_host(window_factory=build, production=True)
+
