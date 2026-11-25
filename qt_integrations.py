@@ -100,6 +100,7 @@ class WindowsHotkey(QAbstractNativeEventFilter):
         super().__init__()
         import ctypes
         from ctypes import wintypes
+        self._msg_type = wintypes.MSG
         self.api = ctypes.WinDLL('user32', use_last_error=True)
         self.api.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
         self.api.RegisterHotKey.restype = wintypes.BOOL
@@ -117,13 +118,13 @@ class WindowsHotkey(QAbstractNativeEventFilter):
         QCoreApplication.instance().installNativeEventFilter(self)
 
     def nativeEventFilter(self, event_type, message):
-        import ctypes
-        from ctypes import wintypes
-        if event_type in (b'windows_generic_MSG', b'windows_dispatcher_MSG'):
-            msg = wintypes.MSG.from_address(int(message))
-            if self.active and msg.message == 0x0312 and msg.wParam == self.identifier:
-                self.callback()
-                return True, 0
+        if self.active and message and event_type in (b'windows_generic_MSG', b'windows_dispatcher_MSG'):
+            addr = int(message)
+            if addr:
+                msg = self._msg_type.from_address(addr)
+                if msg.message == 0x0312 and msg.wParam == self.identifier:
+                    self.callback()
+                    return True, 0
         return False, 0
 
     def stop(self):

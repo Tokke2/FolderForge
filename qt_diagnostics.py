@@ -40,13 +40,24 @@ def save_startup_report(base, phase='running', error=''):
     report = startup_report(base, phase, error)
     folder = Path(base) / 'logs'
     folder.mkdir(parents=True, exist_ok=True)
+    target = folder / 'startup-diagnostics.json'
+    if phase == 'loading-qt' and target.is_file():
+        try:
+            existing = json.loads(target.read_text(encoding='utf-8'))
+            other_pid = existing.get('pid') if isinstance(existing, dict) else None
+            if isinstance(other_pid, int) and other_pid > 0 and other_pid != os.getpid():
+                from instance_lock import _pid_alive
+                if _pid_alive(other_pid):
+                    return report
+        except Exception:
+            pass
     fd, temporary = tempfile.mkstemp(prefix='.startup-', dir=folder)
     try:
         with os.fdopen(fd, 'w', encoding='utf-8') as stream:
             json.dump(report, stream, ensure_ascii=False, indent=2)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, folder / 'startup-diagnostics.json')
+        os.replace(temporary, target)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

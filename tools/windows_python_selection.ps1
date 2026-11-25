@@ -75,6 +75,21 @@ public class BrokenPython {
         Assert-Equal (Select-ExistingPython @('broken','3.13','3.14')) 'python-3.14' 'Unrunnable primary must not bypass 3.14 priority'
         $Working = 'none'; $Attempts.Clear()
         if (Select-ExistingPython @('3.15','3.14','3.13')) { throw 'All failed candidates must fail closed' }
+        # Deterministic tie-breaking between multiple 3.15 installations.
+        function Resolve-ExistingPython([string]$Candidate) {
+            if ($Candidate -match 'Python314') {
+                return [pscustomobject]@{ Console=$Candidate; Windowless='C:\Users\rl\AppData\Local\Programs\Python\Python314\pythonw.exe'; Major=3; Minor=14; Version='3.14' }
+            }
+            if ($Candidate -match 'pythoncore-3\.15') {
+                return [pscustomobject]@{ Console=$Candidate; Windowless='C:\Users\rl\AppData\Local\Python\pythoncore-3.15-64\pythonw.exe'; Major=3; Minor=15; Version='3.15' }
+            }
+            return [pscustomobject]@{ Console=$Candidate; Windowless='C:\Users\rl\AppData\Local\Programs\Python\Python315\pythonw.exe'; Major=3; Minor=15; Version='3.15' }
+        }
+        function Test-ExistingPythonGui($Python) { return $Python.Version -eq '3.15' }
+        $First = Select-ExistingPython @('C:\Python314\python.exe','C:\pythoncore-3.15-64\python.exe','C:\Programs\Python\Python315\python.exe')
+        $Second = Select-ExistingPython @('C:\Python314\python.exe','C:\Programs\Python\Python315\python.exe','C:\pythoncore-3.15-64\python.exe')
+        Assert-Equal $First 'C:\Users\rl\AppData\Local\Programs\Python\Python315\pythonw.exe' 'Standard Programs\Python install must win 3.15 tie'
+        Assert-Equal $Second $First '3.15 selection must be deterministic across launch orders'
     }
     @{ native_failure_fallback=$true; primary_priority=$true; python314_priority=$true;
        other_installed_fallback=$true; all_failed_closed=$true; real_python=$Real.Console } |

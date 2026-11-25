@@ -66,6 +66,31 @@ class QtDefaultTests(unittest.TestCase):
                       'launch_update_trial(ROOT', 'restart_timer.start(2000)'):
             self.assertIn(token, source)
 
+    def test_duplicate_loading_qt_does_not_clobber_live_primary_diagnostics(self):
+        import instance_lock
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'logs').mkdir()
+            diag = root / 'logs/startup-diagnostics.json'
+            diag.write_text(json.dumps({'phase': 'ready', 'pid': os.getpid() + 50000, 'gui': 'Qt'}))
+            with patch.object(instance_lock, '_pid_alive', return_value=True):
+                save_startup_report(root, 'loading-qt')
+            saved = json.loads(diag.read_text(encoding='utf-8'))
+            self.assertEqual(saved['phase'], 'ready')
+            self.assertEqual(saved['pid'], os.getpid() + 50000)
+            with patch.object(instance_lock, '_pid_alive', return_value=False):
+                save_startup_report(root, 'loading-qt')
+            saved = json.loads(diag.read_text(encoding='utf-8'))
+            self.assertEqual(saved['phase'], 'loading-qt')
+            self.assertEqual(saved['pid'], os.getpid())
+
+    def test_production_qt_host_recovers_hung_instances_and_uses_raster_tray_assets(self):
+        source = Path('qt_preview.py').read_text(encoding='utf-8')
+        for token in ("recover_unresponsive_instance(lock, ROOT / 'folder.pyw')",
+                      "Icon/folderforge-tray.png", "Icon/projektmapp.ico",
+                      "QSystemTrayIcon.DoubleClick", "FolderForge redo i systemfältet"):
+            self.assertIn(token, source)
+
 
 class ProductNameTests(unittest.TestCase):
     def test_production_uses_product_name_without_gui_framework(self):

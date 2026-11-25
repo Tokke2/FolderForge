@@ -16,8 +16,11 @@ function Remove-LegacyMaintenanceTask {
         try { $Hash = (($Digest.ComputeHash([Text.Encoding]::UTF8.GetBytes($Root.ToLowerInvariant())) | ForEach-Object { $_.ToString('x2') }) -join '').Substring(0,12) }
         finally { $Digest.Dispose() }
         $Name = 'FolderForge Python weekly ' + $Hash.ToUpperInvariant()
-        $Task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
-        if ($Task) { Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction Stop }
+        $TaskTree = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\' + $Name
+        if (Test-Path -LiteralPath $TaskTree -ErrorAction SilentlyContinue) {
+            $Task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+            if ($Task) { Unregister-ScheduledTask -TaskName $Name -Confirm:$false -ErrorAction Stop }
+        }
     } catch { Write-StartError ('Could not remove obsolete Python task: ' + $_.Exception.Message) }
 }
 function Quote-Argument([string]$Value) {
@@ -92,7 +95,7 @@ function Test-ExistingPythonGui($Python) {
         if ($env:FOLDERFORGE_GUI -eq 'tk') {
         $Code = 'import tkinter,customtkinter; from PIL import Image; import pystray; r=customtkinter.CTk(); r.withdraw(); r.update_idletasks(); r.destroy()'
         } else {
-            $Code = 'from PySide6.QtWidgets import QApplication; from PySide6.QtGui import QIcon; a=QApplication([]); a.processEvents(); a.quit()'
+            $Code = 'from PySide6.QtWidgets import QApplication; from PySide6.QtGui import QIcon; from PySide6.QtSvgWidgets import QSvgWidget; a=QApplication([]); a.processEvents(); a.quit()'
         }
         $Result = Invoke-Hidden $Python.Console @('-c',$Code)
         if ($Result.Code -eq 0) { return $true }
@@ -105,20 +108,42 @@ function Test-ExistingPythonGui($Python) {
     return $false
 }
 function Select-ExistingPython([string[]]$Candidates) {
+    $ValidCandidates = @($Candidates | Where-Object { $_ -and $_ -notmatch '\\Microsoft\\WindowsApps\\' })
+    if (-not $ValidCandidates.Count) { return $null }
+    $SeenKeys = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $UniqueCandidates = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($Candidate in $ValidCandidates) {
+        $Key = $Candidate
+        if ([IO.Path]::GetFileName($Candidate) -match '^pythonw?\.exe$') {
+            $Dir = Split-Path $Candidate
+            if ($Dir) { $Key = Join-Path $Dir 'python.exe' }
+        }
+        if ($SeenKeys.Add($Key)) { $UniqueCandidates.Add($Candidate) }
+    }
+    $PrimaryPython = Resolve-ExistingPython $UniqueCandidates[0]
+    $Primary = if ($PrimaryPython) { $PrimaryPython.Windowless } else { $null }
+    if ($PrimaryPython -and (Test-ExistingPythonGui $PrimaryPython)) {
+        Write-StartInfo ('Vald system-Python ' + $PrimaryPython.Version + ': ' + $PrimaryPython.Windowless)
+        return $PrimaryPython.Windowless
+    }
     $Resolved = @()
-    $PrimaryCandidate = @($Candidates | Where-Object { $_ -and $_ -notmatch '\\Microsoft\\WindowsApps\\' } | Select-Object -First 1)
-    $Primary = $null
-    foreach ($Candidate in ($Candidates | Select-Object -Unique)) {
+    $Index = 0
+    foreach ($Candidate in ($UniqueCandidates | Select-Object -Skip 1)) {
         $Python = Resolve-ExistingPython $Candidate
-        if ($Python -and $Resolved.Windowless -notcontains $Python.Windowless) { $Resolved += $Python }
-        if ($Python -and $Candidate -eq $PrimaryCandidate[0]) { $Primary = $Python.Windowless }
+        if ($Python -and $Resolved.Windowless -notcontains $Python.Windowless -and $Python.Windowless -ne $Primary) {
+            $Python | Add-Member -NotePropertyName Index -NotePropertyValue $Index -Force
+            $Resolved += $Python
+            $Index++
+        }
     }
     if (-not $Resolved.Count) { return $null }
     # Keep the current PATH choice first. If unusable, prefer installed 3.14;
-    # then try other installed versions, newest first. No version is installed.
+    # then try other installed versions, newest first, with deterministic tie-breaking. No version is installed.
     $Ordered = @($Resolved | Sort-Object @{Expression={
         if ($_.Windowless -eq $Primary) { 0 } elseif ($_.Version -eq '3.14') { 1 } else { 2 }
-    }}, @{Expression={ -1 * $_.Minor }})
+    }}, @{Expression={ -1 * $_.Minor }}, @{Expression={
+        if ($_.Windowless -match '\\Programs\\Python\\') { 0 } else { 1 }
+    }}, @{Expression={ $_.Index }})
     foreach ($Python in $Ordered) {
         if (Test-ExistingPythonGui $Python) {
             Write-StartInfo ('Vald system-Python ' + $Python.Version + ': ' + $Python.Windowless)
@@ -159,7 +184,7 @@ function Get-PythonCandidates {
         }
     }
     if ($PreferredPython) { $Candidates.Add($PreferredPython) }
-    foreach ($Pattern in @("$env:LOCALAPPDATA\Programs\Python\Python*\python.exe", "$env:USERPROFILE\miniconda3\python.exe", "$env:USERPROFILE\anaconda3\python.exe", "$env:ProgramData\Anaconda3\python.exe")) {
+    foreach ($Pattern in @("$env:LOCALAPPDATA\Programs\Python\Python*\python.exe", "$env:LOCALAPPDATA\Python\pythoncore-*\python.exe", "$env:USERPROFILE\miniconda3\python.exe", "$env:USERPROFILE\anaconda3\python.exe", "$env:ProgramData\Anaconda3\python.exe")) {
         foreach ($File in @(Get-Item -Path $Pattern -ErrorAction SilentlyContinue)) { $Candidates.Add($File.FullName) }
     }
     return $Candidates.ToArray()

@@ -70,9 +70,20 @@ def main():
         launch()
         status = wait(lambda s: s.get('tray') and not s.get('visible'), 'Default hidden Qt startup failed')
         current_pid = status['pid']
+        diag_path = root / 'logs/startup-diagnostics.json'
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                if json.loads(diag_path.read_text(encoding='utf-8')).get('phase') == 'ready':
+                    break
+            except (OSError, ValueError):
+                pass
+            time.sleep(.1)
         launch()
         time.sleep(3)
         assert read_status()['pid'] == current_pid and not read_status()['visible'], 'Duplicate start changed window/instance'
+        diag_after = json.loads(diag_path.read_text(encoding='utf-8'))
+        assert diag_after.get('phase') == 'ready' and diag_after.get('pid') == current_pid, diag_after
         command('restore', 1)
         wait(lambda s: s.get('visible'), 'Restore failed')
         command('project-dialog', 2)

@@ -203,15 +203,20 @@ class PreviewWindow(QMainWindow):
 
 
 def run(window_factory=None, production=False):
+    import ctypes
     import hashlib
+    import logging
     import os
     import sys
-    from PySide6.QtCore import QLockFile, QStandardPaths
+    import time
+    from PySide6.QtCore import QLockFile, QStandardPaths, QUrl
+    from PySide6.QtGui import QDesktopServices, QPixmap
     if production:
         from qt_diagnostics import install_qt_message_logging
         install_qt_message_logging()
-    QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
-    app = QApplication(sys.argv)
+    if QApplication.instance() is None:
+        QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    app = QApplication.instance() or QApplication(sys.argv)
     install_field_wheel_guard(app)
     app.setApplicationName('FolderForge' if production else 'FolderForge Qt-prototyp')
     app.setQuitOnLastWindowClosed(False)
@@ -222,6 +227,9 @@ def run(window_factory=None, production=False):
         from settings import APP_NAME
         lock = SingleInstanceLock(APP_NAME)
         acquired = lock.acquire()
+        if not acquired:
+            from updater import recover_unresponsive_instance
+            acquired = recover_unresponsive_instance(lock, ROOT / 'folder.pyw')
     else:
         lock = QLockFile(str(Path(QStandardPaths.writableLocation(QStandardPaths.TempLocation)) /
                              ('folderforge-qt-preview-' + key + '.lock')))
@@ -230,11 +238,16 @@ def run(window_factory=None, production=False):
         return 0
     release = lock.release if production else lock.unlock
     if production:
-        from updater import apply_pending, launch_update_trial, mark_installation_failed
+        from qt_diagnostics import save_startup_report
+        from updater import apply_pending, launch_update_trial, mark_installation_failed, service_instance_health
+        save_startup_report(ROOT, 'starting')
+        try:
+            service_instance_health(lock.lock_dir, ROOT / 'folder.pyw')
+        except Exception:
+            logging.getLogger('startup.qt').warning('Hälsosignalen kunde inte initieras', exc_info=True)
         try:
             updated = apply_pending(ROOT)
         except Exception as exc:
-            import logging
             logging.getLogger('qt.update').exception('Kunde inte installera uppdatering; aktuell app används')
             mark_installation_failed(ROOT, exc)
             updated = False
@@ -242,8 +255,23 @@ def run(window_factory=None, production=False):
             release()
             launch_update_trial(ROOT, sys.executable)
             return 0
-    if not QSystemTrayIcon.isSystemTrayAvailable():
-        print('FolderForge kräver ett tillgängligt systemfält. Se logs/ och reservstarten Starta-FolderForge-Tk.py.', file=sys.stderr)
+    tray_ready = QSystemTrayIcon.isSystemTrayAvailable()
+    if not tray_ready and sys.platform == 'win32':
+        for _ in range(20):
+            app.processEvents()
+            time.sleep(0.25)
+            if QSystemTrayIcon.isSystemTrayAvailable():
+                tray_ready = True
+                break
+    if not tray_ready:
+        tray_msg = 'FolderForge kräver ett tillgängligt systemfält. Se logs/ och reservstarten Starta-FolderForge-Tk.py.'
+        logging.getLogger('startup.qt').error(tray_msg)
+        if production:
+            save_startup_report(ROOT, 'tray-unavailable', tray_msg)
+        if os.name == 'nt' and os.environ.get('FOLDERFORGE_QT_SMOKE') != '1':
+            ctypes.windll.user32.MessageBoxW(None, tray_msg, 'FolderForge – systemfält saknas', 0x10)
+        elif sys.stderr is not None:
+            print(tray_msg, file=sys.stderr)
         release()
         return 1
     try:
@@ -251,26 +279,46 @@ def run(window_factory=None, production=False):
     except Exception:
         release()
         raise
-    tray = QSystemTrayIcon(window.windowIcon(), window)
+    if sys.platform == 'win32' and (ROOT / 'Icon/projektmapp.ico').is_file():
+        win_icon = QIcon(str(ROOT / 'Icon/projektmapp.ico'))
+        if not win_icon.isNull():
+            window.setWindowIcon(win_icon)
+            app.setWindowIcon(win_icon)
+    tray_icon = QIcon()
+    if sys.platform == 'win32' and (ROOT / 'Icon/projektmapp.ico').is_file():
+        tray_icon = QIcon(str(ROOT / 'Icon/projektmapp.ico'))
+    tray_png = QPixmap(str(ROOT / 'Icon/folderforge-tray.png'))
+    if not tray_png.isNull():
+        for px in (16, 20, 24, 32, 48, 64):
+            tray_icon.addPixmap(tray_png.scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    if tray_icon.isNull():
+        tray_icon = window.windowIcon()
+    tray = QSystemTrayIcon(tray_icon, window)
     tray.setToolTip('FolderForge' if production else 'FolderForge · Qt-prototyp (testläge)')
     menu = QMenu()
     menu.addAction('Öppna FolderForge' if production else 'Öppna Qt-prototypen', window.restore)
     if production:
+        menu.addAction('Öppna appens mapp', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(ROOT))))
         menu.addAction('Sök uppdatering nu', window.check_updates)
         menu.addAction('Uppdateringsstatus', window.update_status)
     menu.addAction(window.exit_action)
     tray.setContextMenu(menu)
-    tray.activated.connect(lambda reason: window.restore() if reason == QSystemTrayIcon.Trigger else None)
+    tray.activated.connect(lambda reason: window.restore()
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick) else None)
     window.tray = tray
     tray.show()
     # Remains hidden until an explicit tray action. Never starts Tk in this process.
     stop = None
     cleanup = None
     if production:
-        from updater import service_instance_health, start_updates
+        from updater import start_updates
         from settings import APP_VERSION
+        def poll_instance():
+            service_instance_health(lock.lock_dir, ROOT / 'folder.pyw')
+            if lock.check_trigger():
+                window.restore()
         health = QTimer(window)
-        health.timeout.connect(lambda: service_instance_health(lock.lock_dir, ROOT / 'folder.pyw'))
+        health.timeout.connect(poll_instance)
         health.start(500)
         if os.environ.get('FOLDERFORGE_QT_SMOKE') == '1':
             import threading
@@ -279,16 +327,22 @@ def run(window_factory=None, production=False):
             stop = start_updates(ROOT, APP_VERSION)
         from cache_cleanup import start_cleanup
         cleanup = start_cleanup(ROOT)
-        from qt_diagnostics import save_startup_report
         from updater import confirm_startup, pending_ready_for_restart
-        import logging
         log = logging.getLogger('qt.update')
+        attempts = [0]
         def acknowledge():
             try:
                 if not tray.isVisible():
-                    raise RuntimeError('Tray-ikonen är inte redo')
+                    attempts[0] += 1
+                    tray.show()
+                    if attempts[0] < 6 and not tray.isVisible():
+                        QTimer.singleShot(500, acknowledge)
+                        return
+                    if not tray.isVisible():
+                        raise RuntimeError('Tray-ikonen är inte redo')
                 confirm_startup(ROOT)
                 save_startup_report(ROOT, 'ready')
+                log.info('FolderForge redo i systemfältet (pid=%d)', os.getpid())
             except Exception as exc:
                 log.exception('Startbekräftelse misslyckades; backup behålls')
                 save_startup_report(ROOT, 'confirmation-failed', str(exc))
