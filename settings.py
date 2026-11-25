@@ -36,7 +36,7 @@ from typing import Any, Dict, Final, Optional, Sequence, Tuple
 #  1. APPIDENTITET — vem/vad appen är
 # ══════════════════════════════════════════════════════════════════════════
 APP_NAME: Final[str] = "FolderForge"
-APP_VERSION: Final[str] = "5.0"
+APP_VERSION: Final[str] = "0.0.2"
 COPYRIGHT_OWNER: Final[str] = f"© Rickard Längkvist {datetime.now().year}"
 
 
@@ -53,7 +53,7 @@ SETTINGS_FILE: Final[Path] = DATA_DIR / "settings.json"      # användarens val
 HISTORY_FILE: Final[Path] = DATA_DIR / "history.json"        # projekthistorik
 HOTKEY_CONFIG: Final[Path] = DATA_DIR / "hotkey_config.json" # snabbtangent
 TEMPLATES_DIR: Final[Path] = DATA_DIR / "templates"          # egna mallar
-LOG_DIR: Final[Path] = DATA_DIR / "logs"                     # roterande loggfiler
+LOG_DIR: Final[Path] = BASE_DIR / "logs"                     # appens loggar och arkiv
 
 # Icon/ — appens ikon i tre format (fönster/tray/bygge)
 ICON_DIR: Final[Path] = BASE_DIR / "Icon"
@@ -133,7 +133,10 @@ PACKAGE_PURPOSE: Final[Dict[str, str]] = {
 SETTINGS_SCHEMA: Final[Dict[str, Tuple[type, Any]]] = {
     "save_root": (str, ""),                 # rotmapp för nya projekt
     "open_after_creation": (bool, True),    # öppna Utforskaren efter skapande
+    "text_size": (str, "100%"),            # text och kontroller skalas tillsammans
+    "high_contrast": (bool, False),
     "theme": (str, "Dark"),                 # se SETTINGS_ENUMS nedan
+    "default_template": (str, "Skaderapport"), # sparad standardmall
     "last_template": (str, ""),             # senast använda mall
     "plate_mode": (bool, True),             # regns-läge (ABC 123 → ABC123)
     "start_minimized": (bool, True),        # starta alltid minimerad i systray
@@ -143,6 +146,7 @@ SETTINGS_SCHEMA: Final[Dict[str, Tuple[type, Any]]] = {
 # Tillåtna värden för inställningar som är uppräkningar.
 SETTINGS_ENUMS: Final[Dict[str, Sequence[str]]] = {
     "theme": ("System", "Dark", "Light"),
+    "text_size": ("100%", "110%", "125%", "150%"),
 }
 
 
@@ -152,6 +156,14 @@ SETTINGS_ENUMS: Final[Dict[str, Sequence[str]]] = {
 # En enda källa: vill du ändra en etikett eller hjälptext ändrar du HÄR —
 # fönstret hämtar sin text via appens _settings_option()-hjälp.
 SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
+    "text_size": {
+        "label": "Text och gränssnittsstorlek",
+        "beskrivning": "Text, knappar och avstånd förstoras tillsammans. Ändringen gäller direkt.",
+    },
+    "high_contrast": {
+        "label": "Hög kontrast",
+        "beskrivning": "Svarta ytor, vit text och tydlig fokusmarkering. Kan kombineras med alla teman.",
+    },
     "save_root": {
         "label": "Spara projekt i",
         "beskrivning": "Rotmappen där nya projektmappar skapas.",
@@ -178,7 +190,7 @@ SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
         "label": "Starta alltid minimerad i systemfältet",
         "beskrivning": ("Appen startar direkt i systray utan att fönstret "
                         "visas — gäller ALLA startsätt, även dubbelklick. "
-                        "Klicka på tray-ikonen (eller starta appen igen) "
+                        "Klicka på tray-ikonen eller använd snabbtangenten "
                         "för att öppna fönstret."),
     },
     "theme": {
@@ -197,12 +209,12 @@ SETTINGS_META: Final[Dict[str, Dict[str, str]]] = {
 # ══════════════════════════════════════════════════════════════════════════
 # Accentfärgerna används per kort/sektion i appen. MENU_THEMES i folder.pyw
 # är svaret på frågan "vilken färg blir bakgrunden?" — dessa är förgrunden.
-ACCENT_BLUE: Final[str] = "#4C9EF1"
+ACCENT_BLUE: Final[str] = "#193047"
 ACCENT_GREEN: Final[str] = "#2ECC71"
 ACCENT_RED: Final[str] = "#E74C3C"
 ACCENT_ORANGE: Final[str] = "#F39C12"
 ACCENT_PURPLE: Final[str] = "#9B59B6"
-ACCENT_TEAL: Final[str] = "#1ABC9C"
+ACCENT_TEAL: Final[str] = "#109A95"
 
 # Konventionell visningsordning (menyer, temaväljare, dubblett-kontroller).
 ACCENT_ORDER: Final[Tuple[str, ...]] = (
@@ -231,8 +243,11 @@ DEFAULT_HOTKEY: frozenset[str] = frozenset({"ctrl", "shift", "m"})
 # till / tar bort ordet i namnet — t.ex. "DSS817" + STENSKOTT. Redigera
 # listan fritt: chip-raden byggs direkt ur listan, och namnet genomgår
 # alltid samma normalisering/sanering som handskriven text.
+VEHICLE_CHOICES: Final[Tuple[str, ...]] = ("HUSBIL", "LASTBIL", "MASKIN")
+
 DAMAGE_TYPE_CHIPS: Final[Tuple[str, ...]] = (
     "STENSKOTT",
+    "VINDRUTA",
     "SIDORUTA",
     "BAKRUTA",
 )
@@ -251,3 +266,11 @@ LOKAL_CHOICES: Final[Tuple[str, ...]] = (
     "LAXÅ",
     "ÖREBRO",
 )
+
+# Gemensamma semantiska ytor (ljust, mörkt).
+UI_BACKGROUND = ("#F3F6FA", "#0F1724")
+UI_SURFACE = ("#FFFFFF", "#172233")
+UI_BORDER = ("#DCE3EC", "#2A3B50")
+UI_TEXT = ("#172638", "#E7EDF6")
+UI_MUTED = ("#55657A", "#A3B2C7")
+UI_PRIMARY = ("#2768AF", "#2F70B6")

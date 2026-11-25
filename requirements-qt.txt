@@ -1,0 +1,3 @@
+# Optional, isolated preview only. Never installed by FolderForge startup.
+# LGPL/GPL/commercial terms apply; see docs/QT_PROTOTYP.md.
+PySide6>=6.8,<7

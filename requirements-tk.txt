@@ -1,0 +1,7 @@
+# Manual installation by the user/IT only. The app never runs pip at startup.
+customtkinter>=5.2,<6
+Pillow>=10
+pystray>=0.19
+pynput>=1.7
+tkinterdnd2>=0.4
+pywin32>=306; sys_platform == "win32"

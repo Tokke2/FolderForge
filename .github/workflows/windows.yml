@@ -1,0 +1,42 @@
+name: Windows startup and update safety
+on:
+  push:
+    branches: ['main']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: 1
+      FOLDERFORGE_TEST_TEXT_SIZE: ${{ matrix.text_size || '100%' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13', '3.14']
+        include:
+          - python: '3.13'
+            text_size: '150%'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '${{ matrix.python }}'
+      - name: Install test dependencies on the disposable runner only
+        run: python -m pip install -r requirements.txt -r requirements-tk.txt psutil
+      - name: Unit and update recovery tests
+        run: python tools/ci_tests.py
+      - name: Existing Python fallback, including broken 3.15 and 3.14 priority
+        run: powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File tools/windows_python_selection.ps1
+      - name: Real Windows startup, tray, double-start and exit
+        run: python tools/windows_smoke.py
+      - name: Preserve Windows evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-evidence-${{ matrix.python }}-${{ matrix.text_size || '100%' }}
+          path: windows-evidence/

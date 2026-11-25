@@ -1,0 +1,235 @@
+"""Layout contracts without a display server."""
+import ast
+from pathlib import Path
+from types import SimpleNamespace
+import unittest
+from unittest.mock import Mock
+
+
+class LayoutTests(unittest.TestCase):
+    def setUp(self):
+        self.tree = ast.parse(Path('folder.pyw').read_text(encoding='utf-8'))
+
+    def test_footer_has_own_nonexpanding_grid_row(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        ctk = SimpleNamespace(CTkScrollableFrame=Mock(), CTkFrame=Mock())
+        ns = {'ctk': ctk}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'layout', 'exec'), ns)
+        win = Mock()
+        body, footer = ns['dialog_layout'](win)
+        win.grid_rowconfigure.assert_called_once_with(0, weight=1)
+        body.grid.assert_called_once_with(row=0, column=0, sticky='nsew')
+        self.assertEqual(footer.grid.call_args.kwargs['row'], 1)
+        self.assertEqual(footer.grid.call_args.kwargs['sticky'], 'ew')
+
+    def test_dialog_grows_to_content_with_screen_bounded_scroll_fallback(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        code = ast.unparse(node)
+        self.assertIn('body.winfo_reqheight()', code)
+        self.assertIn('footer.winfo_height()', code)
+        self.assertIn('monitor.height - 80', code)
+        self.assertIn('win.after_idle(fit_content)', code)
+        self.assertIn('CTkScrollableFrame', code)
+
+    def test_high_dpi_fit_uses_logical_geometry_and_clamps_both_axes(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        fit = next(n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == 'fit_content')
+        for factor in (1.0, 1.5, 2.0):
+            with self.subTest(factor=factor):
+                win, body, footer = Mock(), Mock(), Mock()
+                win.winfo_exists.return_value = True
+                win.winfo_width.return_value = 2200
+                win.winfo_height.return_value = 1500
+                win.winfo_x.return_value = 900
+                win.winfo_y.return_value = 100
+                win.winfo_screenwidth.return_value = 1920
+                win.winfo_screenheight.return_value = 1080
+                win._get_window_scaling.return_value = factor
+                body.winfo_reqheight.return_value = 800
+                footer.winfo_height.return_value = 120
+                ns = dict(win=win, body=body, footer=footer, pending=[None],
+                          enumerate_monitors=lambda: [], pick_monitor_for_point=lambda *args: None)
+                exec(compile(ast.Module(body=[fit], type_ignores=[]), 'fit', 'exec'), ns)
+                ns['fit_content']()
+                win.geometry.assert_called_once_with(f'{round(1888 / factor)}x{round(1000 / factor)}+0+0')
+
+    def test_dialog_fit_never_uses_provisional_width_and_has_readable_minimum(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        fit = next(n for n in node.body if isinstance(n, ast.FunctionDef) and n.name == 'fit_content')
+        for initial, factor, expected in ((1, 1, None), (80, 1, 560), (80, 1.5, 560), (80, 2, 560)):
+            with self.subTest(initial=initial, factor=factor):
+                win, body, footer = Mock(), Mock(), Mock()
+                win.winfo_exists.return_value = True
+                win.winfo_width.return_value = initial
+                win.winfo_height.return_value = 700
+                win.winfo_x.return_value = 0
+                win.winfo_y.return_value = 0
+                win.winfo_screenwidth.return_value = 1920
+                win.winfo_screenheight.return_value = 1080
+                win._get_window_scaling.return_value = factor
+                body.winfo_reqheight.return_value = 600
+                footer.winfo_height.return_value = 100
+                ns = dict(win=win, body=body, footer=footer, pending=[None],
+                          enumerate_monitors=lambda: [], pick_monitor_for_point=lambda *args: None)
+                exec(compile(ast.Module(body=[fit], type_ignores=[]), 'fit', 'exec'), ns)
+                ns['fit_content']()
+                if expected is None:
+                    win.geometry.assert_not_called()
+                else:
+                    self.assertTrue(win.geometry.call_args.args[0].startswith(f'{expected}x'))
+
+    def test_dialog_tracks_one_monitor_when_moved(self):
+        node = next(n for n in self.tree.body if isinstance(n, ast.FunctionDef) and n.name == 'dialog_layout')
+        code = ast.unparse(node)
+        self.assertIn("win.bind('<Configure>', window_resized", code)
+        self.assertIn('width_limit = monitor.width - 32', code)
+        self.assertIn('left, top = (monitor.left, monitor.top)', code)
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        dialog = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(dialog)
+        self.assertIn('self.winfo_x(), self.winfo_y()', code)
+        self.assertIn('sw, sh = (monitor.width, monitor.height)', code)
+
+    def test_project_buttons_reflow_for_available_width(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        dialog = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        helper = next(n for n in dialog.body if isinstance(n, ast.FunctionDef) and n.name == 'responsive_buttons')
+        for width, columns in ((600, 3), (300, 2), (140, 1)):
+            with self.subTest(width=width):
+                frame = Mock()
+                frame.winfo_width.return_value = width
+                frame._get_widget_scaling.return_value = 1
+                font = Mock()
+                font.measure.return_value = 100
+                buttons = [Mock() for _ in range(3)]
+                for button in buttons:
+                    button.cget.side_effect = lambda key: font if key == 'font' else 'Button'
+                ns = dict(s=1, win=Mock(), SimpleNamespace=SimpleNamespace, scaled=lambda value, scale: value)
+                exec(compile(ast.Module(body=[helper], type_ignores=[]), 'responsive', 'exec'), ns)
+                ns['responsive_buttons'](frame, buttons, 3)
+                frame.bind.call_args.args[1](SimpleNamespace(widget=frame._canvas))
+                for index, button in enumerate(buttons):
+                    self.assertEqual(button.grid.call_args.kwargs['row'], index // columns)
+                    self.assertEqual(button.grid.call_args.kwargs['column'], index % columns)
+
+    def test_project_actions_follow_final_name_without_footer_gap(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(method)
+        self.assertNotIn('footer.grid_remove()', code)
+        self.assertIn("btn_row = ctk.CTkFrame(footer, fg_color='transparent')", code)
+        self.assertLess(code.index('preview_ram.pack('), code.index('btn_row.pack('))
+        self.assertLess(code.index('btn_row.pack('), code.index('skapa_knapp ='))
+
+    def test_project_dialog_labels_expand_and_options_share_a_row(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        node = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(node)
+        self.assertIn("subtitle_label.pack(fill='x'", code)
+        self.assertIn("heading_label.pack(fill='x'", code)
+        self.assertIn("preview_ram = ctk.CTkFrame(footer", code)
+        self.assertIn("location_menu.grid(row=1, column=0", code)
+        self.assertIn("year_menu.grid(row=1, column=1", code)
+
+    def test_tray_opens_installation_folder_on_ui_thread_without_restoring(self):
+        app_class = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app_class.body if isinstance(n, ast.FunctionDef) and n.name == '_minimize_to_systray')
+        item = next(n for n in ast.walk(method) if isinstance(n, ast.Call)
+                    and isinstance(n.func, ast.Attribute) and n.func.attr == 'MenuItem'
+                    and n.args and isinstance(n.args[0], ast.Constant) and n.args[0].value == 'Öppna appens mapp')
+        app, dispatch = Mock(), Mock()
+        base = Path('installation with spaces')
+        ns = dict(self=app, ui_call=dispatch, BASE_DIR=base)
+        callback = eval(compile(ast.Expression(body=item.args[1]), 'tray-folder', 'eval'), ns)
+        callback(Mock(), Mock())  # pystray supplies both icon and item.
+        dispatch.assert_called_once_with(app, app._open_path, base)
+        app._restore_from_tray.assert_not_called()
+
+    def test_manual_update_available_in_app_and_tray(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        code = ast.unparse(app)
+        self.assertIn("label='Sök uppdatering nu'", code)
+        self.assertIn("text='Sök uppdatering nu'", code)
+        tray = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_minimize_to_systray')
+        self.assertIn("'Sök uppdatering nu'", ast.unparse(tray))
+        self.assertIn('ui_call(self, self._check_updates_now)', ast.unparse(tray))
+
+    def test_main_window_has_visible_manual_update_button(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_gui')
+        code = ast.unparse(method)
+        self.assertIn('self._update_check_button = ctk.CTkButton(self,', code)
+        self.assertIn("text='Sök uppdatering nu'", code)
+        self.assertIn('command=self._check_updates_now', code)
+        self.assertIn("self._update_check_button.pack(fill='x'", code)
+
+    def test_initial_layout_hides_empty_status_and_undo_rows(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        create = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_gui')
+        code = ast.unparse(create)
+        self.assertIn('self._result_banner.pack_forget()', code)
+        self.assertIn('self._undo_bar.pack_forget()', code)
+
+    def test_update_view_has_progress_notes_and_error_log_access(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        view = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_show_update_status')
+        code = ast.unparse(view)
+        self.assertIn('ctk.CTkProgressBar(', code)
+        self.assertIn('ctk.CTkTextbox(', code)
+        self.assertIn('command=self._open_error_log', code)
+        self.assertIn("state='disabled' if busy else 'normal'", code)
+
+    def test_creation_screen_uses_two_distinct_cards(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        view = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_build_tab_skapa')
+        code = ast.unparse(view)
+        self.assertIn('Använd din standardmall', code)
+        self.assertIn('Egen struktur', code)
+        self.assertIn('corner_radius=14', code)
+        self.assertIn('self._default_template_label', code)
+
+    def test_primary_action_and_muted_text_have_readable_contrast(self):
+        import settings
+        def luminance(color):
+            values = [int(color[index:index + 2], 16) / 255 for index in (1, 3, 5)]
+            values = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in values]
+            return sum(v * w for v, w in zip(values, (0.2126, 0.7152, 0.0722)))
+        def contrast(a, b):
+            lighter, darker = sorted((luminance(a), luminance(b)), reverse=True)
+            return (lighter + 0.05) / (darker + 0.05)
+        for primary in settings.UI_PRIMARY:
+            self.assertGreaterEqual(contrast(primary, '#FFFFFF'), 4.5)
+        for index in (0, 1):
+            self.assertGreaterEqual(contrast(settings.UI_MUTED[index], settings.UI_SURFACE[index]), 4.5)
+
+    def test_vehicle_buttons_update_preview_and_creation_name(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_create_folder_dialog')
+        code = ast.unparse(method)
+        self.assertIn('enumerate(VEHICLE_CHOICES)', code)
+        self.assertIn("vehicle_var.trace_add('write', _förnya_utseende)", code)
+        self.assertIn('year, vehicle_var.get())', code)
+        self.assertIn('year_var.get(), vehicle_var.get())', code)
+        self.assertIn('width=scaled(70, s)', code)
+
+    def test_dialogs_use_pinned_footer_layout(self):
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        for name in ['_create_folder_dialog', '_create_from_structure_dialog', '_template_dialog',
+                     '_show_export_result', '_show_info', '_show_cache_cleanup', '_show_update_status']:
+            method = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == name)
+            with self.subTest(name=name):
+                self.assertTrue(any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                                    and n.func.id == 'dialog_layout' for n in ast.walk(method)))
+
+    def test_copyright_owner_is_visible_in_footer_and_about(self):
+        import settings
+        self.assertIn('© Rickard Längkvist', settings.COPYRIGHT_OWNER)
+        app = next(n for n in self.tree.body if isinstance(n, ast.ClassDef) and n.name == 'FolderForgeApp')
+        about = next(n for n in app.body if isinstance(n, ast.FunctionDef) and n.name == '_show_info')
+        self.assertIn("('Copyright', COPYRIGHT_OWNER)", ast.unparse(about))
+        self.assertIn('text=COPYRIGHT_OWNER', ast.unparse(app))
+        self.assertIn('Rickard Längkvist', Path('README.md').read_text(encoding='utf-8'))
+
+
+if __name__ == '__main__':
+    unittest.main()

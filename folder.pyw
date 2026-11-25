@@ -112,6 +112,18 @@ Author: Rickard Längkvist
 
 from __future__ import annotations
 
+# Keep the stable legacy filename so native shortcuts and recovery supervisors
+# still reach the default GUI. Tk requires an explicit reserve selection.
+if __name__ == '__main__':
+    import os as _gui_os
+    if _gui_os.environ.get('FOLDERFORGE_GUI') != 'tk':
+        from pathlib import Path as _GuiPath
+        from updater import ensure_shared_core as _ensure_gui_modules
+        _ensure_gui_modules(_GuiPath(__file__).resolve().parent)
+        from gui_entry import main as _qt_main
+        raise SystemExit(_qt_main())
+
+
 import sys
 import subprocess
 import importlib.metadata
@@ -121,6 +133,8 @@ import re
 import shutil
 import threading
 import logging
+import weakref
+from types import SimpleNamespace
 import atexit
 import ctypes
 import math
@@ -142,6 +156,14 @@ from dataclasses import dataclass, field, asdict
 # importen (implementationen bor i logg.py).
 # ============================================================
 logger = logging.getLogger(__name__)
+from updater import ensure_shared_core
+ensure_shared_core(Path(__file__).resolve().parent)
+from instance_lock import SingleInstanceLock, _pid_alive, default_lock_dir, DEFAULT_POLL_MS
+from os_startup import (AUTOSTART_KEY_PATH, AUTOSTART_TASK_NAME, _CSLID_STARTUP, _WinregBackend, _backend, build_autostart_command, build_task_scheduler_command, delete_autostart_entry, delete_startup_shortcut, disable_autostart_all_methods, enable_autostart_all_methods, get_startup_folder, is_stale_console_entry, read_autostart_entry, read_startup_shortcut, register_task_scheduler, repair_stale_autostart, unregister_task_scheduler, write_autostart_entry, write_startup_shortcut)
+from app_core import HOTKEY_MODIFIERS, HOTKEY_MAX_KEYS, HOTKEY_KEY_ORDER
+from app_core import validate_hotkey_combo, normalize_hotkey_keys, hotkey_expression
+from app_core import create_project_tree, ExistingProject, build_project_name
+from app_core import (AppSettings, MAX_TREE_DEPTH, MAX_TREE_ENTRIES, NameValidator, RESERVED_STEM_RE, StructureEngine, TREE_IGNORED_DIRS, TemplateManager, _PLATE_RE, _SUFFIX_STRIP, generate_tree_string_safe, normalize_plate_name, project_year_choices, sanitize_name, strip_root_level, validate_project_year, validate_settings)
 
 # ============================================================
 # Konstanter — utbrutna till settings.py (sökvägar, färger,
@@ -156,10 +178,11 @@ from settings import (  # noqa: F401
     ICON_DIR, INVALID_NAME_CHARS, INVALID_NAMES, IS_WINDOWS, KNOWN_FILES,
     REQUIRED_PACKAGES, SETTINGS_ENUMS, SETTINGS_FILE,
     SETTINGS_META, SETTINGS_SCHEMA, TAB_ICONS, TEMPLATES_DIR,
-    DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES,
+    DAMAGE_TYPE_CHIPS, RUTA_CHOICES, LOKAL_CHOICES, VEHICLE_CHOICES,
+    UI_BACKGROUND, UI_SURFACE, UI_BORDER, UI_TEXT, UI_MUTED, UI_PRIMARY,
 )
 from historik import ProjectHistory, atomic_write_json, read_json_safe  # noqa: E402
-from logg import init_logging  # noqa: E402
+from logg import ERROR_LOG_FILE, init_logging, report_import_failure  # noqa: E402
 
 
 # ============================================================
@@ -198,6 +221,7 @@ def _install_packages(packages: List[str]) -> Tuple[bool, str]:
             subprocess.check_call(
                 [sys.executable, "-m", "pip", "install", "--quiet", pkg],
                 stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except subprocess.CalledProcessError:
             failed.append(pkg)
@@ -228,6 +252,12 @@ def check_and_install_requirements() -> bool:
             missing, exc, ' '.join(str(m) for m in missing if m))
         return False
     root.withdraw()
+    if IS_WINDOWS and APP_ICON.exists():
+        try:
+            root.iconbitmap(default=str(APP_ICON))
+            root.iconbitmap(str(APP_ICON))
+        except Exception:
+            logger.debug("Kunde inte sätta ikon på installationsdialogen", exc_info=True)
     if not _mb.askyesno(
         "Installation krävs",
         f"Saknade paket:\n{', '.join(missing)}\n\nInstallera nu?",
@@ -264,18 +294,24 @@ def relaunch_without_console() -> bool:
     skriptet explicit via python.exe visas en svart konsolruta under hela
     körningen. Omstarten använder tolkens granne "pythonw.exe" (annars
     py-startarens fönsterfria pyw.exe) samt flaggorna CREATE_NO_WINDOW |
-    DETACHED_PROCESS, så inte ens en konsolblänkare hinner uppstå.
+    DETACHED_PROCESS, så barnprocessen inte skapar ett konsolfönster.
 
     Ingen omstart sker när:
       • plattformen inte är Windows (där finns ingen konsol-tolk att undvika)
       • appen är en fryst exe (redan fönsterfri per definition)
       • tolken redan är pythonw.exe
       • --selftest finns i argv (rapporten ska nå förälderns stdout)
-      • ingen fönsterfri tolk hittas (konsolläge är bättre än ingen start)
+
+    Saknas fönsterfri tolk eller misslyckas omstarten avbryts starten.
     """
-    if not IS_WINDOWS or getattr(sys, "frozen", False):
+    if not IS_WINDOWS or "--selftest" in sys.argv:
         return False
-    if "--selftest" in sys.argv:
+    # Lossa bara appens anslutning till konsolen; göm inte användarens terminal.
+    try:
+        ctypes.windll.kernel32.FreeConsole()
+    except Exception:
+        logger.debug("Kunde inte lossa konsolanslutningen", exc_info=True)
+    if getattr(sys, "frozen", False):
         return False
     exe = Path(sys.executable) if sys.executable else None
     if exe and exe.name.lower().startswith("pythonw"):
@@ -288,7 +324,8 @@ def relaunch_without_console() -> bool:
     if not tolk:
         tolk = shutil.which("pyw.exe") or shutil.which("pyw")
     if not tolk:
-        return False
+        logger.error("Ingen konsolfri Python-tolk hittades; start avbruten")
+        raise SystemExit(1)
     try:
         subprocess.Popen(
             [tolk, str(Path(__file__).resolve()), *sys.argv[1:]],
@@ -302,10 +339,10 @@ def relaunch_without_console() -> bool:
         return True
     except OSError as exc:
         logger.warning(
-            "Konsolfri omstart misslyckades — fortsätter i denna process: %s",
+            "Konsolfri omstart misslyckades — start avbruten: %s",
             exc,
         )
-        return False
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
@@ -316,19 +353,20 @@ if __name__ == "__main__":
     if relaunch_without_console():
         sys.exit(0)
 
-    # M29c/v5.0 — --selftest får ALDRIG trigga beroendeinstallationen.
-    #
-    # check_and_install_requirements() visar en MODAL Tk-dialog och väntar på
-    # svar. "Testa autostart"-knappen kör det registrerade kommandot i en
-    # underprocess; en modal dialog där skulle blockera i det oändliga och
-    # användaren skulle uppleva knappen som hängande, utan att någonsin få ett
-    # svar. Självtestets hela uppgift är dessutom att RAPPORTERA saknade paket
-    # exakt, inte att installera dem interaktivt — det sker längre ner i filen.
-    #
-    # Vaktet ligger här och inte vid självtestet eftersom detta är det FÖRSTA
-    # __main__-blocket i filen och körs före allt annat.
-    if "--selftest" not in sys.argv and not check_and_install_requirements():
-        sys.exit(1)
+    # Select the system interpreter windowlessly, without runtime maintenance.
+    if (IS_WINDOWS and "--selftest" not in sys.argv
+            and (os.environ.get("FOLDERFORGE_RUNTIME_READY") != "1"
+                 or os.environ.get("FOLDERFORGE_RUNTIME_POLICY") != "system-python")):
+        from updater import launch_runtime_bootstrap
+        try:
+            launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
+        except Exception:
+            logger.exception("Kunde inte starta med systemets Python")
+            sys.exit(1)
+        sys.exit(0)
+
+    # No automatic Python/package checks, installations or upgrades at startup.
+    # Missing dependencies are reported by normal imports in the error log.
 
 # ============================================================
 # Biblioteksimport
@@ -337,15 +375,21 @@ try:
     import customtkinter as ctk
     import tkinter as tk
     from tkinter import messagebox, filedialog
-    from pynput import keyboard
     from PIL import Image
     import pystray
 
     if IS_WINDOWS:
         import winreg
 except ImportError as e:
-    logger.error("Import misslyckades: %s", e)
+    report_import_failure(e, BASE_DIR)
     sys.exit(1)
+
+# Global hotkeys are optional: Wayland/macOS policy must not prevent startup.
+try:
+    from pynput import keyboard
+except (ImportError, RuntimeError, OSError) as exc:
+    keyboard = None
+    logger.warning("Global snabbtangent är inte tillgänglig på detta skrivbord: %s", exc)
 
 # Drag & Drop — kräver att root-fönstret använder TkinterDnD
 DND_AVAILABLE = False
@@ -369,671 +413,20 @@ except Exception as e:
 # All Windows-logik har injicerbara backends så att den kan enhetstestas
 # headless på Linux/macOS (C47).
 
-def build_autostart_command(script_args: Optional[Iterable[str]] = None) -> str:
-    """
-    Bygger autostart-kommandot och GARANTERAR att ingen svart konsolruta
-    visas vid inloggning:
-      • fryst exe (PyInstaller/Nuitka) → "exe" --tray  (ingen python alls)
-      • python.exe / python3.12.exe    → pythonw.exe i samma mapp
-      • pythonw saknas                 → pythonw.exe via 'start "" /B'
-    """
-    args = list(script_args) if script_args else ["--tray"]
-    quoted_args = " ".join(f'"{a}"' for a in args)
 
-    if getattr(sys, "frozen", False):
-        return f'"{sys.executable}" {quoted_args}'.strip()
-
-    exe = Path(sys.executable)
-    win_noconsole = exe.with_name("pythonw.exe")
-    if IS_WINDOWS and exe.name.lower().startswith("python") \
-            and not exe.name.lower().startswith("pythonw") \
-            and win_noconsole.exists():
-        return f'"{win_noconsole}" "{Path(sys.argv[0]).resolve()}" {quoted_args}'
-
-    if IS_WINDOWS:
-        # Fallback: pythonw saknas eller heter något annat (python3.13.exe).
-        return (f'cmd /c start "" /B "{exe}" '
-                f'"{Path(sys.argv[0]).resolve()}" {quoted_args}')
-
-    return f'"{exe}" "{Path(sys.argv[0]).resolve()}" {quoted_args}'
-
-def is_stale_console_entry(command: str) -> bool:
-    """
-    True om kommandoraden refererar konsol-python (python.exe / python3.12.exe)
-    istället för pythonw.exe eller en fryst exe — d.v.s. skulle visa en svart
-    konsolruta vid inloggning.
-
-    REN STRÄNGANALYS av Windows-kommandosemantik. Medvetet UTAN plattformsgrind:
-    frågan "pekar detta på konsol-python?" är meningsfull oavsett var koden körs,
-    och en grind här gjorde funktionen värdelös för headless-testning (C47) samt
-    bröt befintliga tester. Plattformsgrinden hör hemma i repair_stale_autostart,
-    som redan returnerar 'skipped' utanför Windows när ingen backend injicerats.
-    I produktion körs denna funktion endast på Windows.
-    """
-    if not command:
-        return False
-    if getattr(sys, "frozen", False):
-        return False
-    low = command.lower()
-    if "pythonw" in low:
-        return False
-    return "python" in low
 
 ERROR_ALREADY_EXISTS: int = 183
 
-DEFAULT_POLL_MS: int = 1000
 
-def _pid_alive(pid: int) -> bool:
-    """Sant om processen med angivet PID lever (stale-detektering)."""
-    if not pid or pid <= 0:
-        return False
-    if IS_WINDOWS:
-        try:
-            import win32api
-            import win32con
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = win32api.OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-            if not handle:
-                return False
-            try:
-                # ExitCodeProcess == STILL_ACTIVE (259) → lever
-                import win32process
-                code = win32process.GetExitCodeProcess(handle)
-                return code == win32con.STILL_ACTIVE
-            finally:
-                win32api.CloseHandle(handle)
-        except ImportError:
-            # pywin32 saknas/är trasig — KRITISK fallback via ren ctypes.
-            # Utan denna gren svarade funktionen "död" om varje PID på
-            # pywin32-lösa maskiner, vilket fick PID-filslåset att överta
-            # låset vid VARJE ny start → flera appfönster samtidigt.
-            try:
-                k32 = ctypes.windll.kernel32
-                handle = k32.OpenProcess(0x1000, False, int(pid))
-                if not handle:
-                    return False
-                try:
-                    code = ctypes.c_ulong(0)
-                    if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
-                        return False
-                    return code.value == 259   # STILL_ACTIVE
-                finally:
-                    k32.CloseHandle(handle)
-            except Exception:
-                return False
-        except Exception:
-            return False
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True          # finns men ägs av annan användare
-    except OSError:
-        return False
-    return True
 
-def default_lock_dir(app_name: str) -> Path:
-    """Plattformsoberoende katalog för lås-/trigger-/pid-filer."""
-    if IS_WINDOWS:
-        base = os.environ.get("LOCALAPPDATA") or os.environ.get("TEMP") \
-            or tempfile.gettempdir()
-    else:
-        base = os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir()
-    return Path(base) / app_name
 
-class SingleInstanceLock:
-    """
-    C1: Max en instans. Andra start → fokus på befintligt fönster.
 
-      Windows  : CreateMutexW, "Global\\" → "Local\\"-fallback,
-                 ERROR_ALREADY_EXISTS = 183
-      macOS/Linux: flock LOCK_EX | LOCK_NB (+ PID-fil med stale-detektering)
-      Ingen fcntl OCH ingen pywin32 → PID-filsfallback (självläkning, C41.2)
 
-    Fokus via triggerfil + poll-loop (~1000 ms) som anropar on_trigger i
-    Tk-huvudtråden via after(). Cleanup vid exit (atexit) och krasch (finally).
-    """
 
-    def __init__(
-        self,
-        app_name: str,
-        lock_dir: Optional[Path] = None,
-        poll_ms: int = DEFAULT_POLL_MS,
-    ) -> None:
-        self.app_name = str(app_name)
-        self.lock_dir = Path(lock_dir) if lock_dir else default_lock_dir(self.app_name)
-        self.poll_ms = max(50, int(poll_ms))
 
-        slug = re.sub(r"[^a-z0-9_]+", "_", self.app_name.lower()).strip("_")
-        self.lock_file = self.lock_dir / f"{slug}.lock"
-        self.pid_file = self.lock_dir / f"{slug}.pid"
-        self.trigger_file = self.lock_dir / f"{slug}_show.trigger"
 
-        self._mutex_handle: Optional[int] = None
-        self._mutex_name: Optional[str] = None
-        self._fd: Optional[int] = None
-        self._is_primary: bool = False
-        self._backend: str = "none"
-        self._last_trigger: Optional[str] = None   # filinnehåll, ej mtime
-        self._trigger_init: bool = False
-        self._poll_job: Optional[str] = None
-        self._atexit_registered: bool = False
 
-    # ------------------------------------------------------------------
-    # Status
-    # ------------------------------------------------------------------
-    @property
-    def is_primary(self) -> bool:
-        """True om DENNA process är den enda/primära instansen."""
-        return self._is_primary
 
-    @property
-    def backend(self) -> str:
-        """'win32-mutex-global', 'win32-mutex-local', 'flock', 'pidfile'."""
-        return self._backend
-
-    def read_owner_pid(self) -> Optional[int]:
-        """PID för instansen som håller låset (diagnostik)."""
-        try:
-            return int(self.pid_file.read_text(encoding="utf-8").strip() or 0) or None
-        except (OSError, ValueError):
-            return None
-
-    # ------------------------------------------------------------------
-    # Förvärv
-    # ------------------------------------------------------------------
-    def acquire(self) -> bool:
-        """
-        Försök ta låset. True = vi är primär instans och ska köra.
-        False = en annan instans kör redan; anropa request_focus() och avsluta.
-        Kastar aldrig.
-        """
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            logger.error("Kan inte skapa låskatalog %s: %s", self.lock_dir, exc)
-            return True          # hellre två instanser än en app som inte startar
-
-        if IS_WINDOWS:
-            try:
-                ok = self._acquire_win32()
-                # Låsbeslutet MÅSTE synas i loggen. Utan denna rad kunde
-                # PyHANDLE-buggen leva osynlig: mutexen dog direkt, backend-
-                # strängen såg frisk ut, och dubbelstarter passerade tyst.
-                logger.info("Instanslås: %s (backend=%s pid=%d)",
-                            "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                            self._backend, os.getpid())
-                return ok
-            except ImportError:
-                logger.warning("pywin32 saknas — faller tillbaka på flock/pidfil.")
-            except Exception as exc:
-                logger.warning("Win32-mutex misslyckades (%s) — fallback.", exc)
-
-        try:
-            import fcntl  # noqa: F401
-            ok = self._acquire_flock()
-            logger.info("Instanslås: %s (backend=%s pid=%d)",
-                        "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                        self._backend, os.getpid())
-            return ok
-        except ImportError:
-            logger.warning("fcntl saknas — faller tillbaka på PID-fil.")
-        except Exception as exc:
-            logger.warning("flock misslyckades (%s) — fallback.", exc)
-
-        ok = self._acquire_pidfile()
-        logger.info("Instanslås: %s (backend=%s pid=%d)",
-                    "TAGET" if ok else "UPPTAGET av annan instans — avslutar",
-                    self._backend, os.getpid())
-        return ok
-
-    def _acquire_win32(self) -> bool:
-        try:
-            import win32api
-            import win32event
-            import winerror
-        except ImportError:
-            # pywin32 saknas på maskinen — ta samma mutex via ren ctypes
-            # (stdlib) istället. Spärren får ALDRIG bero på ett valfritt
-            # paket: PID-fils-fallbacken är inte atomär och kan släppa in
-            # två instanser som startar samtidigt (autostart + manuell
-            # start) → just det scenariot som gav dubbla tray-ikoner.
-            return self._acquire_win32_ctypes()
-
-        last_error = 0
-        for prefix in ("Global\\", "Local\\"):
-            name = f"{prefix}{self.app_name}_SingleInstance_Mutex"
-            try:
-                handle = win32event.CreateMutex(None, False, name)
-            except Exception as exc:
-                # Global\ kräver rättigheter på vissa system → prova Local\
-                logger.warning("CreateMutex(%s) misslyckades: %s", name, exc)
-                continue
-            last_error = win32api.GetLastError()
-            if last_error == winerror.ERROR_ALREADY_EXISTS:
-                try:
-                    win32api.CloseHandle(handle)
-                except Exception:
-                    pass
-                self._backend = "win32-mutex-inuse"
-                self._is_primary = False
-                return False
-            # KRITISKT: spara ALDRIG bara int(handle)! pywin32:s PyHANDLE
-            # stänger det underliggande handtaget automatiskt när objektet
-            # skräpsamlas — med int(handle) dog mutexen mikrosekunder efter
-            # förvärvet och instansspärren existerade aldrig i praktiken
-            # (verifierat i logg: dubbelstarter passerade utan avvisning).
-            # Detach() överför ägandet till oss; release() stänger explicit.
-            self._mutex_handle = handle.Detach()
-            self._mutex_name = name
-            self._backend = f"win32-mutex-{'global' if prefix == 'Global\\' else 'local'}"
-            self._is_primary = True
-            self._write_pid()
-            self._register_atexit()
-            return True
-
-        raise RuntimeError(f"CreateMutex fungerade inte (sista fel={last_error})")
-
-    def _acquire_win32_ctypes(self) -> bool:
-        """
-        Samma namngivna mutex som _acquire_win32, men via ren ctypes —
-        körs när pywin32 saknas. Identiska namn = samma spärr även om
-        två processer råkar gå olika vägar (den ena med, den andra utan
-        pywin32). use_last_error=True + set_last_error(0) före anropet,
-        annars är GetLastError opålitlig från ctypes.
-        """
-        ERROR_ALREADY_EXISTS = 183
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.CreateMutexW.restype = ctypes.c_void_p
-        kernel32.CreateMutexW.argtypes = (
-            ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
-
-        for prefix in ("Global\\", "Local\\"):
-            name = f"{prefix}{self.app_name}_SingleInstance_Mutex"
-            ctypes.set_last_error(0)
-            handle = kernel32.CreateMutexW(None, False, name)
-            if not handle:
-                logger.warning("CreateMutexW(%s) misslyckades (fel=%s) — provar nästa.",
-                               name, ctypes.get_last_error())
-                continue
-            if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
-                kernel32.CloseHandle(ctypes.c_void_p(handle))
-                self._backend = "win32-mutex-inuse"
-                self._is_primary = False
-                return False
-            self._mutex_handle = int(handle)  # ctypes-int äger inget — ingen auto-stängning
-            self._mutex_name = name
-            self._backend = ("win32-mutex-global-ctypes" if prefix == "Global\\"
-                             else "win32-mutex-local-ctypes")
-            self._is_primary = True
-            self._write_pid()
-            self._register_atexit()
-            return True
-
-        raise RuntimeError("CreateMutexW (ctypes) fungerade inte")
-
-    def _acquire_flock(self) -> bool:
-        import fcntl
-
-        fd = os.open(str(self.lock_file), os.O_CREAT | os.O_RDWR, 0o600)
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)
-            self._backend = "flock-inuse"
-            self._is_primary = False
-            return False
-
-        self._fd = fd
-        try:
-            os.ftruncate(fd, 0)
-            os.write(fd, str(os.getpid()).encode("ascii"))
-            os.fsync(fd)
-        except OSError as exc:
-            logger.warning("Kunde inte skriva PID i låsfil: %s", exc)
-
-        self._backend = "flock"
-        self._is_primary = True
-        self._write_pid()
-        self._register_atexit()
-        return True
-
-    def _acquire_pidfile(self) -> bool:
-        """Fallback utan fcntl/win32: PID-fil + stale-detektering."""
-        owner = self.read_owner_pid()
-        if owner and owner != os.getpid() and _pid_alive(owner):
-            self._backend = "pidfile-inuse"
-            self._is_primary = False
-            return False
-        if owner and not _pid_alive(owner):
-            logger.info("Stale PID-fil (%s) upptäckt — övertar låset.", owner)
-        self._write_pid()
-        self._backend = "pidfile"
-        self._is_primary = True
-        self._register_atexit()
-        return True
-
-    def _write_pid(self) -> None:
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=str(self.lock_dir), suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(str(os.getpid()))
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.pid_file)
-        except OSError as exc:
-            logger.warning("Kunde inte skriva PID-fil: %s", exc)
-
-    def _register_atexit(self) -> None:
-        if self._atexit_registered:
-            return
-        try:
-            atexit.register(self.release)
-            self._atexit_registered = True
-        except Exception:
-            pass
-
-    # ------------------------------------------------------------------
-    # Fokus mellan instanser (triggerfil + poll)
-    # ------------------------------------------------------------------
-    def request_focus(self) -> bool:
-        """
-        Skrivs av den AVVISADE instansen: begär att den primära instansen
-        visar och fokuserar sitt fönster. Kastar aldrig.
-        """
-        try:
-            self.lock_dir.mkdir(parents=True, exist_ok=True)
-            fd, tmp = tempfile.mkstemp(dir=str(self.lock_dir), suffix=".tmp")
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(f"{time.time_ns()}\n{os.getpid()}\n")
-                fh.flush()
-                os.fsync(fh.fileno())
-            os.replace(tmp, self.trigger_file)
-            return True
-        except OSError as exc:
-            logger.error("Kunde inte skriva triggerfil: %s", exc)
-            return False
-
-    def check_trigger(self) -> bool:
-        """
-        True om triggerfilen ändrats sedan senaste anropet.
-
-        Jämför FILINNEHÅLLET, inte mtime. Skäl (verifierat): två snabba
-        request_focus()-anrop kan ge IDENTISK st_mtime_ns eftersom
-        filsystemets tidsupplösning är för grov, medan innehållet
-        (time_ns + pid) alltid är unikt. Med mtime tappades den andra
-        förfrågan.
-
-        Första anropet sätter baslinjen och returnerar False. Baslinjen sätts
-        även när filen INTE finns ännu — annars tappas den första
-        fokusförfrågan, eftersom None då betyder både "ingen baslinje" och
-        "filen saknas" (se _trigger_init).
-        """
-        try:
-            state: Optional[str] = self.trigger_file.read_text(encoding="utf-8")
-        except OSError:
-            state = None
-
-        if not self._trigger_init:
-            self._trigger_init = True
-            self._last_trigger = state
-            return False
-
-        if state != self._last_trigger:
-            self._last_trigger = state
-            # En borttagen fil är ingen fokusförfrågan — bara ett nytt läge.
-            return state is not None
-        return False
-
-    def poll_start(self, root: Any, on_trigger: Any) -> bool:
-        """
-        Starta Tk-poll-loop (C1: ~1000 ms). Anropar on_trigger() i
-        huvudtråden när en annan instans begärt fokus.
-
-        root     : något med .after(ms, fn) — din CTk/Tk-instans
-        on_trigger: callback, t.ex. app._restore_from_tray
-        """
-        if not self._is_primary:
-            return False
-
-        self.check_trigger()               # sätt baslinje direkt
-
-        def _loop() -> None:
-            try:
-                if self.check_trigger():
-                    logger.info("Trigger mottagen — fokuserar fönster.")
-                    on_trigger()
-            except Exception:
-                logger.exception("Fel i single-instance poll-loop")
-            finally:
-                try:
-                    root.after(self.poll_ms, _loop)
-                except Exception:
-                    pass                   # fönstret stängs — avsluta loopen
-
-        try:
-            root.after(self.poll_ms, _loop)
-            return True
-        except Exception as exc:
-            logger.error("Kunde inte starta poll-loop: %s", exc)
-            return False
-
-    def poll_stop(self) -> None:
-        self._poll_job = None
-
-    # ------------------------------------------------------------------
-    # Cleanup
-    # ------------------------------------------------------------------
-    def release(self) -> None:
-        """Frigör låset. Idempotent — kan anropas flera gånger säkert."""
-        self._is_primary = False
-
-        if self._fd is not None:
-            try:
-                import fcntl
-                fcntl.flock(self._fd, fcntl.LOCK_UN)
-            except Exception:
-                pass
-            try:
-                os.close(self._fd)
-            except OSError:
-                pass
-            self._fd = None
-
-        if self._mutex_handle is not None:
-            closed = False
-            try:
-                import win32api
-                win32api.CloseHandle(self._mutex_handle)
-                closed = True
-            except Exception:
-                pass
-            if not closed and IS_WINDOWS:
-                # Handtaget kan ha skapats via ctypes-vägen (utan pywin32) —
-                # stäng det då via ctypes så mutexen verkligen frigörs.
-                try:
-                    ctypes.windll.kernel32.CloseHandle(
-                        ctypes.c_void_p(self._mutex_handle))
-                except Exception:
-                    pass
-            self._mutex_handle = None
-            self._mutex_name = None
-
-        try:
-            logger.info("Instanslås frigivet (%s, pid=%d)",
-                        self._backend, os.getpid())
-        except Exception:
-            pass
-
-        for path in (self.pid_file, self.trigger_file):
-            try:
-                path.unlink()
-            except OSError:
-                pass
-
-        try:
-            if self.lock_file.exists() and not IS_WINDOWS:
-                self.lock_file.unlink()
-        except OSError:
-            pass
-
-AUTOSTART_KEY_PATH: str = r"Software\Microsoft\Windows\CurrentVersion\Run"
-
-class _WinregBackend:
-    """Standardbackend mot det riktiga Windows-registret."""
-
-    def read(self, key_path: str, value_name: str) -> Optional[str]:
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
-                                winreg.KEY_READ) as k:
-                data, kind = winreg.QueryValueEx(k, value_name)
-                return str(data)
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            logger.warning("Kunde inte läsa autostart: %s", exc)
-            return None
-
-    def write(self, key_path: str, value_name: str, command: str) -> bool:
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
-                                winreg.KEY_SET_VALUE | winreg.KEY_READ) as k:
-                winreg.SetValueEx(k, value_name, 0, winreg.REG_SZ, command)
-                # VERIFY-AFTER-WRITE: läs tillbaka inom samma nyckelhantering
-                back, _kind = winreg.QueryValueEx(k, value_name)
-                return str(back) == command
-        except OSError as exc:
-            logger.error("Kunde inte skriva autostart: %s", exc)
-            return False
-
-    def delete(self, key_path: str, value_name: str) -> bool:
-        import winreg
-        try:
-            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0,
-                                winreg.KEY_SET_VALUE) as k:
-                try:
-                    winreg.DeleteValue(k, value_name)
-                except FileNotFoundError:
-                    return True            # redan borta = önskat läge
-                return self.read(key_path, value_name) is None
-        except OSError as exc:
-            logger.error("Kunde inte ta bort autostart: %s", exc)
-            return False
-
-def _backend(reg: Any) -> Any:
-    return reg if reg is not None else _WinregBackend()
-
-def read_autostart_entry(app_name: str, reg: Any = None,
-                         key_path: str = AUTOSTART_KEY_PATH) -> Optional[str]:
-    """Befintligt registervärde, eller None om det inte finns."""
-    if not IS_WINDOWS and reg is None:
-        return None
-    return _backend(reg).read(key_path, app_name)
-
-def write_autostart_entry(app_name: str, command: str, reg: Any = None,
-                          key_path: str = AUTOSTART_KEY_PATH) -> Tuple[bool, str]:
-    """
-    Skriv autostartkommando och verifiera att det faktiskt lagrades.
-    Returnerar (lyckades?, det som nu står i registret).
-    """
-    if not command or not command.strip():
-        return False, ""
-    backend = _backend(reg)
-    if not IS_WINDOWS and reg is None:
-        return False, ""
-    ok = backend.write(key_path, app_name, command)
-    stored = backend.read(key_path, app_name) or ""
-    if ok and stored != command:
-        logger.warning("Verify-after-write avvek: skrev %r, läste %r", command, stored)
-        return False, stored
-    return bool(ok), stored
-
-def delete_autostart_entry(app_name: str, reg: Any = None,
-                           key_path: str = AUTOSTART_KEY_PATH) -> bool:
-    """Ta bort autostart. True även om värdet redan saknades."""
-    if not IS_WINDOWS and reg is None:
-        return True
-    return bool(_backend(reg).delete(key_path, app_name))
-
-def repair_stale_autostart(app_name: str, reg: Any = None,
-                           script_args: Optional[List[str]] = None,
-                           key_path: str = AUTOSTART_KEY_PATH,
-                           command_builder: Optional[Any] = None) -> str:
-    """
-    C44: upptäck och reparera ett autostartvärde som skulle visa en svart
-    konsolruta (pekar på python.exe istället för pythonw.exe).
-
-    Returnerar en av:
-      'not_set'   — ingen autostart registrerad (inget att göra)
-      'ok'        — värde finns och är korrekt
-      'repaired'  — trasigt värde funnet och omskrivet (verify-after-write OK)
-      'error'     — reparation misslyckades (loggat)
-      'skipped'   — ej Windows och ingen injicerad backend
-
-    command_builder: valfri funktion (script_args) -> kommandosträng. Default
-    är build_autostart_command. Injicerbar eftersom den är plattformsberoende —
-    utan detta går Windows-reparationsgrenen inte att testa headless på Linux.
-    """
-    injected = reg is not None
-
-    if not IS_WINDOWS and not injected:
-        return "skipped"
-
-    current = read_autostart_entry(app_name, reg, key_path)
-    if current is None:
-        return "not_set"
-    if not is_stale_console_entry(current):
-        return "ok"
-
-    builder = command_builder if callable(command_builder) else build_autostart_command
-    fixed = builder(script_args or ["--tray"])
-
-    # B7/v5.0 — IDEMPOTENSVAKT, validering FÖRE skrivning.
-    #
-    # Utan denna vakt fanns en verklig oändlig reparations-loop. När
-    # pythonw.exe saknas (embedded Python, omdömd interpreter) bygger
-    # build_autostart_command() fallback-grenen
-    #     cmd /c start "" /B "C:\Python312\python.exe" "..."
-    # och is_stale_console_entry() dömer ut EXAKT den formen som stale, eftersom
-    # den innehåller "python" men inte "pythonw". Funktionen skrev därför
-    # tillbaka ett värde identiskt med det befintliga, och nästa uppstart
-    # "reparerade" igen: en registerskrivning och en WARNING i loggen vid VARJE
-    # start, i all evighet, utan att problemet någonsin löstes.
-    #
-    # v4.3 validerade dessutom EFTER skrivning, så ett känt trasigt värde hann
-    # hamna i registret innan felet upptäcktes. Nu skrivs ingenting alls om
-    # det byggda kommandot inte är en faktisk förbättring.
-    #
-    # Returvärdet är medvetet oförändrat ("error") för att inte bryta det
-    # dokumenterade kontraktet eller befintliga tester — skillnaden är att
-    # registret inte längre skrivs i onödan och att loggen säger vad användaren
-    # faktiskt behöver göra.
-    if fixed == current:
-        logger.error(
-            "Autostart kan inte repareras automatiskt: det byggda kommandot "
-            "skiljer sig inte från det befintliga (%r). Saknas pythonw.exe? "
-            "Bygg en fryst .exe med --windowed.", current)
-        return "error"
-    if is_stale_console_entry(fixed):
-        logger.error(
-            "Autostart kan inte repareras automatiskt: det byggda kommandot "
-            "visar fortfarande en konsolruta (%r) och skrivs därför INTE till "
-            "registret. Saknas pythonw.exe? Bygg en fryst .exe med --windowed.",
-            fixed)
-        return "error"
-
-    logger.warning("Stale autostart upptäckt (konsol-python): %r — reparerar.", current)
-    ok, stored = write_autostart_entry(app_name, fixed, reg, key_path)
-    if ok and not is_stale_console_entry(stored):
-        logger.info("Autostart reparerad till: %r", stored)
-        return "repaired"
-    logger.error("Autostart-reparation misslyckades; registret innehåller %r", stored)
-    return "error"
 
 
 # ============================================================
@@ -1065,49 +458,6 @@ def repair_stale_autostart(app_name: str, reg: Any = None,
 # importeras ovan. validate_settings() nedan använder samma namn som förut.
 
 
-def validate_settings(data: Any) -> Tuple[Dict[str, Any], bool, List[str]]:
-    """
-    Returnerar (rensat_data, reparerad?, loggrader).
-    Okända nycklar behålls (framåtkompatibilitet) men ogiltiga TYPER och
-    ogiltiga ENUM-värden korrigeras till default — aldrig krasch.
-    """
-    log: List[str] = []
-    repaired = False
-
-    if not isinstance(data, dict):
-        return dict(), True, ["settings var inte en dict — nollställd till schema"]
-
-    out: Dict[str, Any] = dict(data)
-
-    for key, (typ, default) in SETTINGS_SCHEMA.items():
-        if key not in out or not isinstance(out[key], typ):
-            if key in out:
-                # log-listan är en vanlig lista → formatering sker direkt.
-                # (Lazy %s gäller endast logger-anrop, aldrig list.append.)
-                log.append("ogiltigt värde för %s (%r) → default" % (key, out[key]))
-                repaired = True
-            out[key] = default if not callable(default) else default()
-
-    for key, allowed in SETTINGS_ENUMS.items():
-        if out.get(key) not in allowed:
-            log.append("'%s' = %r ej i %s → %s" % (
-                key, out.get(key), tuple(allowed), SETTINGS_SCHEMA[key][1]))
-            out[key] = SETTINGS_SCHEMA[key][1]
-            repaired = True
-
-    if not out.get("save_root"):
-        out["save_root"] = str(Path.home() / "Projects")
-        repaired = True
-
-    tabs = out.get("visible_tabs")
-    if not isinstance(tabs, dict):
-        tabs = {}
-    cleaned_tabs: Dict[str, bool] = {}
-    for name, val in tabs.items():
-        cleaned_tabs[str(name)] = bool(val)
-    out["visible_tabs"] = cleaned_tabs
-
-    return out, repaired, log
 
 
 def _hex_to_rgb(value: str) -> Tuple[int, int, int]:
@@ -1202,78 +552,16 @@ def ensure_contrast(
     return (fix(fg_norm, bg_light, True), fix(fg_norm, bg_dark, False))
 
 
-RESERVED_STEM_RE = re.compile(
-    r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\..*)?$', re.IGNORECASE,
-)
 
 
-def sanitize_name(name: str, *, max_len: int = 255) -> str:
-    """
-    Rensar ett mapp-/filnamn enligt Windows-regler:
-      • ogiltiga tecken → '_'
-      • inledande/avslutande mellanslag och punkter tas bort
-      • reserverade namn blockeras ÄVEN med filändelse (CON.txt, NUL.md …)
-      • längdtak
-    """
-    if not isinstance(name, str):
-        raise ValueError("Namnet måste vara en sträng.")
-    cleaned = INVALID_NAME_CHARS.sub('_', name)
-    cleaned = cleaned.strip().strip('.').strip()
-    if not cleaned:
-        raise ValueError("Mappnamnet är tomt efter rensning.")
-    if cleaned.upper() in INVALID_NAMES or RESERVED_STEM_RE.match(cleaned):
-        raise ValueError(f"'{cleaned}' är ett reserverat systemnamn.")
-    if len(cleaned) > max_len:
-        raise ValueError(f"Mappnamnet är för långt (max {max_len} tecken).")
-    return cleaned
 
 
 # ------------------------------------------------------------
 # Regns-läge — registreringsnummer i början av projektnamn
 # ------------------------------------------------------------
-_PLATE_RE = re.compile(
-    r"""^\s*
-    (?P<bokst>[a-z]{3})              # tre bokstäver (ABC)
-    [\s\-–—]*                        # fri separator: mellanslag/streck/inget
-    (?:
-        (?P<s2>\d{2})[\s\-]*(?P<s3>\d)      # äldre format: ABC 123 (1973–2019)
-      | (?P<n2>\d{2})[\s\-]*(?P<nb>[a-z])   # nyare format: ABC 12 A (2019–)
-    )
-    (?![a-zA-Z0-9])                  # regnr:t får inte flyta ihop med mer text
-    """,
-    re.IGNORECASE | re.VERBOSE,
-)
-
-_SUFFIX_STRIP = " \t-–—_\u00b7"   # tecken som inte ska inleda den fria texten
 
 
-def normalize_plate_name(name: str) -> Tuple[str, Optional[str]]:
-    """
-    Normalisera ett projektnamn som BÖRJAR med ett svenskt registreringsnummer.
 
-      'dss 817'           → ('DSS817', 'DSS817')
-      'dss 81 7'          → ('DSS817', 'DSS817')
-      'dss 817 stenskott' → ('DSS817 stenskott', 'DSS817')   (suffix orört)
-      'abc 12 a 2021'     → ('ABC12A 2021', 'ABC12A')
-      'Biltest'           → ('Biltest', None)                (ingen ändring)
-
-    Båda svenska formaten stöds: ABC123 (1973–2019) och ABC12A (2019–).
-    Matchningen är medvetet tolerant (mellanslag/streck ignoreras, I/Q/V
-    blockeras inte): funktionen VARNAR mjukt via returvärdet None — den
-    stoppar eller ändrar aldrig ett namn som inte matchar.
-
-    Versaliseringen av HELA namnet sker av anroparen (safe_name.upper());
-    här normaliseras bara regnr-delen och gränsen mot fri eftertext.
-
-    Returnerar (ev. normaliserat namn, regnr eller None).
-    """
-    m = _PLATE_RE.match(name or "")
-    if not m:
-        return (name, None)
-    regnr = (m.group("bokst") + (m.group("s2") or m.group("n2"))
-             + (m.group("s3") or m.group("nb") or "")).upper()
-    suffix = name[m.end():].lstrip(_SUFFIX_STRIP)
-    return (regnr + ((" " + suffix) if suffix else ""), regnr)
 
 
 def parse_dnd_paths(raw: str, tk_obj: Optional[Any] = None) -> List[str]:
@@ -1347,183 +635,20 @@ def parse_dnd_paths(raw: str, tk_obj: Optional[Any] = None) -> List[str]:
 DND_COPY_ACTION = "copy"
 
 
-HOTKEY_MODIFIERS: frozenset = frozenset({
-    "ctrl", "alt", "shift", "cmd", "win", "super", "option", "command",
-})
 
 
-HOTKEY_MAX_KEYS: int = 5
 
 
-def validate_hotkey_combo(keys: Iterable[str]) -> Tuple[bool, List[str], str]:
-    """
-    Godkänner bara kombinationer som INTE kan stjäla vanlig skrivning:
-      • minst 1 modifierare (ctrl/alt/shift/cmd/win)
-      • minst 1 icke-modifierare
-      • max 5 tangenter
-      • inga mellanslag i namn
-    Returnerar (ok?, normaliserad_lista, felmeddelande).
-    """
-    norm: List[str] = []
-    for k in keys or []:
-        s = str(k).strip().lower().replace("key.", "").replace("_l", "").replace("_r", "")
-        if s and s not in norm:
-            norm.append(s)
-
-    if not norm:
-        return False, [], "Inga tangenter registrerade."
-    if len(norm) > HOTKEY_MAX_KEYS:
-        return False, norm, f"Max {HOTKEY_MAX_KEYS} tangenter i en kombination."
-
-    mods = [k for k in norm if k in HOTKEY_MODIFIERS]
-    base = [k for k in norm if k not in HOTKEY_MODIFIERS]
-
-    if not mods:
-        return False, norm, (
-            "Snabbtangenten måste innehålla minst en modifierare "
-            "(Ctrl, Alt, Shift eller Win) — annars blockerar den "
-            "vanlig skrivning i hela Windows."
-        )
-    if not base:
-        return False, norm, "Kombinationen saknar en vanlig tangent."
-    return True, norm, ""
 
 
-def strip_root_level(items: List[Dict[str, Any]], root_name: str) -> Tuple[List[Dict[str, Any]], bool]:
-    """
-    Malltext och inklistrade träd har sin rot på rad 1 ('projektnamn/',
-    'ärendenummer/'), men _build_structure skapar redan
-    base = save_root / root_name. Utan denna funktion blir resultatet:
-
-        PROJEKT123/
-        └── PROJEKT123/      ← dublett (MB5)
-            ├── src/ ...
-
-    Bevis för att rad 1 ÄR roten: de inbyggda mallarna använder
-    'projektnamn'/'ärendenummer' som placeholder som ersätts med användarens
-    namn via .replace() — alltså är rad 1 per definition roten.
-
-    Regel: finns EXAKT EN post på toppnivå och den är en mapp, skalas den
-    nivån bort från alla poster. Flera toppnivåposter (docs/ + src/) lämnas
-    orörda, eftersom base då redan är deras gemensamma förälder.
-
-    Returnerar (nya_items, skalades_nivån_bort?).
-    """
-    if not items:
-        return items, False
-
-    top = [it for it in items if len(it.get('path', [])) == 1]
-    if len(top) != 1 or not top[0].get('is_dir'):
-        return items, False
-
-    root_label = str(top[0]['path'][0]).strip()
-    stripped: List[Dict[str, Any]] = []
-    for it in items:
-        path = list(it.get('path', []))
-        if len(path) <= 1:
-            continue                      # själva rotraden försvinner
-        new_it = dict(it)
-        new_it['path'] = path[1:]
-        stripped.append(new_it)
-
-    if not stripped:
-        # Endast en tom rotmapp i mallen → behåll originalet så att
-        # användaren inte står utan innehåll.
-        return items, False
-
-    return stripped, True
 
 
-MAX_TREE_DEPTH: int = 40
 
 
-MAX_TREE_ENTRIES: int = 20000
 
 
-TREE_IGNORED_DIRS = frozenset({
-    '.git', '__pycache__', '.idea', '.vscode',
-    'node_modules', 'venv', '.env', '.tox',
-})
 
 
-def generate_tree_string_safe(
-    root_path: Path,
-    max_depth: int = MAX_TREE_DEPTH,
-    max_entries: int = MAX_TREE_ENTRIES,
-    include_dotfiles: bool = False,
-) -> str:
-    """
-    Säkert alternativ till StructureEngine.generate_tree_string:
-      • max_depth    → ingen RecursionError vid extremt djupa träd
-      • resolve()-deduplicering → ingen oändlig loop vid cirkulära symlänkar
-      • max_entries  → ingen minnesexplosion vid t.ex. node_modules-jättar
-      • PermissionError per mapp → '<Åtkomst nekad>' istället för krasch
-      • include_dotfiles → .gitignore/.env kan exporteras (MB12)
-
-    Returnerar alltid en sträng; kastar aldrig.
-    """
-    root_path = Path(root_path)
-    if not root_path.exists():
-        return "Mappen finns inte."
-
-    lines: List[str] = [f"{root_path.name}/"]
-    state = {'entries': 0, 'hit_depth': False, 'hit_entries': False}
-    seen: set = set()
-    try:
-        seen.add(str(root_path.resolve()))
-    except OSError:
-        seen.add(str(root_path))
-
-    def walk(directory: Path, prefix: str, depth: int) -> None:
-        if depth >= max_depth:
-            state['hit_depth'] = True
-            return
-        if state['hit_entries']:
-            return
-        try:
-            contents = list(directory.iterdir())
-        except (PermissionError, OSError):
-            lines.append(f"{prefix}└── <Åtkomst nekad>")
-            return
-
-        filtered = []
-        for x in contents:
-            if x.name in TREE_IGNORED_DIRS:
-                continue
-            if x.name.startswith('.') and not include_dotfiles:
-                continue
-            filtered.append(x)
-        filtered.sort(key=lambda p: (not p.is_dir(), p.name.lower()))
-
-        for i, path in enumerate(filtered):
-            if state['entries'] >= max_entries:
-                state['hit_entries'] = True
-                return
-            state['entries'] += 1
-
-            is_last = i == len(filtered) - 1
-            connector = "└── " if is_last else "├── "
-            is_dir = path.is_dir()
-            lines.append(f"{prefix}{connector}{path.name}{'/' if is_dir else ''}")
-
-            if is_dir:
-                try:
-                    key = str(path.resolve())
-                except OSError:
-                    key = str(path)
-                if key in seen:
-                    lines.append(f"{prefix}{'    ' if is_last else '│   '}└── <symlink-loop, hoppad över>")
-                    continue
-                seen.add(key)
-                walk(path, prefix + ("    " if is_last else "│   "), depth + 1)
-
-    walk(root_path, "", 0)
-
-    if state['hit_depth']:
-        lines.append(f"... (avbröts: max djup {max_depth} nått)")
-    if state['hit_entries']:
-        lines.append(f"... (avbröts: max {max_entries} poster nådda)")
-    return "\n".join(lines)
 
 
 def ui_call(root: Any, fn: Any, *args: Any, **kwargs: Any) -> bool:
@@ -1547,32 +672,10 @@ def ui_call(root: Any, fn: Any, *args: Any, **kwargs: Any) -> bool:
         return False
 
 
-HOTKEY_KEY_ORDER: Dict[str, int] = {
-    'ctrl': 0, 'control': 0, 'alt': 1, 'option': 1,
-    'shift': 2, 'cmd': 3, 'win': 3, 'super': 3, 'command': 3,
-}
 
 
-def normalize_hotkey_keys(keys: Iterable[str]) -> List[str]:
-    """
-    Normaliserar pynput-tangentnamn till en stabil, läsbar ordning:
-      'Key.ctrl_l' → 'ctrl', 'Key.shift_r' → 'shift', modifierare först.
-    Samma logik som redan finns i _on_press_rec, men GUI-fri och testbar.
-    """
-    norm: List[str] = []
-    for k in keys or []:
-        if k is None:
-            continue
-        s = str(k).strip().lower()
-        if not s:
-            continue
-        if s.startswith('key.'):
-            s = s[4:]
-        s = s.replace('_l', '').replace('_r', '')
-        if s and s not in norm:
-            norm.append(s)
-    norm.sort(key=lambda x: (HOTKEY_KEY_ORDER.get(x, 99), x))
-    return norm
+
+
 
 
 def hotkey_label(keys: Iterable[str]) -> str:
@@ -1667,72 +770,446 @@ def blend_color(
 # ============================================================
 # Validering
 # ============================================================
-class NameValidator:
-    @staticmethod
-    def sanitize(name: str) -> str:
-        """
-        Rensar ett mappnamn enligt Windows-regler.
-
-        M18 — delegerar till sanitize_name(), som utöver v4.1:s regler även
-        blockerar reserverade systemnamn MED filändelse (CON.txt, NUL.md,
-        LPT1.log) via RESERVED_STEM_RE. v4.1 jämförde bara cleaned.upper()
-        mot INVALID_NAMES och släppte alltså igenom "CON.txt", vilket kan
-        göra mappen omöjlig att skapa eller ta bort på Windows.
-
-        Kontraktet är oförändrat: returnerar en rensad sträng eller kastar
-        ValueError. Metoden behålls som publik API-yta — inget tas bort.
-        """
-        return sanitize_name(name)
-
-    @staticmethod
-    def is_safe_path(base: Path, target: Path) -> bool:
-        try:
-            target.resolve().relative_to(base.resolve())
-            return True
-        except ValueError:
-            return False
 
 
 # ============================================================
 # Dataklasser
 # ============================================================
-@dataclass
-class AppSettings:
-    save_root: str = field(default_factory=lambda: str(Path.home() / "Projects"))
-    open_after_creation: bool = True
-    theme: str = "Dark"
-    last_template: str = ""
-    plate_mode: bool = True
-    start_minimized: bool = True    # starta i systray utan att visa fönstret
-    visible_tabs: Dict[str, bool] = field(default_factory=lambda: {
-        t: True for t in TAB_ICONS
-    })
+# Tillgänglighet: tangentbord, textstorlek och reversibel hög kontrast
+# ============================================================
+accessibility_logger = logging.getLogger("accessibility")
+TEXT_SIZES = SETTINGS_ENUMS["text_size"]
+FOCUS_TAG = "FolderForgeAccessible"
+CONTROLS = {"CTkButton", "CTkEntry", "CTkTextbox", "CTkCheckBox",
+            "CTkRadioButton", "CTkOptionMenu", "CTkComboBox"}
+COLOR_KEYS = ("fg_color", "text_color", "text_color_disabled", "border_color",
+              "hover_color", "button_color", "button_hover_color",
+              "checkmark_color", "placeholder_text_color", "progress_color")
 
-    def to_dict(self) -> dict:
-        return asdict(self)
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "AppSettings":
-        # M3/C2 — validera mot schema INNAN något används. Fel typ, okänt
-        # enum-värde eller saknad nyckel rättas till default istället för att
-        # följa med in i appen och krascha längre ner i GUI:t. validate_settings
-        # är idempotent, så att _load_settings redan validerat spelar ingen roll.
-        data, repaired, log = validate_settings(data)
-        if repaired:
-            for line in log:
-                logger.warning("Inställning reparerad: %s", line)
-        default_tabs = {t: True for t in TAB_ICONS}
-        saved_tabs = data.get("visible_tabs", {})
-        default_tabs.update(saved_tabs)
-        return cls(
-            save_root=data.get("save_root", str(Path.home() / "Projects")),
-            open_after_creation=data.get("open_after_creation", True),
-            theme=data.get("theme", "Dark"),
-            last_template=data.get("last_template", ""),
-            plate_mode=data.get("plate_mode", True),
-            start_minimized=data.get("start_minimized", True),
-            visible_tabs=default_tabs,
-        )
+def text_scale(value):
+    return int(value[:-1]) / 100 if value in TEXT_SIZES else 1.0
+
+
+def widget_kind(widget):
+    return next((cls.__name__ for cls in type(widget).__mro__
+                 if cls.__name__ in CONTROLS | {"CTk", "CTkToplevel", "CTkFrame",
+                                               "CTkLabel", "CTkSegmentedButton", "CTkScrollableFrame",
+                                               "CTkScrollbar", "CTkProgressBar", "DropdownMenu"}), "")
+
+
+def contrast_colors(kind, baseline, colorful=False):
+    """Black/white surfaces; blue retains filled/selected button distinction."""
+    colors = {}
+    for key, value in baseline.items():
+        if key == "fg_color":
+            colors[key] = ("transparent" if value == "transparent" else
+                           "#FFFFFF" if kind == "CTkRadioButton" else
+                           "#003B70" if kind == "CTkButton" and colorful else "#000000")
+        elif key in {"hover_color", "button_hover_color"}:
+            colors[key] = "#333333"
+        elif key == "button_color":
+            colors[key] = "#FFFFFF" if kind == "CTkScrollbar" else "#003B70"
+        elif key == "border_width":
+            colors[key] = 2
+        elif key in {"text_color_disabled", "placeholder_text_color"}:
+            colors[key] = "#BBBBBB"
+        else:
+            colors[key] = "#FFFFFF"
+    return colors
+
+
+def adapt_control_row(frame):
+    """Convert an opt-in packed control row to a width-aware, wrapping grid."""
+    if getattr(frame, "_ff_responsive_row", False):
+        return
+    controls = list(frame.winfo_children())
+    if not controls or any(control.winfo_manager() != "pack" for control in controls):
+        return
+    frame._ff_responsive_row = True
+    state = {"signature": None, "timer": None}
+
+    def reflow():
+        state["timer"] = None
+        if not frame.winfo_exists() or frame.winfo_width() <= 1:
+            return
+        scale = frame._get_widget_scaling()
+        available = frame.winfo_width() / scale
+        minimum = 100
+        for control in controls:
+            try:
+                text, font = str(control.cget("text")), control.cget("font")
+                minimum = max(minimum, min(260, font.measure(text) + 40))
+            except (AttributeError, ValueError, TypeError):
+                minimum = max(minimum, 160)
+        columns = max(1, min(len(controls), int(available / (minimum + 8))))
+        signature = (columns, round(minimum))
+        if state["signature"] == signature:
+            return
+        state["signature"] = signature
+        for control in controls:
+            control.pack_forget()
+        for column in range(len(controls)):
+            frame.grid_columnconfigure(column, weight=1 if column < columns else 0,
+                                       minsize=0, uniform="controls" if column < columns else "")
+        for index, control in enumerate(controls):
+            control.configure(width=1)
+            control.grid(row=index // columns, column=index % columns,
+                         sticky="ew", padx=4, pady=4)
+
+    def schedule(event=None):
+        if event is not None and event.widget not in (frame, getattr(frame, "_canvas", None)):
+            return
+        if state["timer"] is None:
+            state["timer"] = frame.after(25, reflow)
+    frame.bind("<Configure>", schedule, add="+")
+    schedule()
+
+
+class AccessibilityController:
+    def __init__(self, root, ctk, high_contrast=False, size="100%"):
+        self.root, self.ctk = root, ctk
+        self.high_contrast, self.size = bool(high_contrast), size
+        self._focus = None
+        self._highlight = {}
+        for sequence, callback in {
+            "<Tab>": lambda e: self.move_focus(e, 1),
+            "<Shift-Tab>": lambda e: self.move_focus(e, -1),
+            "<ISO_Left_Tab>": lambda e: self.move_focus(e, -1),
+            "<Return>": self.activate, "<space>": self.activate,
+            "<Alt-Down>": self.open_choices,
+            "<Prior>": lambda e: self.scroll_page(e, -1),
+            "<Next>": lambda e: self.scroll_page(e, 1),
+            "<Control-Tab>": self.insert_tab,
+            "<FocusIn>": self.focus_in, "<FocusOut>": self.focus_out,
+        }.items():
+            try:
+                root.bind_class(FOCUS_TAG, sequence, callback, add="+")
+            except tk.TclError:
+                if sequence != "<ISO_Left_Tab>":
+                    raise
+                # X11 keysym is absent on some Windows Tk releases. Shift-Tab
+                # above is the portable binding and remains active.
+                accessibility_logger.debug("ISO_Left_Tab stöds inte av denna Tk-version")
+        root.bind_all("<Map>", self.on_map, add="+")
+        self.refresh()
+
+    def walk(self, widget):
+        yield widget
+        for child in widget.winfo_children():
+            yield from self.walk(child)
+
+    def owner(self, widget):
+        while widget is not None:
+            if widget_kind(widget) in CONTROLS:
+                return widget
+            widget = getattr(widget, "master", None)
+        return None
+
+    def scope(self, widget):
+        grabbed = self.root.grab_current()
+        return (grabbed or widget).winfo_toplevel()
+
+    def candidates(self, scope):
+        window = scope.winfo_toplevel()
+        def visit(widget):
+            if not widget.winfo_viewable() or widget.winfo_toplevel() != window:
+                return
+            if widget_kind(widget) in CONTROLS:
+                try:
+                    disabled = str(widget.cget("state")) == "disabled"
+                except Exception:
+                    disabled = False
+                if not disabled or widget_kind(widget) == "CTkTextbox":
+                    yield widget
+                return  # One tab stop, not each internal Canvas/Label/Entry.
+            for child in sorted(widget.winfo_children(), key=lambda w: (w.winfo_y(), w.winfo_x())):
+                yield from visit(child)
+        return list(visit(scope))
+
+    def move_focus(self, event, direction):
+        controls = self.candidates(self.scope(event.widget))
+        if controls:
+            current = self.owner(event.widget)
+            index = controls.index(current) if current in controls else (-1 if direction > 0 else 0)
+            target = controls[(index + direction) % len(controls)]
+            target.focus_set()
+            self.reveal(target)
+            return "break"
+        return None
+
+    def activate(self, event):
+        if getattr(self.root, "recording_hotkey", False) or getattr(event, "state", 0) & (4 | 8 | 128 | 131072):
+            return None
+        widget = self.owner(event.widget)
+        kind = widget_kind(widget)
+        if kind not in {"CTkButton", "CTkCheckBox", "CTkRadioButton", "CTkOptionMenu"}:
+            return None  # Preserve entry Return actions and normal text editing.
+        if str(widget.cget("state")) != "disabled":
+            if kind == "CTkCheckBox":
+                widget.toggle()
+            elif kind == "CTkOptionMenu":
+                self.open_choices(event)
+            else:
+                widget.invoke()
+        return "break"  # Do not also invoke a dialog's default Return action.
+
+    def open_choices(self, event):
+        widget = self.owner(event.widget)
+        if widget_kind(widget) in {"CTkOptionMenu", "CTkComboBox"}:
+            if str(widget.cget("state")) != "disabled":
+                widget._open_dropdown_menu()
+            return "break"
+        return None
+
+    def scroll_page(self, event, direction):
+        widget = self.owner(event.widget)
+        if widget_kind(widget) in {"CTkEntry", "CTkTextbox", "CTkComboBox"}:
+            return None  # Native cursor/selection and editor scrolling stay intact.
+        parent = getattr(widget, "master", None)
+        while parent is not None:
+            if widget_kind(parent) == "CTkScrollableFrame":
+                parent._parent_canvas.yview_scroll(direction, "pages")
+                return "break"
+            parent = getattr(parent, "master", None)
+        return None
+
+    def insert_tab(self, event):
+        if widget_kind(self.owner(event.widget)) == "CTkTextbox":
+            event.widget.insert("insert", "\t")
+            return "break"
+        return None
+
+    def focus_in(self, event):
+        if self.owner(event.widget) is None:
+            return
+        self.focus_out(None)
+        widget = event.widget
+        owner = self.owner(widget)
+        self.reveal(owner)
+        if widget_kind(widget).startswith('CTk'):
+            # FocusIn can target the CTk wrapper, whose cget rejects Tk options.
+            # Use its native canvas, not the public CustomTkinter configure API.
+            widget = getattr(widget, '_canvas', None)
+            if widget is None:
+                return
+        try:
+            self._highlight = {key: widget.cget(key) for key in
+                               ("highlightthickness", "highlightcolor", "highlightbackground")}
+            color = "#FFD54F" if self.high_contrast or self.ctk.get_appearance_mode() == "Dark" else "#005FCC"
+            widget.configure(highlightthickness=2, highlightcolor=color, highlightbackground=color)
+            self._focus = weakref.ref(widget)
+        except Exception:
+            accessibility_logger.debug("Could not highlight focus", exc_info=True)
+
+    def focus_out(self, event):
+        widget = self._focus() if self._focus else None
+        if widget is not None:
+            try:
+                widget.configure(**self._highlight)
+            except Exception:
+                pass  # A dialog can be destroyed while its control owns focus.
+        self._focus, self._highlight = None, {}
+
+    def reveal(self, widget):
+        """Scroll focused controls into view, including nested dialog bodies."""
+        parent = getattr(widget, "master", None)
+        while parent is not None:
+            if widget_kind(parent) == "CTkScrollableFrame":
+                try:
+                    canvas = parent._parent_canvas
+                    top = canvas.canvasy(0)
+                    y = widget.winfo_rooty() - parent.winfo_rooty()
+                    if y < top or y + widget.winfo_height() > top + canvas.winfo_height():
+                        canvas.yview_moveto(max(0, y - 15) / max(1, parent.winfo_height()))
+                except Exception:
+                    accessibility_logger.debug("Could not reveal focused control", exc_info=True)
+            parent = getattr(parent, "master", None)
+
+    def on_map(self, event):
+        # Map may fire inside a CustomTkinter constructor's update_idletasks().
+        # Do not redraw its parent (and therefore its unfinished children) here.
+        self._defer_prepare(event.widget)
+
+    def _defer_prepare(self, widget):
+        if getattr(widget, "_ff_prepare_pending", False):
+            return
+        widget._ff_prepare_pending = True
+        reference = weakref.ref(widget)
+        def later():
+            target = reference()
+            if target is None:
+                return
+            target._ff_prepare_pending = False
+            if target.winfo_exists():
+                self.prepare(target)
+        # A timer, not after_idle: update_idletasks runs idle callbacks while a
+        # CTkTextbox can still be missing its scrollbars.
+        self.root.after(25, later)
+
+    def _subtree_ready(self, widget):
+        try:
+            for child in self.walk(widget):
+                if widget_kind(child) == "CTkTextbox" and not all(
+                        hasattr(child, name) for name in ("_textbox", "_x_scrollbar", "_y_scrollbar")):
+                    return False
+            return True
+        except tk.TclError:
+            return False
+
+    def colorful(self, widget, value):
+        try:
+            if isinstance(value, (tuple, list)):
+                value = value[self.ctk.get_appearance_mode() == "Dark"]
+            rgb = widget.winfo_rgb(value)
+            return max(rgb) - min(rgb) > 30 * 257
+        except Exception:
+            return False
+
+    def prepare(self, widget):
+        if not self._subtree_ready(widget):
+            self._defer_prepare(widget)
+            return
+        kind = widget_kind(widget)
+        if kind == "CTkFrame" and not getattr(widget, "_ff_responsive_row", False):
+            children = widget.winfo_children()
+            if len(children) > 1 and all(widget_kind(child) == "CTkButton" for child in children):
+                adapt_control_row(widget)
+        if self.owner(widget) is not None and kind != "DropdownMenu" and not any(cls.__name__ == "Menu" for cls in type(widget).__mro__):
+            tags = widget.bindtags()
+            if FOCUS_TAG not in tags:
+                widget.bindtags((FOCUS_TAG,) + tags)
+        if kind == "CTkScrollableFrame":
+            # Its colors are delegated to a separate CTkFrame. Keep one desired
+            # palette, not a second snapshot of the already contrast-mapped colors.
+            self.prepare(widget._parent_frame)
+            desired = widget._parent_frame._ff_accessible_colors
+            widget.configure(fg_color=desired["fg_color"])
+            return
+        if kind and not hasattr(widget, "_ff_accessible_colors"):
+            baseline = {}
+            for key in COLOR_KEYS + (("activeforeground", "disabledforeground") if kind == "DropdownMenu" else ()) + (("border_width",) if kind in {"CTkButton", "CTkEntry"} else ()):
+                # SegmentedButton inherits readable CTkFrame.border_color,
+                # but its own configure() explicitly rejects that option.
+                if kind == "CTkSegmentedButton" and key == "border_color":
+                    continue
+                try:
+                    value = widget.cget(key)
+                    if value is not None:
+                        baseline[key] = value
+                except Exception:
+                    pass
+            widget._ff_accessible_colors = baseline
+            original = widget.configure
+            ref = weakref.ref(widget)
+
+            def configure(*args, **kwargs):
+                target = ref()
+                if target is not None:
+                    baseline.update({key: value for key, value in kwargs.items() if key in baseline})
+                    if self.high_contrast:
+                        mapped = contrast_colors(kind, baseline, self.colorful(target, baseline.get("fg_color")))
+                        kwargs.update({key: mapped[key] for key in kwargs if key in mapped})
+                if target is not None and kind == "CTkButton" and "height" in kwargs:
+                    target._ff_accessible_height = kwargs["height"]
+                result = original(*args, **kwargs)
+                if target is not None and "text" in kwargs and kind == "CTkButton":
+                    self.wrap_button(target)
+                return result
+
+            widget.configure = configure
+            widget._ff_accessible_configure = original
+            if kind == "CTkButton":
+                widget._ff_accessible_height = widget.cget("height")
+                # Weighted grid columns may shrink; long captions wrap instead of
+                # imposing the button's default 140px minimum on narrow dialogs.
+                if widget.winfo_manager() == "grid" and {"e", "w"}.issubset(str(widget.grid_info().get("sticky", ""))):
+                    original(width=30)
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_button(w), add="+")
+            if kind in {"CTkCheckBox", "CTkRadioButton"}:
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_toggle(w), add="+")
+            if kind == "CTkLabel":
+                widget.bind("<Configure>", lambda e, w=widget: self.wrap_label(w), add="+")
+        if kind and hasattr(widget, "_ff_accessible_configure"):
+            baseline = widget._ff_accessible_colors
+            colors = contrast_colors(kind, baseline, self.colorful(widget, baseline.get("fg_color"))) if self.high_contrast else baseline
+            widget._ff_accessible_configure(**colors)
+        if type(widget).__name__ == "Menu":
+            self.style_menu(widget)
+
+    def wrap_label(self, widget):
+        try:
+            if str(widget.cget("text")):
+                if widget.winfo_width() < 24:
+                    return  # Wait for actual allocation instead of wrapping to 60px.
+                width = max(60, widget.winfo_width() / widget._get_widget_scaling() - 12)
+                if abs(float(widget.cget("wraplength")) - width) > 2:
+                    widget.configure(wraplength=width)
+        except Exception:
+            accessibility_logger.debug("Could not wrap label", exc_info=True)
+
+    def wrap_toggle(self, widget):
+        try:
+            width = max(40, widget.winfo_width() - widget._canvas.winfo_width()
+                        - 10 * widget._get_widget_scaling())
+            widget._text_label.configure(wraplength=width)
+        except Exception:
+            accessibility_logger.debug("Could not wrap toggle caption", exc_info=True)
+
+    def wrap_button(self, widget):
+        if getattr(widget, "_ff_navigation", False):
+            return  # Navigation reflows whole tabs; do not resize captions independently.
+        try:
+            label = widget._text_label
+            if label is None:
+                return
+            scale = widget._get_widget_scaling()
+            label.configure(wraplength=max(20, widget.winfo_width() - 20 * scale))
+            needed = max(widget._ff_accessible_height, label.winfo_reqheight() / scale + 12)
+            if abs(widget.cget("height") - needed) >= 1:
+                widget._ff_accessible_configure(height=needed)
+        except Exception:
+            accessibility_logger.debug("Could not wrap button", exc_info=True)
+
+    def style_menu(self, widget):
+        from tkinter import font
+        if not hasattr(widget, "_ff_menu_colors"):
+            widget._ff_menu_colors = {key: widget.cget(key) for key in
+                                      ("background", "foreground", "activebackground", "activeforeground", "disabledforeground")}
+            widget._ff_menu_font = font.Font(root=self.root, font=widget.cget("font")).actual()
+            original_configure = widget.configure
+            widget._ff_menu_configure = original_configure
+            def configure(*args, **kwargs):
+                for short, full in (("bg", "background"), ("fg", "foreground")):
+                    if short in kwargs:
+                        kwargs[full] = kwargs.pop(short)
+                widget._ff_menu_colors.update({k: v for k, v in kwargs.items() if k in widget._ff_menu_colors})
+                if self.high_contrast:
+                    mapped = dict(background="#000000", foreground="#FFFFFF", activebackground="#003B70",
+                                  activeforeground="#FFFFFF", disabledforeground="#BBBBBB")
+                    kwargs.update({k: mapped[k] for k in kwargs if k in mapped})
+                return original_configure(*args, **kwargs)
+            widget.configure = configure
+        colors = widget._ff_menu_colors.copy()
+        if self.high_contrast:
+            colors.update(background="#000000", foreground="#FFFFFF", activebackground="#003B70",
+                          activeforeground="#FFFFFF", disabledforeground="#BBBBBB")
+        original = widget._ff_menu_font
+        widget._ff_menu_configure(**colors, font=(original["family"], round(original["size"] * text_scale(self.size)), original["weight"]))
+
+    def refresh(self, high_contrast=None, size=None):
+        if high_contrast is not None:
+            self.high_contrast = bool(high_contrast)
+        if size is not None:
+            self.size = size if size in TEXT_SIZES else "100%"
+        focused = self.root.focus_get()
+        self.focus_out(None)
+        for widget in self.walk(self.root):
+            self.prepare(widget)
+        if focused is not None:
+            self.focus_in(SimpleNamespace(widget=focused))
+
+# ============================================================
 
 
 # ============================================================
@@ -1765,178 +1242,11 @@ class UndoManager:
 # ============================================================
 # Mallsystem
 # ============================================================
-class TemplateManager:
-    def __init__(self) -> None:
-        TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
-        self._builtin = self._create_builtins()
-
-    @staticmethod
-    def _create_builtins() -> Dict[str, str]:
-        return {
-            "Python Projekt": (
-                "projektnamn/\n    src/\n        __init__.py\n        main.py\n"
-                "    tests/\n        test_main.py\n    docs/\n"
-                "    requirements.txt\n    README.md\n    .gitignore\n"
-            ),
-            "Webb Projekt": (
-                "projektnamn/\n    public/\n        index.html\n        style.css\n"
-                "    src/\n        app.js\n    assets/\n        images/\n"
-                "    README.md\n    package.json\n"
-            ),
-            "Skaderapport": (
-                "ärendenummer/\n    Bilder/\n    Skadeanmälan/\n"
-                "    Diagnos/\n    Instruktioner/\n    Kvalitetsrapport/\n"
-            ),
-        }
-
-    def list_templates(self) -> Dict[str, str]:
-        templates = dict(self._builtin)
-        for f in TEMPLATES_DIR.glob("*.json"):
-            # M2/C41.3 — read_json_safe() återställer från .bak/.bak2 om filen
-            # är trasig, istället för att bara hoppa över mallen.
-            data = read_json_safe(f, None)
-            if not isinstance(data, dict):
-                logger.warning("Kunde inte läsa mall %s: ogiltig eller saknad JSON",
-                               f.name)
-                continue
-            try:
-                templates[data["name"]] = data["structure"]
-            except KeyError as e:
-                logger.warning("Kunde inte läsa mall %s: %s", f.name, e)
-        return templates
-
-    def save_template(self, name: str, structure: str) -> None:
-        safe = NameValidator.sanitize(name)
-        # M1/F1 — atomisk skrivning med backup. Obs: filen får nu indent=2
-        # (atomic_write_json:s standard) istället för en enda lång rad;
-        # innehållet och inläsningsvägen är oförändrade.
-        if not atomic_write_json(
-            TEMPLATES_DIR / f"{safe}.json",
-            {"name": name, "structure": structure},
-        ):
-            logger.error("Kunde inte spara mall '%s' (atomisk skrivning misslyckades)",
-                         name)
-
-    def delete_template(self, name: str) -> bool:
-        if name in self._builtin:
-            return False
-        safe = NameValidator.sanitize(name)
-        p = TEMPLATES_DIR / f"{safe}.json"
-        if p.exists():
-            p.unlink()
-            return True
-        return False
 
 
 # ============================================================
 # Strukturmotor
 # ============================================================
-class StructureEngine:
-    IGNORED_DIRS: Final[frozenset] = frozenset({
-        '.git', '__pycache__', '.idea', '.vscode',
-        'node_modules', 'venv', '.env', '.tox',
-    })
-
-    @staticmethod
-    def is_file(name: str) -> bool:
-        clean = name.rstrip('/\\')
-        if name.endswith(('/', '\\')):
-            return False
-        if clean.lower() in KNOWN_FILES:
-            return True
-        return '.' in clean
-
-    @staticmethod
-    def parse_structure_text(text: str) -> Tuple[Optional[str], List[dict]]:
-        lines = text.splitlines()
-        preprocessed: List[Tuple[int, str, Optional[str]]] = []
-        indent_lengths: Set[int] = set()
-
-        for line in lines:
-            if not line.strip():
-                continue
-            comment = None
-            if '<-' in line:
-                line, comment = line.split('<-', 1)
-            elif '←' in line:
-                line, comment = line.split('←', 1)
-            line = line.rstrip()
-            match = re.match(r'^([ │├──└──\t]*)', line)
-            prefix = match.group(1) if match else ""
-            name = line[len(prefix):].strip()
-            if not name:
-                continue
-            if len(prefix) > 0:
-                indent_lengths.add(len(prefix))
-            preprocessed.append(
-                (len(prefix), name, comment.strip() if comment else None)
-            )
-
-        unit = min(indent_lengths) if indent_lengths else 1
-        items: List[dict] = []
-        stack: List[str] = []
-
-        for ilen, name, cmt in preprocessed:
-            depth = ilen // unit if unit else 0
-            while len(stack) > depth:
-                stack.pop()
-            clean = name.rstrip('/\\')
-            is_dir = not StructureEngine.is_file(name)
-            items.append({
-                'path': list(stack) + [clean],
-                'is_dir': is_dir,
-                'comment': cmt,
-            })
-            if is_dir:
-                stack.append(clean)
-
-        return None, items
-
-    @classmethod
-    def generate_tree_string(cls, root_path: Path) -> str:
-        """
-        M12/MB10 — delegerar till generate_tree_string_safe(), som har
-        djupgräns (MAX_TREE_DEPTH), symlink-loop-detektering via resolve(),
-        posttak (MAX_TREE_ENTRIES) och PermissionError-hantering per mapp.
-
-        v4.1:s version rekade utan något tak: ett tillräckligt djupt träd gav
-        RecursionError och en cirkulär symlänk gav en oändlig loop. Alla
-        anropare får nu det säkra beteendet via denna enda ingång.
-
-        _tree_recursive() behålls oförändrad nedan — ingen metod tas bort.
-        """
-        return generate_tree_string_safe(root_path)
-
-    @classmethod
-    def _tree_recursive(
-        cls, directory: Path, prefix: str, lines: List[str],
-    ) -> None:
-        try:
-            contents = list(directory.iterdir())
-        except PermissionError:
-            lines.append(f"{prefix}└── <Åtkomst nekad>")
-            return
-        filtered = [
-            x for x in contents
-            if x.name not in cls.IGNORED_DIRS and not x.name.startswith('.')
-        ]
-        filtered.sort(key=lambda x: (not x.is_dir(), x.name.lower()))
-        for i, path in enumerate(filtered):
-            is_last = i == len(filtered) - 1
-            connector = "└── " if is_last else "├── "
-            suffix = '/' if path.is_dir() else ''
-            lines.append(f"{prefix}{connector}{path.name}{suffix}")
-            if path.is_dir():
-                cls._tree_recursive(
-                    path, prefix + ("    " if is_last else "│   "), lines,
-                )
-
-    @staticmethod
-    def count_items(items: List[dict]) -> Tuple[int, int]:
-        return (
-            sum(1 for i in items if i['is_dir']),
-            sum(1 for i in items if not i['is_dir']),
-        )
 
 
 # ============================================================
@@ -2189,6 +1499,23 @@ def enumerate_monitors(windll: Any = None) -> List[MonitorInfo]:
         try:
             rect = lprc.contents
             left, top, right, bottom = rect[0], rect[1], rect[2], rect[3]
+            # rcWork excludes taskbars on any edge, separately for each monitor.
+            try:
+                from ctypes import wintypes
+                class MONITORINFO(ctypes.Structure):
+                    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                                ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+                info = MONITORINFO()
+                info.cbSize = ctypes.sizeof(info)
+                get_info = user32.GetMonitorInfoW
+                get_info.argtypes = [ctypes.c_void_p, ctypes.POINTER(MONITORINFO)]
+                get_info.restype = wintypes.BOOL
+                if get_info(hmon, ctypes.byref(info)):
+                    work = info.rcWork
+                    if work.right > work.left and work.bottom > work.top:
+                        left, top, right, bottom = work.left, work.top, work.right, work.bottom
+            except Exception:
+                pass  # Keep the full monitor rectangle if work-area lookup fails.
             dpi = 96.0
             if shcore is not None:
                 try:
@@ -2394,6 +1721,38 @@ def load_app_icon(
     return img
 
 
+def linux_tray_available():
+    """Xorg's visible flag can be true even when no panel accepted the icon."""
+    if not sys.platform.startswith("linux") or pystray.Icon.__module__ != "pystray._xorg":
+        return True
+    try:
+        from Xlib import display
+        connection = display.Display()
+        try:
+            selection = connection.intern_atom("_NET_SYSTEM_TRAY_S" + str(connection.get_default_screen()))
+            return bool(connection.get_selection_owner(selection))
+        finally:
+            connection.close()
+    except Exception:
+        logger.warning("Kunde inte verifiera Linux-systemfältet", exc_info=True)
+        return False
+
+
+def load_ui_icon(name, size=22, _cache={}):
+    names = {"Skapa": "create", "Historik": "history", "Mallar": "templates",
+             "Exportera": "export", "Inställningar": "settings", "Snabbtangent": "keyboard"}
+    key = (name, size)
+    if key not in _cache:
+        try:
+            prefix = BASE_DIR / "Icon" / ("nav-" + names[name])
+            _cache[key] = ctk.CTkImage(
+                light_image=Image.open(str(prefix) + "-light.png").convert("RGBA"),
+                dark_image=Image.open(str(prefix) + "-dark.png").convert("RGBA"), size=(size, size))
+        except (OSError, KeyError):
+            return None  # Older installations retain readable text/emoji fallback.
+    return _cache[key]
+
+
 def apply_icon_to_window(
     win: Any,
     icon_path: Optional[Path] = None,
@@ -2423,6 +1782,7 @@ def apply_icon_to_window(
         try:
             p = Path(icon_path)
             if p.exists():
+                win.iconbitmap(default=str(p))
                 win.iconbitmap(str(p))
                 return "iconbitmap"
         except Exception as exc:
@@ -2462,301 +1822,23 @@ def apply_icon_to_window(
 # bara en felruta utan alternativ.
 
 AUTOSTART_METHODS: Tuple[str, ...] = ("registry", "startup_folder", "task_scheduler")
-AUTOSTART_TASK_NAME: str = "FolderForge_Autostart"
 
 # FOLDERID_Startup — Microsoft-dokumenterad GUID, oförändrad sedan Vista.
 _FOLDERID_STARTUP: str = "{B97D20BB-F46A-4C97-BA10-5E3608430854}"
-_CSLID_STARTUP: int = 0x0007
 
 
-def get_startup_folder(
-    windll: Any = None, create: bool = False,
-) -> Optional[Path]:
-    """
-    Sökvägen till användarens Start-meny\\Program\\Startup (shell:startup).
-
-    Prova SHGetKnownFolderPath (Vista+) och fall tillbaka på
-    SHGetFolderPathW med CSIDL_STARTUP. Returnerar None utanför Windows
-    eller om båda misslyckas.
-
-    Kastar aldrig.
-    """
-    if not IS_WINDOWS:
-        return None
-
-    dll = windll if windll is not None else getattr(ctypes, "windll", None)
-    if dll is None:
-        return None
-
-    # 1) Modern API: SHGetKnownFolderPath. GUID-strukturen byggs manuellt med
-    #    ctypes så att inget extra beroende (comtypes/pywin32) krävs för att
-    #    hitta mappen — detta är en fallback-väg och måste vara beroendefri.
-    try:
-        shell32 = dll.shell32
-        ole32 = dll.ole32
-
-        class GUID(ctypes.Structure):
-            _fields_ = [
-                ("Data1", ctypes.c_ulong),
-                ("Data2", ctypes.c_ushort),
-                ("Data3", ctypes.c_ushort),
-                ("Data4", ctypes.c_ubyte * 8),
-            ]
-
-        g = GUID()
-        g.Data1 = 0xB97D20BB
-        g.Data2 = 0xF46A
-        g.Data3 = 0x4C97
-        for i, byte in enumerate(
-                (0xBA, 0x10, 0x5E, 0x36, 0x08, 0x43, 0x08, 0x54)):
-            g.Data4[i] = byte
-
-        out = ctypes.c_wchar_p()
-        # KF_FLAG_DEFAULT = 0
-        hr = shell32.SHGetKnownFolderPath(
-            ctypes.byref(g), 0, None, ctypes.byref(out))
-        if hr == 0 and out.value:
-            p = Path(out.value)
-            try:
-                ole32.CoTaskMemFree(out)
-            except Exception:
-                pass
-            if create:
-                try:
-                    p.mkdir(parents=True, exist_ok=True)
-                except OSError as exc:
-                    logger.debug("Kunde inte skapa startup-mappen: %s", exc)
-            return p
-    except Exception as exc:                        # pragma: no cover - OS
-        logger.debug("SHGetKnownFolderPath misslyckades: %s", exc)
-
-    # 2) Fallback: SHGetFolderPathW med CSIDL_STARTUP
-    try:
-        buf = ctypes.create_unicode_buffer(260)     # MAX_PATH
-        # SHGetFolderPathW(hwnd, csidl, hToken, dwFlags, pszPath)
-        hr = dll.shell32.SHGetFolderPathW(None, _CSLID_STARTUP, None, 0, buf)
-        if hr == 0 and buf.value:
-            p = Path(buf.value)
-            if create:
-                try:
-                    p.mkdir(parents=True, exist_ok=True)
-                except OSError as exc:
-                    logger.debug("Kunde inte skapa startup-mappen: %s", exc)
-            return p
-    except Exception as exc:                        # pragma: no cover - OS
-        logger.debug("SHGetFolderPathW misslyckades: %s", exc)
-
-    return None
 
 
-def write_startup_shortcut(
-    app_name: str,
-    command: str,
-    startup_dir: Optional[Path] = None,
-    runner: Optional[Callable[..., Any]] = None,
-    icon_path: Optional[Path] = None,
-) -> Tuple[bool, str]:
-    """
-    Skriv en autostart-genväg i Start-menyns startup-mapp.
-
-    Två spår, eftersom .lnk kräver COM (pywin32 eller PowerShell):
-      1. .lnk via PowerShell WScript.Shell — riktig genväg med ikon
-      2. .bat-fallback — ful men fungerar utan några beroenden alls
-
-    Returnerar (ok, detalj). Kastar aldrig: detta är en fallback-väg som körs
-    NÄR registret redan nekat, och får inte självt krascha appen.
-    """
-    if not command or not command.strip():
-        return False, "tomt kommando"
-
-    folder = Path(startup_dir) if startup_dir else get_startup_folder(create=True)
-    if folder is None:
-        return False, "startup-mappen kunde inte hittas"
-    try:
-        folder.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return False, f"startup-mappen är inte skrivbar: {exc}"
-
-    slug = re.sub(r"[^A-Za-z0-9_\-]+", "_", str(app_name)).strip("_") or "App"
-    run = runner if runner is not None else subprocess.run
-
-    # ── Spår 1: riktig .lnk via PowerShell ────────────────────────
-    lnk = folder / f"{slug}.lnk"
-    exe, _, args = command.partition(" ")
-    exe = exe.strip('"')
-
-    def _psq(text: Any) -> str:
-        """PowerShell-citering: ' dubbleras till '' i enkelciterade strängar.
-
-        Utan detta bröt en sökväg med apostrof (t.ex. C:\\Users\\Lisa's ...)
-        hela kommandot, och spår 1 föll tyst tillbaka på .bat-varianten."""
-        return str(text).replace("'", "''")
-
-    ps = (
-        "$s=(New-Object -ComObject WScript.Shell).CreateShortcut("
-        f"'{_psq(lnk)}');"
-        f"$s.TargetPath='{_psq(exe)}';"
-        f"$s.Arguments='{_psq(args.strip())}';"
-        f"$s.WorkingDirectory='{_psq(Path(exe).parent)}';"
-        "$s.WindowStyle=7;"       # 7 = minimerad, ingen konsolruta
-    )
-    if icon_path is not None:
-        # Genvägen får appens ikon — annars visar Explorer Pythons standard.
-        ps += f"$s.IconLocation='{_psq(icon_path)}';"
-    ps += "$s.Save()"
-    try:
-        res = run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-            capture_output=True, text=True, timeout=25,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        if getattr(res, "returncode", 1) == 0 and lnk.exists():
-            return True, f"lnk:{lnk}"
-        logger.debug("PowerShell-genväg misslyckades: %s",
-                     getattr(res, "stderr", "")[:200])
-    except FileNotFoundError:
-        logger.debug("powershell finns inte — provar .bat-fallback.")
-    except Exception as exc:
-        logger.debug("PowerShell-genväg kastade: %s", exc)
-
-    # ── Spår 2: .bat-fallback ─────────────────────────────────────
-    bat = folder / f"{slug}.bat"
-    try:
-        # 'start "" /B' + pythonw ger ingen konsolruta (samma mönster som
-        # build_autostart_command redan använder).
-        bat.write_text(f"@echo off\r\nstart \"\" /B {command}\r\n",
-                       encoding="utf-8")
-        if bat.exists():
-            return True, f"bat:{bat}"
-    except OSError as exc:
-        return False, f"kunde inte skriva genväg: {exc}"
-
-    return False, "både .lnk och .bat misslyckades"
 
 
-def delete_startup_shortcut(
-    app_name: str, startup_dir: Optional[Path] = None,
-) -> bool:
-    """Ta bort både .lnk och .bat ur startup-mappen. Kastar aldrig."""
-    folder = Path(startup_dir) if startup_dir else get_startup_folder()
-    if folder is None or not folder.exists():
-        return True                                   # inget att ta bort
-    slug = re.sub(r"[^A-Za-z0-9_\-]+", "_", str(app_name)).strip("_") or "App"
-    removed_any = True
-    for ext in (".lnk", ".bat"):
-        f = folder / f"{slug}{ext}"
-        try:
-            if f.exists():
-                f.unlink()
-        except OSError as exc:
-            logger.warning("Kunde inte ta bort %s: %s", f, exc)
-            removed_any = False
-    return removed_any
 
 
-def read_startup_shortcut(app_name: str, startup_dir: Optional[Path] = None) -> Optional[str]:
-    """Returnera sökvägen till befintlig genväg, annars None. Kastar aldrig."""
-    folder = Path(startup_dir) if startup_dir else get_startup_folder()
-    if folder is None or not folder.exists():
-        return None
-    slug = re.sub(r"[^A-Za-z0-9_\-]+", "_", str(app_name)).strip("_") or "App"
-    for ext in (".lnk", ".bat"):
-        f = folder / f"{slug}{ext}"
-        if f.exists():
-            return str(f)
-    return None
 
 
-def build_task_scheduler_command(
-    app_name: str, command: str, task_name: Optional[str] = None,
-) -> List[str]:
-    """
-    Bygg schtasks-kommandot för "kör vid inloggning".
-
-    Returnerar en ARGUMENTLISTA (inte en sträng) så att anropet kan göras utan
-    shell=True — ingen injektionsrisk från användarens sökvägar (C19-anda).
-
-    /RL LIMITED  — kör utan förhöjda rättigheter, så att ingen UAC-prompt
-                   dyker upp vid inloggning (höger prio: användaren ser inget).
-    /SC ONLOGON  — vid inloggning, inte vid uppstart (app är per-användare).
-    /F           — skriv över befintlig uppgift (idempotent).
-    """
-    tn = str(task_name or AUTOSTART_TASK_NAME)
-    return [
-        "schtasks", "/Create", "/F",
-        "/TN", tn,
-        "/TR", str(command),
-        "/SC", "ONLOGON",
-        "/RL", "LIMITED",
-    ]
 
 
-def register_task_scheduler(
-    app_name: str,
-    command: str,
-    task_name: Optional[str] = None,
-    runner: Optional[Callable[..., Any]] = None,
-) -> Tuple[bool, str]:
-    """
-    Registrera autostart via Task Scheduler — tredje spåret.
-
-    Mer robust än Run-nyckeln: överlever vissa gruppolicyer som rensar
-    HKCU\\...\\Run, och syns i schemaläggaren där användaren kan felsöka.
-
-    Returnerar (ok, detalj). Kastar aldrig.
-    """
-    if not IS_WINDOWS:
-        return False, "task scheduler är Windows-only"
-    if not command or not command.strip():
-        return False, "tomt kommando"
-
-    run = runner if runner is not None else subprocess.run
-    argv = build_task_scheduler_command(app_name, command, task_name)
-    try:
-        res = run(
-            argv, capture_output=True, text=True, timeout=25,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        rc = getattr(res, "returncode", 1)
-        if rc == 0:
-            return True, f"schtasks:{task_name or AUTOSTART_TASK_NAME}"
-        err = (getattr(res, "stderr", "") or getattr(res, "stdout", "") or "").strip()
-        return False, f"schtasks rc={rc}: {err[:200]}"
-    except FileNotFoundError:
-        return False, "schtasks.exe finns inte"
-    except subprocess.TimeoutExpired:
-        return False, "schtasks-timeout (25 s)"
-    except Exception as exc:
-        return False, f"schtasks kastade: {exc}"
 
 
-def unregister_task_scheduler(
-    task_name: Optional[str] = None,
-    runner: Optional[Callable[..., Any]] = None,
-) -> Tuple[bool, str]:
-    """Avregistrera uppgiften. Saknad uppgift räknas som lyckat (idempotent)."""
-    if not IS_WINDOWS:
-        return True, "skipped"
-    tn = str(task_name or AUTOSTART_TASK_NAME)
-    run = runner if runner is not None else subprocess.run
-    try:
-        res = run(
-            ["schtasks", "/Delete", "/F", "/TN", tn],
-            capture_output=True, text=True, timeout=25,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        rc = getattr(res, "returncode", 1)
-        if rc == 0:
-            return True, "deleted"
-        err = (getattr(res, "stderr", "") or "").lower()
-        # "The system cannot find the file specified" → fanns inte redan
-        if "cannot find" in err or "inte hitta" in err:
-            return True, "not-present"
-        return False, f"schtasks rc={rc}: {err[:200]}"
-    except FileNotFoundError:
-        return False, "schtasks.exe finns inte"
-    except Exception as exc:
-        return False, f"schtasks kastade: {exc}"
 
 
 def query_task_scheduler(
@@ -2781,109 +1863,8 @@ def query_task_scheduler(
     return None
 
 
-def enable_autostart_all_methods(
-    app_name: str,
-    command: str,
-    reg_writer: Optional[Callable[..., Tuple[bool, Optional[str]]]] = None,
-    startup_dir: Optional[Path] = None,
-    runner: Optional[Callable[..., Any]] = None,
-    icon_path: Optional[Path] = None,
-) -> Dict[str, Any]:
-    """
-    Slå på autostart och rapportera utfallet för VARJE metod.
-
-    Detta är orkestreringen: registret först (billigast, mest osynligt),
-    därefter startup-genväg om registret nekade, därefter Task Scheduler.
-    Appen kräver att MINST EN lyckas — men rapporterar alla tre så att
-    diagnostiken (B5) kan visa exakt vad som hände.
-
-    Returnerar en dict: {"ok": bool, "methods": {namn: {"ok":..,"detail":..}}}
-    Kastar aldrig.
-    """
-    resultat: Dict[str, Any] = {"ok": False, "methods": {}}
-
-    # 1) Registret — använd befintlig write_autostart_entry om ingen injiceras
-    try:
-        writer = reg_writer
-        if writer is None:
-            writer = globals().get("write_autostart_entry")
-        if writer is not None:
-            ok, stored = writer(app_name, command)
-            resultat["methods"]["registry"] = {
-                "ok": bool(ok), "detail": stored or ("skrivet" if ok else "nekad"),
-            }
-        else:
-            resultat["methods"]["registry"] = {
-                "ok": False, "detail": "write_autostart_entry saknas"}
-    except Exception as exc:
-        resultat["methods"]["registry"] = {"ok": False, "detail": f"kastade: {exc}"}
-
-    # 2) Startup-genväg — prova ALLTID, så att vi har redundans
-    try:
-        ok, detail = write_startup_shortcut(app_name, command, startup_dir,
-                                            runner, icon_path=icon_path)
-        resultat["methods"]["startup_folder"] = {"ok": bool(ok), "detail": detail}
-    except Exception as exc:
-        resultat["methods"]["startup_folder"] = {"ok": False, "detail": f"kastade: {exc}"}
-
-    # 3) Task Scheduler — endast om de två första misslyckades (undvik
-    #    trippla poster som alla startar appen)
-    if not any(m["ok"] for m in resultat["methods"].values()):
-        try:
-            ok, detail = register_task_scheduler(app_name, command, None, runner)
-            resultat["methods"]["task_scheduler"] = {"ok": bool(ok), "detail": detail}
-        except Exception as exc:
-            resultat["methods"]["task_scheduler"] = {"ok": False, "detail": f"kastade: {exc}"}
-
-    resultat["ok"] = any(m["ok"] for m in resultat["methods"].values())
-    return resultat
 
 
-def disable_autostart_all_methods(
-    app_name: str,
-    reg_deleter: Optional[Callable[..., Any]] = None,
-    startup_dir: Optional[Path] = None,
-    runner: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
-    """
-    Stäng av autostart i ALLA tre mekanismer (idempotent).
-
-    Viktigt: v4.3 raderade bara Run-nyckeln. Om en genväg eller uppgift
-    skapats tidigare skulle appen fortsätta starta trots att rutan visar "av"
-    — ett tyst löftesbrott. Därför rensas alla tre.
-    """
-    resultat: Dict[str, Any] = {"ok": True, "methods": {}}
-    try:
-        deleter = reg_deleter or globals().get("delete_autostart_entry")
-        if deleter is not None:
-            deleter(app_name)
-            resultat["methods"]["registry"] = {"ok": True, "detail": "raderad"}
-        else:
-            resultat["methods"]["registry"] = {"ok": True, "detail": "saknad backend"}
-    except Exception as exc:
-        resultat["methods"]["registry"] = {"ok": False, "detail": f"kastade: {exc}"}
-        resultat["ok"] = False
-
-    try:
-        ok = delete_startup_shortcut(app_name, startup_dir)
-        resultat["methods"]["startup_folder"] = {
-            "ok": bool(ok), "detail": "rensad" if ok else "kunde inte raderas"}
-        if not ok:
-            resultat["ok"] = False
-    except Exception as exc:
-        resultat["methods"]["startup_folder"] = {"ok": False, "detail": f"kastade: {exc}"}
-        resultat["ok"] = False
-
-    try:
-        ok, detail = unregister_task_scheduler(None, runner)
-        resultat["methods"]["task_scheduler"] = {"ok": bool(ok), "detail": detail}
-        if not ok:
-            resultat["ok"] = False
-    except Exception as exc:
-        resultat["methods"]["task_scheduler"] = {"ok": False, "detail": f"kastade: {exc}"}
-        resultat["ok"] = False
-
-    return resultat
 
 
 # ══════════════════════════════════════════════════════════════════
@@ -2898,16 +1879,16 @@ def disable_autostart_all_methods(
 
 MENU_THEMES: Dict[str, Dict[str, str]] = {
     "Dark": {
-        "bg": "#1e1e2e",
-        "fg": "#f0f0f5",
-        "active_bg": "#4C9EF1",
+        "bg": "#172233",
+        "fg": "#E7EDF6",
+        "active_bg": "#193047",
         "active_fg": "#ffffff",
         "disabled_fg": "#6a6a80",
-        "border": "#2e2e42",
+        "border": "#2A3B50",
     },
     "Light": {
-        "bg": "#f5f5f7",
-        "fg": "#1a1a2e",
+        "bg": "#F3F6FA",
+        "fg": "#172638",
         "active_bg": "#30659a",
         "active_fg": "#ffffff",
         "disabled_fg": "#9a9aa8",
@@ -3622,7 +2603,7 @@ def sidebar_colors(appearance_mode: Any = None) -> Dict[str, str]:
 
     bg = bas.get("bg", "#1e1e2e")
     fg = bas.get("fg", "#f0f0f5")
-    aktiv = bas.get("active_bg", "#4C9EF1")
+    aktiv = bas.get("active_bg", "#193047")
     aktiv_fg = bas.get("active_fg", "#ffffff")
 
     return {
@@ -3798,13 +2779,24 @@ class DynamicTabView(ctk.CTkFrame):
                 side="bottom", fill="x",
                 padx=scaled(6, scale), pady=scaled(6, scale),
             )
+            self._nav_scroll = ctk.CTkScrollableFrame(self._tab_bar, fg_color="transparent", width=bredd)
+            self._nav_scroll.pack(side="top", fill="both", expand=True)
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.pack(side="left", fill="both", expand=True)
         else:
             self._tab_bar = ctk.CTkFrame(
-                self, fg_color=("gray85", "gray20"), corner_radius=12,
+                self, fg_color=UI_SURFACE, corner_radius=12,
             )
             self._tab_bar.pack(fill="x", padx=0, pady=(0, scaled(8, scale)))
+            self._tab_reflow_timer = None
+            def schedule_tab_reflow(event):
+                if event.widget in (self._tab_bar, self._tab_bar._canvas) and self._tab_reflow_timer is None:
+                    def reflow():
+                        self._tab_reflow_timer = None
+                        if self.winfo_exists():
+                            self._rebuild_tab_bar()
+                    self._tab_reflow_timer = self.after(25, reflow)
+            self._tab_bar.bind("<Configure>", schedule_tab_reflow, add="+")
 
             self._content = ctk.CTkFrame(self, fg_color="transparent")
             self._content.pack(fill="both", expand=True)
@@ -3903,6 +2895,7 @@ class DynamicTabView(ctk.CTkFrame):
         """
         if self._layout != "sidebar":
             return
+        self._dolj_tip()
         self._collapsed = bool(collapsed)
         try:
             self._tab_bar.configure(
@@ -3913,7 +2906,8 @@ class DynamicTabView(ctk.CTkFrame):
             it = self._sidebar_items.get(namn)
             if it is None:
                 continue
-            btn.configure(text=it.display_text(self._collapsed))
+            btn.configure(text=("" if self._collapsed else it.label) if getattr(btn, "_ff_nav_image", None)
+                          else it.display_text(self._collapsed))
         # v5.0 steg 4 — knappens pil måste vända med läget, annars visar den
         # "Fäll in" när sidebarn redan är infälld.
         knapp = getattr(self, "_collapse_btn", None)
@@ -3949,26 +2943,16 @@ class DynamicTabView(ctk.CTkFrame):
                     weight="bold" if selected else "normal",
                 ),
             }
-        if selected:
-            return {
-                "fg_color": (ACCENT_BLUE, ACCENT_BLUE),
-                "text_color": "white",
-                "hover_color": ("gray75", "gray30"),
-                "corner_radius": 10,
-                "height": scaled(36, self._scale),
-                "font": ctk.CTkFont(
-                    size=scaled_font(13, self._scale), weight="bold",
-                ),
-            }
         return {
-            "fg_color": "transparent",
-            "text_color": ("gray30", "gray70"),
-            "hover_color": ("gray75", "gray30"),
-            "corner_radius": 10,
-            "height": scaled(36, self._scale),
-            "font": ctk.CTkFont(
-                size=scaled_font(13, self._scale), weight="normal",
-            ),
+            "fg_color": UI_PRIMARY if selected else UI_BACKGROUND,
+            "text_color": "white" if selected else UI_TEXT,
+            "hover_color": ACCENT_BLUE if selected else UI_BORDER,
+            "corner_radius": 8,
+            "height": scaled(44, self._scale),
+            "border_width": 1,
+            "border_color": UI_PRIMARY if selected else UI_BORDER,
+            "anchor": "center",
+            "font": ctk.CTkFont(size=scaled_font(14, self._scale), weight="bold"),
         }
 
     def add_tab(self, name: str) -> ctk.CTkFrame:
@@ -3991,22 +2975,51 @@ class DynamicTabView(ctk.CTkFrame):
             icon = TAB_ICONS.get(name, "")
             btn_text = f"{icon} {name}"
 
+        nav_image = load_ui_icon(name, scaled(24 if self._layout == "tabs" else 22, self._scale))
+        if nav_image:
+            btn_text = "" if self._layout == "sidebar" and self._collapsed else name
         btn = ctk.CTkButton(
-            self._tab_bar,
-            text=btn_text,
+            self._nav_scroll if self._layout == "sidebar" else self._tab_bar,
+            text=btn_text, image=nav_image, compound="left",
             command=lambda n=name: self.show_tab(n),
             **self._button_kwargs(name, selected=False),
         )
+        btn._ff_nav_image = nav_image
+        btn._ff_navigation = True
         # I kollapsat läge är ikonen enda ledtråden, därför verktygstips.
         # Bindningen är ofarlig i utfällt läge eftersom tipset blir tomt.
         btn.bind("<Enter>", lambda e, n=name: self._visa_tip(n))
         btn.bind("<Leave>", lambda e: self._dolj_tip())
+        btn.bind("<FocusIn>", lambda e, n=name: self._visa_tip(n), add="+")
+        btn.bind("<FocusOut>", lambda e: self._dolj_tip(), add="+")
+        btn.bind("<Shift-F10>", lambda e, n=name: self._keyboard_tab_menu(e, n), add="+")
         self._tab_buttons[name] = btn
         btn.bind("<Button-3>", lambda e, n=name: self._right_click_tab(e, n))
         self._rebuild_tab_bar()
         return frame
 
     def _rebuild_tab_bar(self) -> None:
+        if self._layout == "tabs":
+            visible = [(name, button) for name, button in self._tab_buttons.items()
+                       if self._settings.visible_tabs.get(name, True)]
+            available = self._tab_bar.winfo_width() / self._tab_bar._get_widget_scaling()
+            minimum = max((button.cget("font").measure(name) + scaled(60, self._scale)
+                           for name, button in visible), default=120)
+            columns = max(1, min(len(visible) or 1, int(available / max(1, minimum))))
+            signature = (tuple(name for name, _button in visible), columns)
+            if getattr(self, "_tab_grid_signature", None) == signature:
+                return
+            self._tab_grid_signature = signature
+            for column in range(len(self._tab_buttons)):
+                self._tab_bar.grid_columnconfigure(column, weight=1 if column < columns else 0,
+                                                   minsize=0, uniform="tabs" if column < columns else "")
+            for button in self._tab_buttons.values():
+                button.grid_forget()
+            for index, (_name, button) in enumerate(visible):
+                button.configure(width=1)
+                button.grid(row=index // columns, column=index % columns, sticky="ew",
+                            padx=scaled(3, self._scale), pady=scaled(3, self._scale))
+            return
         for btn in self._tab_buttons.values():
             btn.pack_forget()
         sida = "top" if self._layout == "sidebar" else "left"
@@ -4025,29 +3038,32 @@ class DynamicTabView(ctk.CTkFrame):
                 )
 
     def _visa_tip(self, name: str) -> None:
-        """Visa verktygstips i kollapsat läge (där etiketten inte syns)."""
+        """A readable overlay, also on keyboard focus; do not stretch icon buttons."""
+        self._dolj_tip()
         if self._layout != "sidebar" or not self._collapsed:
             return
-        it = self._sidebar_items.get(name)
-        if it is None:
+        item = self._sidebar_items.get(name)
+        if item is None:
             return
-        try:
-            self._tab_buttons[name].configure(text=it.icon + "  " + it.label)
-        except Exception:
-            logger.debug("Verktygstips kunde inte visas", exc_info=True)
+        window = self.winfo_toplevel()
+        button = self._tab_buttons[name]
+        tip = ctk.CTkLabel(window, text=item.label, fg_color=UI_SURFACE,
+                          text_color=UI_TEXT, corner_radius=6, padx=10, pady=6)
+        self._tip_label = tip
+        tip.update_idletasks()
+        x = min(button.winfo_rootx() - window.winfo_rootx() + button.winfo_width() + 6,
+                max(0, window.winfo_width() - tip.winfo_reqwidth() - 4))
+        y = min(button.winfo_rooty() - window.winfo_rooty(),
+                max(0, window.winfo_height() - tip.winfo_reqheight() - 4))
+        factor = tip._get_widget_scaling()
+        tip.place(x=max(0, x) / factor, y=max(0, y) / factor)
+        tip.lift()
 
     def _dolj_tip(self) -> None:
-        """Återställ ikon-only-visningen efter hover."""
-        if self._layout != "sidebar" or not self._collapsed:
-            return
-        for namn, btn in self._tab_buttons.items():
-            it = self._sidebar_items.get(namn)
-            if it is None:
-                continue
-            try:
-                btn.configure(text=it.display_text(True))
-            except Exception:
-                logger.debug("Verktygstips kunde inte döljas", exc_info=True)
+        tip = getattr(self, "_tip_label", None)
+        if tip is not None:
+            tip.destroy()
+            self._tip_label = None
 
     def show_tab(self, name: str) -> None:
         if not self._settings.visible_tabs.get(name, True):
@@ -4066,6 +3082,13 @@ class DynamicTabView(ctk.CTkFrame):
                 btn.configure(**self._button_kwargs(n, selected=(n == name)))
             except Exception:
                 logger.debug("Knappfärg kunde inte uppdateras", exc_info=True)
+
+    def _keyboard_tab_menu(self, event, name):
+        button = self._tab_buttons[name]
+        event.x_root = button.winfo_rootx()
+        event.y_root = button.winfo_rooty() + button.winfo_height()
+        self._right_click_tab(event, name)
+        return "break"
 
     def _right_click_tab(self, event: tk.Event, name: str) -> None:
         # M14/v5.0 steg 4 — högerklicksmenyn hade en EGEN hårdkodad färg
@@ -4306,23 +3329,124 @@ class _DnDCTkBase(ctk.CTk):
             DND_AVAILABLE = False
 
 
+def dialog_layout(win):
+    """Scrollbart innehåll och en separat knappfot som aldrig scrollas bort."""
+    win.grid_rowconfigure(0, weight=1)
+    win.grid_columnconfigure(0, weight=1)
+    body = ctk.CTkScrollableFrame(win, fg_color="transparent")
+    body.grid(row=0, column=0, sticky="nsew")
+    footer = ctk.CTkFrame(win, fg_color="transparent")
+    footer.grid(row=1, column=0, sticky="ew", padx=12, pady=10)
+    # Väx efter verkligt innehåll, inte en fast uppskattad dialoghöjd.
+    # Scrollning finns kvar som reserv när skärmen faktiskt är för liten.
+    pending = [None]
+
+    def fit_content():
+        pending[0] = None
+        if not win.winfo_exists():
+            return
+        # Tk may still report 1x1 while the dialog is being constructed.
+        # Never feed that provisional width back into CTk.geometry.
+        if win.winfo_width() <= 1 or win.winfo_height() <= 1:
+            return
+        needed = body.winfo_reqheight() + footer.winfo_height() + 32
+        x, y = win.winfo_x(), win.winfo_y()
+        left, top = 0, 0
+        width_limit = win.winfo_screenwidth() - 32
+        limit = win.winfo_screenheight() - 80
+        try:
+            monitor = pick_monitor_for_point(enumerate_monitors(), x, y)
+            if monitor is not None:
+                left, top = monitor.left, monitor.top
+                width_limit = monitor.width - 32
+                limit = monitor.height - 80
+        except Exception:
+            pass
+        factor = win._get_window_scaling()
+        # Keep controls readable; only use a narrower dialog on small screens.
+        readable_width = round(560 * factor)
+        width = min(max(win.winfo_width(), readable_width), max(160, width_limit))
+        height = min(max(win.winfo_height(), needed), max(160, limit))
+        x = max(left, min(x, left + width_limit - width))
+        y = max(top, min(y, top + limit - height))
+        if (width, height, x, y) != (win.winfo_width(), win.winfo_height(), win.winfo_x(), win.winfo_y()):
+            # winfo returns physical pixels; CTk.geometry expects logical units.
+            # Passing physical pixels back caused repeated growth at high DPI.
+            factor = win._get_window_scaling()
+            win.geometry(f"{round(width / factor)}x{round(height / factor)}+{x}+{y}")
+
+    def schedule_fit(_event=None):
+        if pending[0] is None:
+            pending[0] = win.after_idle(fit_content)
+
+    body.bind("<Configure>", schedule_fit, add="+")
+    footer.bind("<Configure>", schedule_fit, add="+")
+    def window_resized(event):
+        # Toplevel bindings also receive descendant Configure events.
+        if event.widget is win:
+            schedule_fit()
+
+    win.bind("<Configure>", window_resized, add="+")
+    win.after_idle(schedule_fit)
+    return body, footer
+
+
+def toggle_vehicle_type(current, clicked):
+    """Ett fordonsslag åt gången. Klick på valt alternativ avmarkerar det."""
+    if clicked not in VEHICLE_CHOICES:
+        raise ValueError("Okänt fordonsslag")
+    return "" if current == clicked else clicked
+
+
+
+
+
+
+def focus_project_name(entry, attempts=10) -> None:
+    """One-shot focus after mapping; do not override a user's field choice."""
+    try:
+        if not entry.winfo_exists() or getattr(entry, "_ff_initial_focus_done", False):
+            return
+        if not entry.winfo_viewable():
+            if attempts > 0:
+                entry.after(40, lambda: focus_project_name(entry, attempts - 1))
+            return
+        window = entry.winfo_toplevel()
+        current = window.focus_get()
+        target = getattr(entry, "_entry", entry)
+        if (current is not None and current not in (window, entry, target)
+                and current.winfo_toplevel() is window):
+            entry._ff_initial_focus_done = True
+            return
+        # focus_set only records Tk focus if the OS has not activated the new
+        # modal yet. Force activation once for this explicitly opened dialog.
+        entry.focus_force()
+        entry.select_range(0, "end")
+        entry.icursor("end")
+        entry._ff_initial_focus_done = True
+    except tk.TclError:
+        pass  # Dialog may have been closed while a retry was pending.
+
+
 # ============================================================
 # Huvudapplikation
 # ============================================================
 class FolderForgeApp(_DnDCTkBase):
-    def __init__(self, start_minimerad: bool = False, **kwargs) -> None:
+    def __init__(self, start_minimerad: bool = True, **kwargs) -> None:
         # M5/C40 — globala felkrokar ALLRA FÖRST, innan någon tråd startas.
         # Tre bakgrundstrådar (keyboard.Listener, export-worker, pystray) kan
         # annars dö HELT TYST. install_crash_hooks() kedjar vidare till
         # originalkrokarna, är idempotent och kastar aldrig.
-        install_crash_hooks(logger)
+        # Globala felkrokar är redan installerade av logg.init_logging().
         super().__init__(**kwargs)
+        # Dölj före update_idletasks så att inget fönster blinkar till.
+        self.withdraw()  # Obligatoriskt, även om en äldre anropare skickar False.
 
         # M19/C44 — självläkning: reparera ett autostartvärde som pekar på
         # konsol-python (svart ruta vid inloggning) INNAN något annat körs.
         # Kastar aldrig; returnerar 'skipped' utanför Windows.
         try:
-            resultat = repair_stale_autostart(APP_NAME)
+            resultat = "skipped" if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1" else repair_stale_autostart(APP_NAME)
             if resultat == "repaired":
                 logger.info("Autostart reparerad vid start (ingen konsolruta).")
         except Exception:
@@ -4348,24 +3472,117 @@ class FolderForgeApp(_DnDCTkBase):
 
         ctk.set_appearance_mode(self.settings.theme)
         ctk.set_default_color_theme("blue")
+        ctk.set_widget_scaling(text_scale(self.settings.text_size))
 
         self._configure_window()
         self._build_menu()
         self._create_gui()
         self._update_ui_from_settings()
-        self._setup_global_hotkey()
-        self._toggle_autostart(self.autostart_var.get(), initial=True)
+        self._accessibility = AccessibilityController(
+            self, ctk, self.settings.high_contrast, self.settings.text_size)
+        self.bind_class(FOCUS_TAG, "<Control-Next>", lambda e: self._keyboard_page(e, 1), add="+")
+        self.bind_class(FOCUS_TAG, "<Control-Prior>", lambda e: self._keyboard_page(e, -1), add="+")
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            self._setup_global_hotkey()
+            self._toggle_autostart(self.autostart_var.get(), initial=True)
 
         self.protocol("WM_DELETE_WINDOW", self._minimize_to_systray)
-        self.bind("<Configure>", self._on_resize)
+        self.bind("<Configure>", self._on_resize, add="+")
+        self.bind("<Unmap>", self._on_window_unmap, add="+")
+        self.bind_all("<Map>", self._on_window_mapped, add="+")
+        self.after(1000, self._refresh_update_controls)
 
-        if start_minimerad:
-            self.after(100, self._minimize_to_systray)
+        self.after_idle(self._minimize_to_systray)
 
     # ============================================================
     # Fönster
     # ============================================================
+    def _confirm_update_start(self):
+        if not os.environ.get("FOLDERFORGE_UPDATE_TOKEN") or not self.winfo_exists():
+            return
+        if ((self.systray_icon is not None and self.systray_icon.visible)
+                or self.state() in ("normal", "zoomed")):
+            try:
+                from updater import confirm_startup
+                if confirm_startup(BASE_DIR):
+                    return
+            except Exception:
+                logger.exception("Kunde inte bekräfta uppdaterad start; säkerhetskopian behålls")
+                return
+        # A very fast child can reach Tk before the supervisor saves its PID.
+        self.after(250, self._confirm_update_start)
+
+    def _service_windows_smoke(self):
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            return
+        command = read_json_safe(DATA_DIR / "windows-smoke-command.json", {}) or {}
+        if command.get("pid") == os.getpid() and command.get("id") != getattr(self, "_smoke_command_id", None):
+            self._smoke_command_id = command.get("id")
+            action = command.get("action")
+            logger.debug("GUI-testkommando: %s", action)
+            if action == "restore":
+                self._restore_from_tray()
+            elif action == "close-main":
+                self.tk.call(self.protocol("WM_DELETE_WINDOW"))
+            elif action == "minimize-main":
+                self.iconify()
+            elif action == "hide":
+                self._minimize_to_systray()
+            elif action == "accessibility-regression":
+                self.after(0, self._exercise_accessibility_constructor)
+            elif action == "project-dialog":
+                self.after(0, self._create_folder_dialog)
+            elif action == "close-project-dialog":
+                for child in self.winfo_children():
+                    if isinstance(child, tk.Toplevel) and child.title() == "Nytt Standardprojekt":
+                        child.destroy()
+            elif action == "exit":
+                self.after(100, self._quit_app)
+        atomic_write_json(DATA_DIR / "windows-smoke-status.json", {
+            "pid": os.getpid(), "state": self.state(),
+            "tray": bool(self.systray_icon and self.systray_icon.visible),
+            "console": int(ctypes.windll.kernel32.GetConsoleWindow() or 0) if IS_WINDOWS else 0,
+            "icon": self._icon_method,
+        })
+        self.after(100, self._service_windows_smoke)
+
+    def _exercise_accessibility_constructor(self):
+        """CI-only: reproduce a Map event before CTkTextbox assigns x-scrollbar."""
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") != "1":
+            return
+        popup = ctk.CTkToplevel(self)
+        popup.title("Accessibility construction regression")
+        popup.geometry("360x240")
+        frame = ctk.CTkScrollableFrame(popup)
+        frame.pack(fill="both", expand=True)
+        original = ctk.CTkScrollbar.__init__
+        report = {"injected": False, "styled": False, "error": None}
+        def constructor(scrollbar, *args, **kwargs):
+            original(scrollbar, *args, **kwargs)
+            parent = scrollbar.master
+            if isinstance(parent, ctk.CTkTextbox) and hasattr(parent, "_y_scrollbar") and not hasattr(parent, "_x_scrollbar"):
+                report["injected"] = True
+                self._accessibility.on_map(SimpleNamespace(widget=frame))
+                self._accessibility.prepare(frame)
+                # This runs idle callbacks while the constructor is incomplete.
+                popup.update_idletasks()
+        try:
+            ctk.CTkScrollbar.__init__ = constructor
+            textbox = ctk.CTkTextbox(frame)
+            textbox.pack(fill="both", expand=True)
+        except Exception as exc:
+            report["error"] = repr(exc)
+            textbox = None
+        finally:
+            ctk.CTkScrollbar.__init__ = original
+        def finish():
+            report["styled"] = bool(textbox and hasattr(textbox, "_ff_accessible_colors"))
+            atomic_write_json(DATA_DIR / "accessibility-construction.json", report)
+            popup.destroy()
+        self.after(250, finish)
+
     def _configure_window(self) -> None:
+        self.configure(fg_color=UI_BACKGROUND)
         self.title(f"{APP_NAME} v{APP_VERSION}")
         self.minsize(scaled(500, self._scale), scaled(400, self._scale))
 
@@ -4402,7 +3619,15 @@ class FolderForgeApp(_DnDCTkBase):
                 "Multiskärmsplacering misslyckades — använder primärskärmen",
                 exc_info=True)
 
+        factor = self._get_window_scaling()
+        target = pick_monitor_for_point(enumerate_monitors(), x, y)
+        if target is not None:
+            w = min(w, int((target.width - 32) / factor))
+            h = min(h, int((target.height - 64) / factor))
+            x, y = clamp_window_into_monitor(x, y, round(w * factor), round(h * factor), target)
+        self.minsize(min(scaled(500, self._scale), w), min(scaled(400, self._scale), h))
         self.geometry(f"{w}x{h}+{x}+{y}")
+        self._restore_window_placement()
         self.resizable(True, True)
 
         # M28/v5.0 — ikonen överallt, med procedurell reserv.
@@ -4419,6 +3644,14 @@ class FolderForgeApp(_DnDCTkBase):
         # togs (ico-fil saknas / icke-Windows) dog den tyst på int.append().
         self._icon_method = apply_icon_to_window(self, APP_ICON, size=32)
         logger.debug("Fönsterikon applicerad via %s", self._icon_method)
+        if sys.platform == "darwin":
+            try:
+                from AppKit import NSApplication, NSImage
+                self._mac_brand_icon = NSImage.alloc().initWithContentsOfFile_(str(APP_ICON_PNG))
+                if self._mac_brand_icon is not None:
+                    NSApplication.sharedApplication().setApplicationIconImage_(self._mac_brand_icon)
+            except Exception:
+                logger.debug("macOS Dock-ikon kunde inte sättas", exc_info=True)
 
     # ============================================================
     # Menyrad
@@ -4434,6 +3667,12 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self.configure(menu=self._menubar)
+        file_menu = tk.Menu(self._menubar, font=("Segoe UI", scaled_font(11, self._scale)),
+                            **menu_configure_kwargs(ctk.get_appearance_mode()))
+        file_menu.add_command(label="Minimera till systemfältet", command=self._minimize_to_systray)
+        file_menu.add_separator()
+        file_menu.add_command(label="Avsluta FolderForge", command=self._quit_app)
+        self._menubar.add_cascade(label="Arkiv", menu=file_menu)
 
         # M14/v5.0 steg 4 — SLUTFÖRD. Block B5:s kommentar hävdade att alla
         # fem hårdkodade menyfärgerna ersatts, men i verkligheten patchades
@@ -4457,6 +3696,17 @@ class FolderForgeApp(_DnDCTkBase):
             **menu_configure_kwargs(ctk.get_appearance_mode()),
         )
         self._menubar.add_cascade(label="Hjälp", menu=help_menu)
+        help_menu.add_command(label="Fellista och felsökning", command=self._show_error_issues)
+        help_menu.add_command(label="Detaljerad loggning i 15 minuter", command=self._enable_detailed_logs)
+        help_menu.add_command(label="Återgå till normal loggning", command=lambda: self._enable_detailed_logs(0))
+        help_menu.add_command(label="Exportera felsökningspaket…", command=self._export_diagnostics)
+        help_menu.add_command(label="Öppna fellogg", command=self._open_error_log)
+        help_menu.add_command(label="Markera alla loggade fel som åtgärdade…", command=self._resolve_logged_errors)
+        help_menu.add_command(label="Rensa cache (smartfilter)", command=self._show_cache_cleanup)
+        help_menu.add_command(label="Sök uppdatering nu", command=self._check_updates_now)
+        help_menu.add_command(label="Uppdateringsstatus", command=self._show_update_status)
+        help_menu.add_separator()
+        help_menu.add_command(label="Donationer – Stöd FolderForge", command=self._show_support)
         help_menu.add_command(label="Om FolderForge", command=self._show_info)
 
     def _rebuild_visa_menu(self) -> None:
@@ -4474,10 +3724,11 @@ class FolderForgeApp(_DnDCTkBase):
         self._visa_menu.add_separator()
         _tab_view = getattr(self, "_tab_view", None)
         _kollapsad = bool(getattr(_tab_view, "_collapsed", False))
-        self._visa_menu.add_command(
-            label=("Fäll ut sidomenyn" if _kollapsad else "Fäll in sidomenyn"),
-            command=self._toggle_sidebar,
-        )
+        if _tab_view is not None and _tab_view.is_sidebar():
+            self._visa_menu.add_command(
+                label=("Fäll ut sidomenyn" if _kollapsad else "Fäll in sidomenyn"),
+                command=self._toggle_sidebar,
+            )
         self._visa_menu.add_separator()
         for name in TAB_ICONS:
             vis = self.settings.visible_tabs.get(name, True)
@@ -4512,8 +3763,8 @@ class FolderForgeApp(_DnDCTkBase):
 
         # Header
         self._header = ctk.CTkFrame(
-            self, fg_color=(ACCENT_BLUE, "#1a1a2e"),
-            corner_radius=0, height=scaled(80, s),
+            self, fg_color=UI_SURFACE,
+            corner_radius=0, height=scaled(68, s),
         )
         self._header.pack(fill="x", side="top")
         self._header.pack_propagate(False)
@@ -4524,29 +3775,52 @@ class FolderForgeApp(_DnDCTkBase):
             padx=scaled(20, s), pady=scaled(10, s),
         )
 
+        try:
+            brand_image = Image.open(BASE_DIR / "Icon" / "folderforge-logo.png").convert("RGBA")
+        except (OSError, ValueError):
+            brand_image = None
+        logo_ratio = min(220 / brand_image.width, 44 / brand_image.height) if brand_image else 1
+        logo_size = (scaled(max(1, int(brand_image.width * logo_ratio)), s),
+                     scaled(max(1, int(brand_image.height * logo_ratio)), s)) if brand_image else (1, 1)
+        self._brand_image = ctk.CTkImage(light_image=brand_image, dark_image=brand_image,
+                                        size=logo_size) if brand_image else None
         ctk.CTkLabel(
-            header_inner, text="📁 FolderForge",
-            font=ctk.CTkFont(size=scaled_font(26, s), weight="bold"),
-            text_color="white",
+            header_inner, text="" if self._brand_image else "FolderForge", image=self._brand_image, compound="left",
+            fg_color="#FFFFFF", corner_radius=8,
+            font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
+            text_color=UI_TEXT,
         ).pack(side="left")
 
         ctk.CTkLabel(
             header_inner, text=f"v{APP_VERSION}",
             font=ctk.CTkFont(size=scaled_font(12, s)),
-            text_color=("white", "#aaaacc"),
+            text_color=UI_MUTED,
         ).pack(side="left", padx=(scaled(8, s), 0), pady=(scaled(10, s), 0))
 
         self._theme_btn = ctk.CTkButton(
             header_inner, text="🌙",
             width=scaled(40, s), height=scaled(40, s),
             corner_radius=scaled(20, s),
-            fg_color=("white", "#2a2a3e"),
+            fg_color=UI_BACKGROUND,
             text_color=(ACCENT_BLUE, "white"),
-            hover_color=("gray90", "#3a3a4e"),
+            hover_color=UI_BORDER,
             command=self._toggle_theme,
             font=ctk.CTkFont(size=scaled_font(18, s)),
         )
         self._theme_btn.pack(side="right", pady=scaled(5, s))
+
+        # Synlig manuell kontroll på alla flikar, även i ett smalt fönster.
+        self._update_check_button = ctk.CTkButton(
+            self, text="Sök uppdatering nu",
+            command=self._check_updates_now,
+            height=scaled(34, s), corner_radius=8,
+            fg_color=UI_SURFACE, text_color=UI_TEXT,
+            border_width=1, border_color=UI_BORDER, hover_color=UI_BORDER,
+            font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
+        )
+        self._update_check_button.pack(
+            fill="x", padx=scaled(15, s), pady=(scaled(8, s), 0),
+        )
 
         # Resultat-banner
         self._result_banner = ctk.CTkFrame(
@@ -4556,6 +3830,7 @@ class FolderForgeApp(_DnDCTkBase):
             fill="x", padx=scaled(15, s), pady=(scaled(8, s), 0),
         )
         self._result_banner.pack_propagate(False)
+        self._result_banner.pack_forget()
 
         self.result_label = ctk.CTkLabel(
             self._result_banner, text="",
@@ -4573,12 +3848,13 @@ class FolderForgeApp(_DnDCTkBase):
             self._undo_bar,
             text="↩ Ångra senaste skapandet",
             command=self._undo_last,
-            fg_color=ACCENT_RED, hover_color="#c0392b",
+            fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
             state="disabled", height=scaled(32, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
         self.undo_btn.pack(fill="x")
+        self._undo_bar.pack_forget()
 
         # Tabbar
         # v5.0 steg 3 — SIDEBAR aktiverad. Flikraden ersätts av en vertikal
@@ -4596,8 +3872,8 @@ class FolderForgeApp(_DnDCTkBase):
         self._tab_view = DynamicTabView(
             self, settings=self.settings, scale=s,
             on_visibility_change=self._on_tab_visibility_changed,
-            layout="sidebar",
-            collapsed=should_collapse_sidebar(_bredd, s),
+            layout="tabs",
+            collapsed=should_collapse_sidebar(_bredd / text_scale(self.settings.text_size) if _bredd else None, s),
         )
         # Ökat andrum runt innehållet: 15→20 px i sidled och 6→12 px uppåt.
         # Tillsammans med sidebarn är detta det som gör korten större — de får
@@ -4605,7 +3881,8 @@ class FolderForgeApp(_DnDCTkBase):
         # fönsterkanten som i v4.3.
         self._tab_view.pack(
             fill="both", expand=True,
-            padx=scaled(20, s), pady=(scaled(12, s), scaled(12, s)),
+            padx=scaled(20 if sys.platform == "darwin" else 14, s),
+            pady=(scaled(12 if sys.platform == "darwin" else 8, s),) * 2,
         )
         # Responsiv kollaps: fönstret ändrar storlek → sidebarn följer med.
         # VIKTIGT: add="+" — utan den ERSÄTTER denna bindning den tidigare
@@ -4630,36 +3907,23 @@ class FolderForgeApp(_DnDCTkBase):
 
         self._tab_view.show_first_visible()
 
-        # Footer
-        footer = ctk.CTkFrame(
-            self, fg_color=(ACCENT_BLUE, "#1a1a2e"),
-            corner_radius=0, height=scaled(40, s),
-        )
+        # Content-driven footer: never clip text inside a fixed 42px frame.
+        footer = ctk.CTkFrame(self, fg_color=UI_SURFACE, corner_radius=0)
         footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
-
-        ctk.CTkLabel(
-            footer, text=COPYRIGHT_OWNER,
-            font=ctk.CTkFont(size=scaled_font(11, s)),
-            text_color=("white", "#8888aa"),
-        ).pack(side="left", padx=scaled(15, s), pady=scaled(5, s))
-
-        dnd_status = "✅ Drag & Drop aktiv" if DND_AVAILABLE else ""
-        if dnd_status:
-            ctk.CTkLabel(
-                footer, text=dnd_status,
-                font=ctk.CTkFont(size=scaled_font(10, s)),
-                text_color=("white", ACCENT_GREEN),
-            ).pack(side="left", padx=scaled(10, s))
-
-        ctk.CTkButton(
-            footer, text="Minimera till fältet",
-            command=self._minimize_to_systray,
-            fg_color="transparent",
-            hover_color=("white", "#2a2a3e"),
-            text_color="white", height=scaled(28, s),
-            font=ctk.CTkFont(size=scaled_font(11, s)),
-        ).pack(side="right", padx=scaled(15, s), pady=scaled(5, s))
+        footer.grid_columnconfigure(0, weight=1)
+        footer.grid_columnconfigure(1, weight=0 if sys.platform == "darwin" else 1)
+        ctk.CTkLabel(footer, text=COPYRIGHT_OWNER, anchor="w",
+                     font=ctk.CTkFont(size=scaled_font(11, s)), text_color=UI_MUTED).grid(
+                         row=0, column=0, sticky="ew", padx=8, pady=4)
+        ctk.CTkButton(footer, text="Minimera till fältet", command=self._minimize_to_systray,
+                      fg_color="transparent", hover_color=UI_BORDER, text_color=UI_TEXT,
+                      height=scaled(28, s), font=ctk.CTkFont(size=scaled_font(11, s))).grid(
+                          row=1 if sys.platform == "darwin" else 0, column=0 if sys.platform == "darwin" else 1,
+                          sticky="ew", padx=8, pady=4)
+        if DND_AVAILABLE:
+            ctk.CTkLabel(footer, text="✅ Drag & Drop aktiv", anchor="w", text_color=UI_MUTED).grid(
+                row=2 if sys.platform == "darwin" else 1, column=0,
+                columnspan=1 if sys.platform == "darwin" else 2, sticky="ew", padx=8, pady=(0, 4))
 
     # ============================================================
     # Tabb: Skapa
@@ -4668,45 +3932,34 @@ class FolderForgeApp(_DnDCTkBase):
         s = self._scale
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         scroll.pack(fill="both", expand=True)
-
-        self._card(scroll, title="🏗️  Standardprojekt", color=ACCENT_BLUE)
-        ctk.CTkLabel(
-            scroll,
-            text=(
-                "Skapar ett projekt med standardmappar:\n"
-                "Bilder, Skadeanmälan, Diagnos, Instruktioner, Kvalitetsrapport"
-            ),
-            font=ctk.CTkFont(size=scaled_font(12, s)),
-            justify="left", wraplength=0,
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(8, s)))
-
-        ctk.CTkButton(
-            scroll, text="🏗️  Skapa Standardprojekt",
-            command=self._create_folder_dialog,
-            fg_color=ACCENT_BLUE, hover_color="#3a8ee0",
-            height=scaled(42, s), corner_radius=10,
-            font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(15, s)))
-
-        ctk.CTkFrame(scroll, height=2, fg_color=("gray80", "gray30")).pack(
-            fill="x", padx=scaled(15, s), pady=scaled(10, s),
-        )
-
-        self._card(scroll, title="📋  Klistra in struktur", color=ACCENT_PURPLE)
-        ctk.CTkLabel(
-            scroll,
-            text="Klistra in en trädstruktur (indenterad text) och skapa mappar automatiskt.",
-            font=ctk.CTkFont(size=scaled_font(12, s)),
-            justify="left", wraplength=0,
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(8, s)))
-
-        ctk.CTkButton(
-            scroll, text="📋  Klistra in Struktur",
-            command=self._create_from_structure_dialog,
-            fg_color=ACCENT_PURPLE, hover_color="#8e44ad",
-            height=scaled(42, s), corner_radius=10,
-            font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
-        ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(15, s)))
+        ctk.CTkLabel(scroll, text="Skapa ett projekt", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(23, s), weight="bold")).pack(fill="x", padx=12, pady=(8, 4))
+        ctk.CTkLabel(scroll, text="En tydlig struktur. Redo på några sekunder.", anchor="w",
+                     text_color=UI_MUTED).pack(fill="x", padx=12, pady=(0, 16))
+        for title, description, action, command, primary in [
+            ("Använd din standardmall", "Skapa projekt med din sparade mappstruktur.",
+             "Skapa standardprojekt", self._create_folder_dialog, True),
+            ("Egen struktur", "Klistra in ett mappträd för ett enstaka projekt. Din standard ändras inte.",
+             "Klistra in struktur", self._create_from_structure_dialog, False),
+        ]:
+            card = ctk.CTkFrame(scroll, fg_color=UI_SURFACE, border_color=UI_BORDER,
+                               border_width=1, corner_radius=14)
+            card.pack(fill="x", padx=10, pady=(0, 14))
+            ctk.CTkLabel(card, text=title, image=load_ui_icon("Skapa" if primary else "Mallar", scaled(24, s)),
+                         compound="left", anchor="w", text_color=UI_TEXT,
+                         font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=18, pady=(18, 6))
+            text = ctk.CTkLabel(card, text=description, anchor="w", justify="left", text_color=UI_MUTED)
+            text.pack(fill="x", padx=18, pady=(0, 12))
+            card.bind("<Configure>", lambda event, label=text: label.configure(wraplength=max(120, event.width - 40)), add="+")
+            if primary:
+                self._default_template_label = ctk.CTkLabel(card, text="Mall: " + self.settings.default_template,
+                                                            anchor="w", text_color=UI_MUTED)
+                self._default_template_label.pack(fill="x", padx=18, pady=(0, 10))
+            ctk.CTkButton(card, text=action, command=command, height=scaled(40, s), corner_radius=9,
+                          fg_color=UI_PRIMARY if primary else UI_BACKGROUND,
+                          text_color="white" if primary else UI_TEXT,
+                          hover_color="#347CCC" if primary else UI_BORDER,
+                          font=ctk.CTkFont(size=scaled_font(13, s), weight="bold")).pack(fill="x", padx=18, pady=(0, 18))
 
     # ============================================================
     # Tabb: Historik
@@ -4741,6 +3994,8 @@ class FolderForgeApp(_DnDCTkBase):
             corner_radius=6,
             font=ctk.CTkFont(size=scaled_font(11, s)),
         ).pack(side="right")
+
+        adapt_control_row(header_row)
 
         self._history_scroll = ctk.CTkScrollableFrame(
             parent, fg_color="transparent",
@@ -4837,13 +4092,13 @@ class FolderForgeApp(_DnDCTkBase):
 
             left = ctk.CTkFrame(card, fg_color="transparent")
             left.pack(
-                side="left", fill="both", expand=True,
+                fill="both", expand=True,
                 padx=scaled(12, s), pady=scaled(8, s),
             )
 
             ctk.CTkLabel(
                 left,
-                text=f"📁  {item['name']}",
+                text=f"📁  {item['name']}" + (" (saknas)" if not path.exists() else ""),
                 font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
                 anchor="w",
             ).pack(fill="x")
@@ -4860,8 +4115,6 @@ class FolderForgeApp(_DnDCTkBase):
             ).pack(fill="x")
 
             display_path = str(path.parent)
-            if len(display_path) > 45:
-                display_path = "..." + display_path[-42:]
 
             ctk.CTkLabel(
                 left, text=display_path,
@@ -4870,7 +4123,7 @@ class FolderForgeApp(_DnDCTkBase):
             ).pack(fill="x")
 
             btn_col = ctk.CTkFrame(card, fg_color="transparent")
-            btn_col.pack(side="right", padx=scaled(8, s), pady=scaled(6, s))
+            btn_col.pack(fill="x", padx=scaled(8, s), pady=scaled(6, s))
 
             ctk.CTkButton(
                 btn_col, text="📂 Öppna",
@@ -4912,6 +4165,7 @@ class FolderForgeApp(_DnDCTkBase):
         self._set_result("🗑  Historiken rensad", "gray")
 
     def _export_specific(self, path: Path) -> None:
+        self._active_exports = getattr(self, "_active_exports", 0) + 1
         s = self._scale
         prog = ctk.CTkProgressBar(self._tab_exportera, mode="indeterminate")
         prog.pack(fill="x", padx=scaled(15, s), pady=scaled(5, s))
@@ -4935,6 +4189,7 @@ class FolderForgeApp(_DnDCTkBase):
                 ui_call(self, _done, result)
 
         def _done(result: str):
+            self._active_exports = max(0, self._active_exports - 1)
             prog.stop()
             prog.destroy()
             self._show_export_result(result)
@@ -4946,6 +4201,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_mallar(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
         self._card(parent, title="📋  Projektmallar", color=ACCENT_GREEN)
         ctk.CTkLabel(
             parent,
@@ -4967,6 +4225,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_exportera(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
 
         self._card(parent, title="📤  Exportera Mappstruktur", color=ACCENT_ORANGE)
 
@@ -5018,6 +4279,8 @@ class FolderForgeApp(_DnDCTkBase):
             font=ctk.CTkFont(size=scaled_font(12, s)),
         ).pack(side="right")
 
+        adapt_control_row(path_row)
+
         # Tema
         self._card(scroll, title="🎨  Utseende", color=ACCENT_PURPLE)
         self.theme_var = ctk.StringVar(value=self.settings.theme)
@@ -5028,6 +4291,25 @@ class FolderForgeApp(_DnDCTkBase):
             height=scaled(34, s),
         ).pack(fill="x", padx=scaled(15, s), pady=(0, scaled(12, s)))
 
+        self._card(scroll, title="Tillgänglighet", color=ACCENT_BLUE)
+        ctk.CTkLabel(scroll, text=SETTINGS_META["text_size"]["label"], anchor="w").pack(
+            fill="x", padx=scaled(15, s), pady=(0, 4))
+        self.text_size_var = ctk.StringVar(value=self.settings.text_size)
+        ctk.CTkOptionMenu(scroll, values=list(TEXT_SIZES), variable=self.text_size_var,
+                          command=lambda _v: self._change_accessibility()).pack(
+            fill="x", padx=scaled(15, s), pady=(0, 8))
+        ctk.CTkLabel(scroll, text=SETTINGS_META["text_size"]["beskrivning"],
+                     justify="left", anchor="w", wraplength=300).pack(fill="x", padx=scaled(15, s))
+        self.high_contrast_var = ctk.BooleanVar(value=self.settings.high_contrast)
+        self._settings_option(scroll, "high_contrast", self.high_contrast_var,
+                              self._change_accessibility)
+        ctk.CTkLabel(scroll, text="Tab / Skift+Tab: flytta fokus. Enter / mellanslag: aktivera knapp.\n"
+                     "Alt+ned: öppna vallista. Ctrl+Page Up/Down: byt sida.\n"
+                     "Page Up/Down: rulla området utanför textredigerare.\n"
+                     "I textredigerare: Ctrl+Tab infogar en tabb.",
+                     justify="left", anchor="w", wraplength=300).pack(
+            fill="x", padx=scaled(15, s), pady=(4, 12))
+
         # Alternativ — ALL synlig text hämtas från SETTINGS_META i
         # settings.py (sektion 7): ändra etikett/hjälptext där, inte här.
         self._card(scroll, title="⚙️  Alternativ", color=ACCENT_GREEN)
@@ -5036,10 +4318,14 @@ class FolderForgeApp(_DnDCTkBase):
                               self.open_var, self._save_settings_silent)
 
         self.autostart_var = ctk.BooleanVar(value=self._check_autostart())
-        self._settings_option(
-            scroll, "autostart", self.autostart_var,
-            lambda: self._toggle_autostart(self.autostart_var.get()),
-        )
+        if IS_WINDOWS:
+            self._settings_option(
+                scroll, "autostart", self.autostart_var,
+                lambda: self._toggle_autostart(self.autostart_var.get()),
+            )
+        else:
+            ctk.CTkLabel(scroll, text="Autostart: lägg FolderForge-genvägen i operativsystemets inloggningsobjekt.",
+                         wraplength=380, anchor="w").pack(fill="x", padx=15, pady=8)
 
         # Regns-läge: normaliserar bara regnr-prefixet ('dss 817 årg 2020' →
         # 'DSS817 ÅRG 2020') — fri text efter följer alltid med.
@@ -5047,11 +4333,11 @@ class FolderForgeApp(_DnDCTkBase):
         self._settings_option(scroll, "plate_mode",
                               self.plate_mode_var, self._save_settings_silent)
 
-        # Startläge: alltid minimerad i systray (default PÅ — användarens
-        # beslut), texten hämtas ur SETTINGS_META som allt annat här.
-        self.start_minimized_var = ctk.BooleanVar(value=self.settings.start_minimized)
-        self._settings_option(scroll, "start_minimized",
-                              self.start_minimized_var, self._save_settings_silent)
+        ctk.CTkLabel(
+            scroll, text="Startar alltid minimerad i systemfältet, utan konsolfönster.\n"
+                         "Öppna appen via tray-ikonen eller snabbtangenten.",
+            justify="left", anchor="w", wraplength=scaled(350, s),
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         # Drag & Drop info
         self._card(scroll, title="📥  Drag & Drop", color=ACCENT_TEAL)
@@ -5111,6 +4397,9 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     def _build_tab_hotkey(self, parent: ctk.CTkFrame) -> None:
         s = self._scale
+        viewport = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        viewport.pack(fill="both", expand=True)
+        parent = viewport
 
         self._card(parent, title="⌨️  Global Snabbtangent", color=ACCENT_PURPLE)
 
@@ -5135,6 +4424,9 @@ class FolderForgeApp(_DnDCTkBase):
             text_color="white",
         )
         self.hk_lbl.pack(pady=scaled(12, s))
+        self.hk_status_label = ctk.CTkLabel(parent, text="Snabbtangenten registreras…", wraplength=350,
+                                          font=ctk.CTkFont(size=scaled_font(12, s)))
+        self.hk_status_label.pack(fill="x", padx=15, pady=(0, 8))
 
         ctk.CTkButton(
             parent, text="✏️  Ändra Snabbtangent",
@@ -5154,7 +4446,7 @@ class FolderForgeApp(_DnDCTkBase):
         self.hk_rec_lbl.pack(pady=scaled(10, s))
 
         rec_btns = ctk.CTkFrame(self.hk_rec_frame, fg_color="transparent")
-        rec_btns.pack(pady=(0, scaled(10, s)))
+        rec_btns.pack(fill="x", padx=scaled(10, s), pady=(0, scaled(10, s)))
 
         ctk.CTkButton(
             rec_btns, text="✅ Spara",
@@ -5204,8 +4496,7 @@ class FolderForgeApp(_DnDCTkBase):
 
     def _card(self, parent: ctk.CTkFrame, title: str, color: str) -> None:
         s = self._scale
-        light_bg, _ = blend_color(color, 0.13)
-        _, dark_bg = blend_color(color, 0.20)
+        light_bg, dark_bg = UI_SURFACE
         # M13/C46 — titeln bär information, men alla 6 accentfärger låg under
         # WCAG AA 4.5:1 mot den blendade kortbakgrunden (sämst 1.53:1).
         # ensure_contrast() justerar färgen endast så mycket som krävs, och gör
@@ -5214,13 +4505,17 @@ class FolderForgeApp(_DnDCTkBase):
 
         f = ctk.CTkFrame(
             parent,
-            fg_color=(light_bg, dark_bg),
-            corner_radius=10,
+            fg_color=(light_bg, dark_bg), border_width=1, border_color=UI_BORDER,
+            corner_radius=12,
         )
         f.pack(fill="x", padx=scaled(10, s), pady=(scaled(8, s), scaled(4, s)))
 
+        section = next((name for name in TAB_ICONS if name.lower() in title.lower()), None)
+        section_icon = load_ui_icon(section, scaled(22, s)) if section else None
+        if section_icon:
+            title = title.lstrip("📋📤⚙️⌨️🕐🏗️ ")
         ctk.CTkLabel(
-            f, text=title,
+            f, text=title, image=section_icon, compound="left",
             font=ctk.CTkFont(size=scaled_font(14, s), weight="bold"),
             text_color=(title_light, title_dark), anchor="w",
         ).pack(
@@ -5232,7 +4527,43 @@ class FolderForgeApp(_DnDCTkBase):
     # ============================================================
     # Resize
     # ============================================================
+    def _remember_window_placement(self):
+        if self.state() != "normal" or not self.winfo_viewable():
+            return
+        rectangle = [self.winfo_x(), self.winfo_y(), self.winfo_width(), self.winfo_height()]
+        if min(rectangle[2:]) > 100:
+            atomic_write_json(DATA_DIR / "window-placement.json", rectangle)
+
+    def _restore_window_placement(self):
+        rectangle = read_json_safe(DATA_DIR / "window-placement.json", None)
+        if not (isinstance(rectangle, list) and len(rectangle) == 4
+                and all(type(value) is int for value in rectangle)
+                and all(100 < value < 20000 for value in rectangle[2:])):
+            return
+        x, y, width, height = rectangle
+        monitors = enumerate_monitors()
+        monitor = pick_monitor_for_point(monitors, x, y)
+        if monitor is not None:
+            width, height = min(width, monitor.width - 32), min(height, monitor.height - 64)
+            x, y = clamp_window_into_monitor(x, y, width, height, monitor)
+        else:
+            width = min(width, self.winfo_screenwidth() - 32)
+            height = min(height, self.winfo_screenheight() - 80)
+            x = max(0, min(x, self.winfo_screenwidth() - width))
+            y = max(0, min(y, self.winfo_screenheight() - height - 40))
+        factor = self._get_window_scaling()
+        self.minsize(min(round(width / factor), scaled(500, self._scale)),
+                     min(round(height / factor), scaled(400, self._scale)))
+        self.geometry(f"{round(width / factor)}x{round(height / factor)}+{x}+{y}")
+
     def _on_resize(self, event: tk.Event) -> None:
+        if event.widget is not self:
+            return
+        if event.widget is self:
+            pending = getattr(self, "_placement_save_timer", None)
+            if pending is not None:
+                self.after_cancel(pending)
+            self._placement_save_timer = self.after(600, self._remember_window_placement)
         try:
             w = self.winfo_width()
             self.result_label.configure(
@@ -5274,8 +4605,7 @@ class FolderForgeApp(_DnDCTkBase):
             self.settings.open_after_creation = self.open_var.get()
         if hasattr(self, 'plate_mode_var'):
             self.settings.plate_mode = self.plate_mode_var.get()
-        if hasattr(self, 'start_minimized_var'):
-            self.settings.start_minimized = self.start_minimized_var.get()
+        self.settings.start_minimized = True
         if hasattr(self, 'theme_var'):
             self.settings.theme = self.theme_var.get()
         # M1/F1 — atomisk skrivning: mkstemp → fdopen → fsync → os.replace, med
@@ -5286,6 +4616,8 @@ class FolderForgeApp(_DnDCTkBase):
                          "(atomisk skrivning misslyckades)")
 
     def _update_ui_from_settings(self) -> None:
+        if hasattr(self, '_default_template_label'):
+            self._default_template_label.configure(text="Mall: " + self.settings.default_template)
         p = self.settings.save_root
         if hasattr(self, 'path_lbl'):
             self.path_lbl.configure(
@@ -5303,6 +4635,32 @@ class FolderForgeApp(_DnDCTkBase):
             )
         if hasattr(self, 'theme_var'):
             self.theme_var.set(self.settings.theme)
+
+    def _change_accessibility(self) -> None:
+        self.settings.text_size = self.text_size_var.get()
+        self.settings.high_contrast = self.high_contrast_var.get()
+        ctk.set_widget_scaling(text_scale(self.settings.text_size))
+        self._accessibility.refresh(self.settings.high_contrast, self.settings.text_size)
+        self._on_app_resize()
+        self._save_settings_silent()
+
+    def _keyboard_page(self, event, direction):
+        # Never leave a grabbed/modal dialog or steal a text editor's shortcuts.
+        if self.grab_current() is not None or event.widget.winfo_toplevel() is not self:
+            return None
+        names = [name for name in self._tab_view._tabs
+                 if self.settings.visible_tabs.get(name, True)]
+        if names:
+            active = self._tab_view.get_active_tab()
+            index = names.index(active) if active in names else -1
+            name = names[(index + direction) % len(names)]
+            self._tab_view.show_tab(name)
+            self.update_idletasks()
+            controls = self._accessibility.candidates(self._tab_view._tabs[name])
+            if controls:
+                controls[0].focus_set()
+                self._accessibility.reveal(controls[0])
+        return "break"
 
     def _choose_path(self) -> None:
         d = filedialog.askdirectory(initialdir=self.settings.save_root)
@@ -5322,9 +4680,13 @@ class FolderForgeApp(_DnDCTkBase):
             new_mode = "Dark"
         ctk.set_appearance_mode(new_mode)
         self.settings.theme = new_mode
+        if hasattr(self, "theme_var"):
+            self.theme_var.set(new_mode)
         # M14/v5.0 — Tk-menyer följer INTE ctk.set_appearance_mode() automatiskt,
         # de måste konfigureras om uttryckligen.
         self._apply_menu_theme(new_mode)
+        if hasattr(self, "_accessibility"):
+            self._accessibility.refresh()
         icons = {"Dark": "🌙", "Light": "☀️", "System": "💻"}
         self._theme_btn.configure(text=icons.get(new_mode, "🌙"))
         self._save_settings_silent()
@@ -5334,6 +4696,8 @@ class FolderForgeApp(_DnDCTkBase):
         self.settings.theme = value
         # M14/v5.0 — se _toggle_theme: Tk-menyer måste konfigureras om för hand.
         self._apply_menu_theme(value)
+        if hasattr(self, "_accessibility"):
+            self._accessibility.refresh()
         self._save_settings_silent()
 
     def _on_app_resize(self, event=None) -> None:
@@ -5354,7 +4718,7 @@ class FolderForgeApp(_DnDCTkBase):
         try:
             if event is not None and getattr(event, "widget", None) is not self:
                 return
-            ändrat = self._tab_view.update_for_width(self.winfo_width())
+            ändrat = self._tab_view.update_for_width(int(self.winfo_width() / text_scale(self.settings.text_size)))
             if ändrat:
                 self._sidebar_kollapsad = bool(self._tab_view._collapsed)
                 logger.debug("Sidebar %s vid bredd %s px",
@@ -5412,19 +4776,8 @@ class FolderForgeApp(_DnDCTkBase):
     # LOGIK: Skapa mappar
     # ============================================================
     @staticmethod
-    def _bygg_projektnamn(namn_text: str, lokal: str) -> str:
-        """Sätter ihop slutnamnet för standardprojekt.
-
-        Lokalen (om vald i dropdownen) läggs ALLTID sist i namnet —
-        användarens beslut ("JPM602 SIDORUTA LAXÅ"). Handskrivna lokal-
-        ord i textfältet plockas bort först (case-insensitivt), så
-        dropdownen är enda källan → inga dubbletter möjliga.
-        """
-        ord_lista = [o for o in str(namn_text).split()
-                     if o.upper() not in LOKAL_CHOICES]
-        if lokal and lokal != "—":
-            ord_lista.append(lokal)
-        return " ".join(ord_lista)
+    def _bygg_projektnamn(namn_text: str, lokal: str, year: str = "—", vehicle_type: str = "") -> str:
+        return build_project_name(namn_text, lokal, year, vehicle_type)
 
     def _create_folder_dialog(self) -> None:
         """Namndialog för Standardprojekt — design v2.
@@ -5448,41 +4801,64 @@ class FolderForgeApp(_DnDCTkBase):
         win.transient(self)
         apply_icon_to_window(win, APP_ICON)
         win.grab_set()
-        win.resizable(False, False)
+        win.resizable(True, True)
 
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
-        bredd = min(scaled(480, s), int(sw * 0.5))
-        höjd = min(scaled(390, s), int(sh * 0.6))
-        win.geometry(f"{bredd}x{höjd}+{(sw - bredd) // 2}+{(sh - höjd) // 2}")
+        left, top = 0, 0
+        try:
+            monitor = pick_monitor_for_point(enumerate_monitors(),
+                                             self.winfo_x(), self.winfo_y())
+            if monitor is not None:
+                left, top = monitor.left, monitor.top
+                sw, sh = monitor.width, monitor.height
+        except Exception:
+            logger.debug("Kunde inte välja dialogens bildskärm", exc_info=True)
+        factor = win._get_window_scaling()
+        bredd = min(scaled(640, s), max(160, int((sw - 80) / factor)))
+        höjd = min(scaled(550, s), max(160, int((sh - 100) / factor)))
+        x = left + max(0, int((sw - bredd * factor) / 2))
+        y = top + max(0, int((sh - höjd * factor) / 2))
+        win.geometry(f"{bredd}x{höjd}+{x}+{y}")
+        body, footer = dialog_layout(win)
+        # Slutnamn och knappar sitter ihop, utanför det rullbara formuläret.
+        footer.configure(fg_color=UI_SURFACE)
 
         # ── Rubrik + underrubrik ───────────────────────────────────
-        ctk.CTkLabel(
-            win, text="📁  Nytt standardprojekt",
+        heading_label = ctk.CTkLabel(
+            body, text="Nytt standardprojekt", image=load_ui_icon("Skapa", scaled(24, s)), compound="left",
             font=ctk.CTkFont(size=scaled_font(15, s), weight="bold"),
             anchor="w", text_color=("gray15", "gray90"),
-        ).pack(anchor="w", padx=scaled(15, s), pady=(scaled(12, s), 0))
-        ctk.CTkLabel(
-            win, text="Skapar projektmappen med alla standardundermappar.",
+        )
+        heading_label.pack(fill="x", padx=scaled(18, s), pady=(scaled(16, s), scaled(4, s)))
+        subtitle_label = ctk.CTkLabel(
+            body, text="Skapa en projektmapp med din standardmall. Snabbvalen är valfria.",
             font=ctk.CTkFont(size=scaled_font(11, s)),
             text_color=("gray40", "gray55"), anchor="w",
-        ).pack(anchor="w", padx=scaled(15, s), pady=(0, scaled(4, s)))
+        )
+        subtitle_label.pack(fill="x", padx=scaled(18, s), pady=(0, scaled(10, s)))
+        for label in (heading_label, subtitle_label):
+            label.configure(justify="left")
+            label.bind("<Configure>", lambda _e, widget=label: widget.configure(
+                wraplength=max(80, widget.winfo_width() / widget._get_widget_scaling() - 8)), add="+")
 
         resultat: Dict[str, Optional[str]] = {"namn": None}
         namn_var = ctk.StringVar()
         lokal_var = ctk.StringVar(value="—")
+        year_var = ctk.StringVar(value="—")
+        vehicle_var = ctk.StringVar(value="")
 
         def _rubrik(text: str) -> None:
             ctk.CTkLabel(
-                win, text=text,
+                body, text=text,
                 font=ctk.CTkFont(size=scaled_font(11, s), weight="bold"),
                 text_color=("gray40", "gray55"), anchor="w",
-            ).pack(anchor="w", padx=scaled(15, s),
+            ).pack(fill="x", padx=scaled(15, s),
                    pady=(scaled(8, s), scaled(3, s)))
 
         # ── Projektnamn ────────────────────────────────────────────
         _rubrik("PROJEKTNAMN")
         entry = ctk.CTkEntry(
-            win, textvariable=namn_var,
+            body, textvariable=namn_var,
             placeholder_text="t.ex. DSS817 eller dss 817 ...",
             font=ctk.CTkFont(size=scaled_font(13, s)),
             height=scaled(34, s),
@@ -5497,21 +4873,41 @@ class FolderForgeApp(_DnDCTkBase):
             except Exception:
                 pass
 
+        _rubrik("FORDONSSLAG  ·  valfritt")
+        vehicle_row = ctk.CTkFrame(body, fg_color="transparent")
+        vehicle_row.pack(fill="x", padx=scaled(15, s), pady=(0, scaled(4, s)))
+        vehicle_buttons = {}
+
+        def toggle_vehicle(choice):
+            vehicle_var.set(toggle_vehicle_type(vehicle_var.get(), choice))
+            _avsluta_redigering()
+
+        for column, choice in enumerate(VEHICLE_CHOICES):
+            vehicle_row.grid_columnconfigure(column, weight=1, uniform="vehicles")
+            button = ctk.CTkButton(
+                vehicle_row, text=choice.title(), width=scaled(70, s), height=scaled(36, s),
+                command=lambda value=choice: toggle_vehicle(value),
+                fg_color=UI_BACKGROUND, text_color=UI_TEXT, hover_color=UI_BORDER,
+                corner_radius=8, font=ctk.CTkFont(size=scaled_font(12, s)),
+            )
+            button.grid(row=0, column=column, sticky="ew", padx=3, pady=3)
+            vehicle_buttons[choice] = button
+
         # ── Skadetyp-chips med visuellt markeringsläge ─────────────
-        _rubrik("SKADETYP  ·  SIDORUTA/BAKRUTA utesluter varandra")
-        chips_row = ctk.CTkFrame(win, fg_color="transparent")
+        _rubrik("SKADETYP  ·  valfria snabbval")
+        chips_row = ctk.CTkFrame(body, fg_color="transparent")
         chips_row.pack(fill="x", padx=scaled(15, s))
-        chip_färger = (ACCENT_ORANGE, ACCENT_PURPLE, ACCENT_TEAL, ACCENT_BLUE)
         chip_knappar: Dict[str, Any] = {}
         for i, chip in enumerate(DAMAGE_TYPE_CHIPS):
             knapp = ctk.CTkButton(
                 chips_row, text=chip,
                 command=lambda c=chip: toggla(c),
-                fg_color=("gray70", "gray30"),
-                height=scaled(26, s), corner_radius=13,
+                fg_color=UI_BACKGROUND, text_color=UI_TEXT, hover_color=UI_BORDER,
+                height=scaled(34, s), corner_radius=8,
                 font=ctk.CTkFont(size=scaled_font(11, s)),
             )
-            knapp.pack(side="left", padx=(0, scaled(6, s)), pady=scaled(2, s))
+            knapp.grid(row=i // 2, column=i % 2, sticky="ew", padx=3, pady=3)
+            chips_row.grid_columnconfigure(i % 2, weight=1, uniform="damage")
             chip_knappar[chip] = knapp
 
         def toggla(chip: str) -> None:
@@ -5531,79 +4927,199 @@ class FolderForgeApp(_DnDCTkBase):
             namn_var.set(" ".join(ord_lista))
             _avsluta_redigering()
 
-        # ── Lokal ──────────────────────────────────────────────────
-        _rubrik("LOKAL  ·  hamnar sist i namnet")
-        ctk.CTkOptionMenu(
-            win, values=["—"] + list(LOKAL_CHOICES),
-            variable=lokal_var,
-            command=lambda _v: _förnya_utseende(),
-            fg_color=ACCENT_BLUE, button_color=ACCENT_BLUE,
-            height=scaled(28, s), corner_radius=8,
+        # Lokal och år delar en rad, med samma bredd och tydliga etiketter.
+        details_row = ctk.CTkFrame(body, fg_color="transparent")
+        details_row.pack(fill="x", padx=scaled(15, s), pady=(scaled(10, s), scaled(8, s)))
+        for column in (0, 1):
+            details_row.grid_columnconfigure(column, weight=1, uniform="details")
+        detail_labels = []
+        for column, caption in enumerate(("LOKAL  ·  valfritt", "ÅR  ·  välj eller skriv")):
+            label = ctk.CTkLabel(details_row, text=caption, anchor="w", text_color=UI_MUTED,
+                                 font=ctk.CTkFont(size=scaled_font(11, s), weight="bold"))
+            label.grid(row=0, column=column, sticky="ew", padx=6, pady=(0, 5))
+            detail_labels.append(label)
+        location_menu = ctk.CTkOptionMenu(
+            details_row, values=["—"] + list(LOKAL_CHOICES), variable=lokal_var,
+            command=lambda _v: _förnya_utseende(), width=1,
+            fg_color=UI_PRIMARY, button_color=UI_PRIMARY,
+            height=scaled(36, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s)),
-        ).pack(anchor="w", padx=scaled(15, s))
+        )
+        location_menu.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        year_menu = ctk.CTkComboBox(
+            details_row, values=["—"] + project_year_choices(), variable=year_var,
+            command=lambda _v: _förnya_utseende(), width=1,
+            height=scaled(36, s), corner_radius=8,
+            font=ctk.CTkFont(size=scaled_font(12, s)),
+        )
+        year_menu.grid(row=1, column=1, sticky="ew", padx=(10, 0))
+
+        def refresh_year_choices():
+            values = ["—"] + project_year_choices()
+            year_menu.configure(values=values)
+            # Även en dialog som är öppen över nyår följer med.
+            win.after(60_000, refresh_year_choices)
+
+        win.after(60_000, refresh_year_choices)
 
         # ── Live-förhandsvisning av slutnamnet ─────────────────────
-        preview_ram = ctk.CTkFrame(win, corner_radius=8,
-                                   fg_color=("gray88", "gray20"))
-        preview_ram.pack(fill="x", padx=scaled(15, s), pady=(scaled(12, s), 0))
+        preview_ram = ctk.CTkFrame(footer, corner_radius=8,
+                                   fg_color=UI_BACKGROUND, border_width=1, border_color=UI_BORDER)
+        preview_ram.pack(fill="x", padx=0, pady=(0, scaled(8, s)))
+        ctk.CTkLabel(preview_ram, text="MAPPNAMN", anchor="w", text_color=UI_MUTED,
+                     font=ctk.CTkFont(size=scaled_font(10, s), weight="bold")).pack(
+                         fill="x", padx=12, pady=(8, 0))
         preview_var = ctk.StringVar()
-        ctk.CTkLabel(
+        preview_label = ctk.CTkLabel(
             preview_ram, textvariable=preview_var,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
-            text_color=("gray20", ACCENT_BLUE), anchor="w",
-        ).pack(anchor="w", padx=scaled(12, s), pady=scaled(8, s))
+            text_color=UI_TEXT, anchor="w", justify="left",
+        )
+        preview_label.pack(fill="x", padx=scaled(12, s), pady=(0, scaled(8, s)))
+        preview_label.bind("<Configure>", lambda _e: preview_label.configure(
+            wraplength=max(80, preview_label.winfo_width() / preview_label._get_widget_scaling() - 8)), add="+")
 
         # ── Knappar ────────────────────────────────────────────────
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s),
-                     pady=(scaled(10, s), scaled(14, s)))
+        btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+        btn_row.pack(fill="x", padx=0, pady=0)
 
         def ok(*_e) -> None:
             if not namn_var.get().strip():
                 return    # Return-vakt: lokal ensam är INTE ett projektnamn
+            try:
+                year = validate_project_year(year_var.get())
+            except ValueError as exc:
+                messagebox.showwarning("Ogiltigt år", str(exc), parent=win)
+                year_menu.focus_set()
+                return
             resultat["namn"] = self._bygg_projektnamn(
-                namn_var.get(), lokal_var.get())
+                namn_var.get(), lokal_var.get(), year, vehicle_var.get())
             win.destroy()
 
         skapa_knapp = ctk.CTkButton(
-            btn_row, text="Skapa", command=ok,
-            fg_color=ACCENT_BLUE, height=scaled(34, s), corner_radius=8,
+            btn_row, text="Skapa projekt", command=ok,
+            fg_color=UI_PRIMARY, hover_color=ACCENT_BLUE, height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
         )
-        skapa_knapp.pack(side="right")
-        ctk.CTkButton(
+        skapa_knapp.grid(row=0, column=1, sticky="ew", padx=4)
+        cancel_button = ctk.CTkButton(
             btn_row, text="Avbryt", command=win.destroy,
-            fg_color=("gray70", "gray30"), height=scaled(34, s), corner_radius=8,
+            fg_color=("gray70", "gray30"), height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(12, s)),
-        ).pack(side="right", padx=(0, scaled(8, s)))
+        )
+        cancel_button.grid(row=0, column=0, sticky="ew", padx=4)
+
+        def responsive_buttons(frame, buttons, max_columns):
+            previous = [None]
+            # Establish stretch before accessibility can measure a 1px button.
+            for col in range(max_columns):
+                frame.grid_columnconfigure(col, weight=1, uniform="responsive")
+            def reflow(event):
+                if event.widget not in (frame, getattr(frame, "_canvas", None)) or frame.winfo_width() <= 1:
+                    return
+                available = frame.winfo_width() / frame._get_widget_scaling()
+                minimum = max(button.cget("font").measure(button.cget("text").replace("✓ ", ""))
+                              + scaled(40, s) for button in buttons)
+                columns = max(1, min(max_columns, int(available / max(1, minimum))))
+                if columns == previous[0]:
+                    return
+                previous[0] = columns
+                for col in range(max_columns):
+                    frame.grid_columnconfigure(col, weight=1 if col < columns else 0,
+                                               minsize=0, uniform="responsive" if col < columns else "")
+                for index, button in enumerate(buttons):
+                    button.configure(width=1)
+                    button.grid(row=index // columns, column=index % columns,
+                                sticky="ew", padx=3, pady=3)
+            frame.bind("<Configure>", reflow, add="+")
+            win.after(25, lambda: reflow(SimpleNamespace(widget=frame)))
+
+        responsive_buttons(vehicle_row, list(vehicle_buttons.values()), len(vehicle_buttons))
+        responsive_buttons(chips_row, list(chip_knappar.values()), 2)
+        responsive_buttons(btn_row, [cancel_button, skapa_knapp], 2)
+
+        detail_columns = [None]
+        def reflow_details(event):
+            if event.widget not in (details_row, details_row._canvas) or details_row.winfo_width() <= 1:
+                return
+            available = details_row.winfo_width() / details_row._get_widget_scaling()
+            minimum = max(label.cget("font").measure(label.cget("text")) for label in detail_labels) + 40
+            columns = 2 if available >= minimum * 2 else 1
+            if detail_columns[0] == columns:
+                return
+            detail_columns[0] = columns
+            for col in (0, 1):
+                details_row.grid_columnconfigure(col, weight=1 if col < columns else 0, minsize=0,
+                                                 uniform="details" if col < columns else "")
+            for index, (label, field) in enumerate(zip(detail_labels, (location_menu, year_menu))):
+                row, col = (0, index) if columns == 2 else (index * 2, 0)
+                label.grid(row=row, column=col, sticky="ew", padx=6, pady=(4, 3))
+                field.grid(row=row + 1, column=col, sticky="ew", padx=6, pady=(0, 4))
+        details_row.bind("<Configure>", reflow_details, add="+")
+        win.after(25, lambda: reflow_details(SimpleNamespace(widget=details_row)))
 
         def _förnya_utseende(*_a) -> None:
             """Synkar chips-lägen, förhandsvisning och Skapa-knappens
             status mot textfältet — körs via trace vid VARJE ändring,
             så vyn aldrig ljuger om vad som kommer skapas."""
+            for choice, button in vehicle_buttons.items():
+                selected = vehicle_var.get() == choice
+                button.configure(text=("✓ " if selected else "") + choice.title(),
+                                 fg_color=UI_PRIMARY if selected else UI_BACKGROUND,
+                                 text_color="white" if selected else UI_TEXT)
             ord_set = {o.upper() for o in namn_var.get().split()}
             for i, chip in enumerate(DAMAGE_TYPE_CHIPS):
                 aktiv = chip.upper() in ord_set
                 chip_knappar[chip].configure(
                     text=("✓ " + chip) if aktiv else chip,
-                    fg_color=(chip_färger[i % len(chip_färger)] if aktiv
-                              else ("gray70", "gray30")),
+                    fg_color=UI_PRIMARY if aktiv else UI_BACKGROUND,
+                    text_color="white" if aktiv else UI_TEXT,
                 )
             eget_namn = namn_var.get().strip()
             # Viktigt: "tomt namn" mäts på textfältet — ENBART en vald
             # lokal (utan eget namn) är aldrig ett giltigt projektnamn.
-            namn = self._bygg_projektnamn(eget_namn, lokal_var.get()).strip()
+            namn = self._bygg_projektnamn(eget_namn, lokal_var.get(), year_var.get(), vehicle_var.get()).strip()
             preview_var.set(f"📁 {namn}" if eget_namn
                             else "📁 (ange ett projektnamn)")
             skapa_knapp.configure(state=("normal" if eget_namn else "disabled"))
 
+        vehicle_var.trace_add("write", _förnya_utseende)
+        year_var.trace_add("write", _förnya_utseende)
         namn_var.trace_add("write", _förnya_utseende)
         _förnya_utseende()                  # startläge: chips släckta, Skapa av
 
+        year_menu.bind("<Return>", ok)
         entry.bind("<Return>", ok)
         win.bind("<Escape>", lambda _e: win.destroy())
         win.protocol("WM_DELETE_WINDOW", win.destroy)
-        entry.focus_set()
+        win.bind("<Map>", lambda event: win.after_idle(lambda: focus_project_name(entry))
+                 if event.widget is win else None, add="+")
+        win.after(150, lambda: focus_project_name(entry))
+
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
+            def report_layout(attempt=0):
+                # Busy CI desktops can still be mapping nested canvas controls.
+                # Sample settled controls, not their provisional off-window coords.
+                controls = (entry, preview_ram, btn_row, skapa_knapp, cancel_button)
+                if attempt < 30 and not all(widget.winfo_viewable() and widget.winfo_width() > 1
+                                            for widget in controls):
+                    win.after(200, lambda: report_layout(attempt + 1))
+                    return
+                def box(widget):
+                    return [widget.winfo_rootx() - win.winfo_rootx(), widget.winfo_rooty() - win.winfo_rooty(),
+                            widget.winfo_width(), widget.winfo_height()]
+                atomic_write_json(DATA_DIR / "project-dialog-layout.json", {
+                    "window": [win.winfo_width(), win.winfo_height()],
+                    "screen": [win.winfo_screenwidth(), win.winfo_screenheight()],
+                    "text_size": self.settings.text_size,
+                    "project_name_focused": win.focus_get() is entry._entry,
+                    "subtitle": box(subtitle_label), "preview": box(preview_ram),
+                    "actions": box(btn_row), "location": box(location_menu), "year": box(year_menu),
+                    "create": box(skapa_knapp), "cancel": box(cancel_button),
+                    "button_text_width": skapa_knapp.cget("font").measure(skapa_knapp.cget("text"))
+                                         * skapa_knapp._get_widget_scaling(),
+                })
+            win.after(900, report_layout)
 
         self.wait_window(win)
         namn = (resultat["namn"] or "").strip()
@@ -5611,15 +5127,8 @@ class FolderForgeApp(_DnDCTkBase):
             self._create_std_proj(namn)
 
     def _create_std_proj(self, name: str) -> None:
-        regnr_info = ""
         if self.settings.plate_mode:
-            name, regnr = normalize_plate_name(name)
-            if regnr is None:
-                # MJUK varning — visas i förhandsdialogen, stoppar aldrig.
-                regnr_info = (
-                    "\n\nℹ️ Hittade inget regnr i början av namnet "
-                    "(format ABC123 eller ABC12A) — skapar som angivet."
-                )
+            name, _regnr = normalize_plate_name(name)
         try:
             safe_name = NameValidator.sanitize(name)
         except ValueError as e:
@@ -5630,41 +5139,16 @@ class FolderForgeApp(_DnDCTkBase):
         # namn även om jag skriver lower case") — ta INTE bort .upper() igen.
         root = Path(self.settings.save_root) / safe_name.upper()
 
-        if root.exists():
-            choice = messagebox.askyesnocancel(
-                "Mappen finns redan",
-                f"'{root.name}' finns redan.\n\n"
-                f"Ja      → Öppna befintlig mapp\n"
-                f"Nej     → Avbryt\n"
-                f"Avbryt  → Stäng dialogen",
-            )
-            if choice is True:
-                self._open_path(root)
-                self._set_result(f"📂 Öppnade: {root.name}", ACCENT_ORANGE)
+        templates = self.template_mgr.list_templates()
+        selected = self.settings.default_template
+        if selected not in templates:
+            messagebox.showwarning("Standardmall saknas", "Välj en ny standard under Projektmallar.")
             return
-
-        folders = [
-            "Bilder", "Skadeanmälan", "Diagnos",
-            "Instruktioner", "Kvalitetsrapport",
-        ]
-        preview = (
-            f"📁 {root.name}/\n"
-            + "\n".join(f"    📁 {f}/" for f in folders)
-            + f"\n\nTotalt: {len(folders)} undermappar"
-        )
-
-        if not messagebox.askyesno(
-            "Förhandsvisning", f"Skapa detta?\n\n{preview}{regnr_info}",
-        ):
-            return
-
-        try:
-            root.mkdir(parents=True)
-            for folder in folders:
-                (root / folder).mkdir()
-            self._on_creation_success(root)
-        except OSError as e:
-            self._set_result(f"❌ Fel: {e}", ACCENT_RED)
+        structure = templates[selected]
+        _, items = StructureEngine.parse_structure_text(structure)
+        items, _ = strip_root_level(items, root.name)
+        if self._show_preview(root.name, items):
+            self._build_structure(root.name, items)
 
     def _create_from_structure_dialog(self) -> None:
         s = self._scale
@@ -5683,19 +5167,20 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_PURPLE,
+            body, fg_color=ACCENT_PURPLE,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📋  Skapa från Struktur",
+            body, text="📋  Skapa från Struktur",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
-        inner = ctk.CTkScrollableFrame(win, fg_color="transparent")
+        inner = ctk.CTkScrollableFrame(body, fg_color="transparent")
         inner.pack(
             fill="both", expand=True,
             padx=scaled(15, s), pady=scaled(10, s),
@@ -5707,12 +5192,14 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(anchor="w", pady=(scaled(5, s), scaled(2, s)))
 
         root_var = ctk.StringVar()
-        ctk.CTkEntry(
+        root_entry = ctk.CTkEntry(
             inner, textvariable=root_var,
             height=scaled(36, s),
             font=ctk.CTkFont(size=scaled_font(13, s)),
             placeholder_text="T.ex. MittProjekt",
-        ).pack(fill="x")
+        )
+        root_entry.pack(fill="x")
+        win.after(150, lambda: focus_project_name(root_entry))
 
         ctk.CTkLabel(
             inner, text="Klistra in trädstruktur:",
@@ -5726,8 +5213,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         txt.pack(fill="both", expand=True)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        btn_row = footer
 
         def preview_and_create():
             raw = txt.get("1.0", "end")
@@ -5796,55 +5282,35 @@ class FolderForgeApp(_DnDCTkBase):
         )
 
     def _build_structure(self, root_name: str, items: List[dict]) -> bool:
-        base = Path(self.settings.save_root) / root_name
-
-        if base.exists():
-            choice = messagebox.askyesnocancel(
-                "Mappen finns redan",
-                f"'{base.name}' finns redan.\n\n"
-                f"Ja      → Slå ihop (lägg till filer som saknas)\n"
-                f"Nej     → Öppna befintlig mapp och avbryt\n"
-                f"Avbryt  → Gör ingenting",
-            )
-            if choice is None:
-                return False
-            elif choice is False:
-                self._open_path(base)
-                self._set_result(f"📂 Öppnade: {base.name}", ACCENT_ORANGE)
-                return False
-
         try:
-            base.mkdir(parents=True, exist_ok=True)
-            for it in items:
-                p = base.joinpath(*it['path'])
-                if not NameValidator.is_safe_path(base, p):
-                    logger.warning("Hoppade över osäker sökväg: %s", p)
-                    continue
-                if it['is_dir']:
-                    p.mkdir(parents=True, exist_ok=True)
-                else:
-                    p.parent.mkdir(parents=True, exist_ok=True)
-                    if not p.exists():
-                        p.write_text(
-                            f"# {it['comment'] or p.name}",
-                            encoding="utf-8",
-                        )
-            self._on_creation_success(base)
-            return True
-        except OSError as e:
-            messagebox.showerror("Fel", f"Kunde inte skapa struktur: {e}")
+            base = create_project_tree(self.settings.save_root, root_name, items)
+        except ExistingProject as exc:
+            if messagebox.askyesno("Mappen finns redan",
+                                  f"'{exc.path.name}' finns redan. Öppna befintlig mapp istället?"):
+                self._open_path(exc.path)
             return False
+        except ValueError as exc:
+            messagebox.showwarning("Ogiltigt namn eller struktur", str(exc))
+            return False
+        except OSError as exc:
+            messagebox.showerror("Fel", f"Kunde inte skapa struktur: {exc}")
+            return False
+        self._on_creation_success(base)
+        return True
 
     def _on_creation_success(self, path: Path) -> None:
         self.undo_mgr.record(path)
         self.history.add(path)
         self.undo_btn.configure(state="normal")
+        self._undo_bar.pack(fill="x", padx=scaled(15, self._scale), pady=(0, 4), before=self._tab_view)
         self._set_result(f"✅ Skapad: {path.name}", ACCENT_GREEN)
         self._refresh_history_tab()
         if self.settings.open_after_creation:
             self._open_path(path)
 
     def _set_result(self, text: str, color: str) -> None:
+        anchor = self._undo_bar if self._undo_bar.winfo_manager() else self._tab_view
+        self._result_banner.pack(fill="x", padx=scaled(15, self._scale), pady=(6, 4), before=anchor)
         self.result_label.configure(text=text, text_color=color)
 
     def _undo_last(self) -> None:
@@ -5865,6 +5331,7 @@ class FolderForgeApp(_DnDCTkBase):
             self._refresh_history_tab()
         if not self.undo_mgr.can_undo:
             self.undo_btn.configure(state="disabled")
+            self._undo_bar.pack_forget()
 
     # ============================================================
     # LOGIK: Export
@@ -5891,28 +5358,29 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_ORANGE,
+            body, fg_color=ACCENT_ORANGE,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📤  Exporterad Mappstruktur",
+            body, text="📤  Exporterad Mappstruktur",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         ctk.CTkLabel(
-            win, text="Mappstruktur:",
+            body, text="Mappstruktur:",
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
         ).pack(
             anchor="w", padx=scaled(15, s),
-            pady=(scaled(60, s), scaled(5, s)),
+            pady=(scaled(8, s), scaled(5, s)),
         )
 
         textbox = ctk.CTkTextbox(
-            win,
+            body,
             font=ctk.CTkFont(family="Consolas", size=scaled_font(12, s)),
         )
         textbox.pack(
@@ -5921,8 +5389,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
         textbox.insert("1.0", text)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        btn_row = footer
 
         def copy_clip():
             self.clipboard_clear()
@@ -5945,24 +5412,27 @@ class FolderForgeApp(_DnDCTkBase):
                 title="Spara mall", text="Mallens namn:",
             ).get_input()
             if name and name.strip():
-                self.template_mgr.save_template(
-                    name.strip(), textbox.get("1.0", "end-1c"),
-                )
+                try:
+                    self.template_mgr.save_template(name.strip(), textbox.get("1.0", "end-1c"))
+                except (ValueError, OSError) as exc:
+                    messagebox.showerror("Kunde inte spara mall", str(exc))
+                    return
                 messagebox.showinfo("Sparat", f"Mall '{name}' sparad!")
 
-        for txt_btn, cmd, color in [
+        for index, (txt_btn, cmd, color) in enumerate([
             ("📋 Kopiera", copy_clip, ACCENT_BLUE),
             ("💾 Spara fil", save_file, ACCENT_GREEN),
             ("⭐ Spara som mall", save_as_template, ACCENT_ORANGE),
             ("Stäng", win.destroy, "gray"),
-        ]:
+        ]):
+            btn_row.grid_columnconfigure(index % 2, weight=1)
             ctk.CTkButton(
                 btn_row, text=txt_btn, command=cmd,
                 fg_color=color,
                 hover_color="#555" if color == "gray" else None,
                 height=scaled(36, s), corner_radius=8,
                 font=ctk.CTkFont(size=scaled_font(12, s), weight="bold"),
-            ).pack(side="left", padx=(0, scaled(6, s)))
+            ).grid(row=index // 2, column=index % 2, sticky="ew", padx=3, pady=3)
 
     # ============================================================
     # LOGIK: Mallar
@@ -5985,27 +5455,28 @@ class FolderForgeApp(_DnDCTkBase):
         x = (sw - w) // 2
         y = (sh - h) // 2
         win.geometry(f"{w}x{h}+{x}+{y}")
+        body, footer = dialog_layout(win)
         win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_GREEN,
+            body, fg_color=ACCENT_GREEN,
             height=scaled(50, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📋  Projektmallar",
+            body, text="📋  Projektmallar",
             font=ctk.CTkFont(size=scaled_font(18, s), weight="bold"),
             text_color="white",
-        ).place(x=scaled(15, s), y=scaled(12, s))
+        ).pack(fill="x", padx=scaled(15, s), pady=scaled(8, s))
 
         selected_var = ctk.StringVar()
 
         list_frame = ctk.CTkScrollableFrame(
-            win, height=scaled(200, s),
+            body, height=scaled(100, s),
             fg_color=("gray92", "gray18"),
         )
         list_frame.pack(
             fill="both", expand=True,
-            padx=scaled(15, s), pady=(scaled(58, s), 0),
+            padx=scaled(15, s), pady=(scaled(8, s), 0),
         )
 
         for name in templates:
@@ -6013,14 +5484,14 @@ class FolderForgeApp(_DnDCTkBase):
             icon = "⭐" if is_builtin else "📄"
             ctk.CTkRadioButton(
                 list_frame,
-                text=f"{icon}  {name}",
+                text=f"{icon}  {name}" + (" — standard" if name == self.settings.default_template else ""),
                 variable=selected_var, value=name,
                 font=ctk.CTkFont(size=scaled_font(13, s)),
                 fg_color=ACCENT_GREEN, hover_color="#27ae60",
             ).pack(anchor="w", pady=scaled(4, s), padx=scaled(8, s))
 
         ctk.CTkLabel(
-            win, text="Förhandsvisning:",
+            body, text="Struktur (redigerbar, rotmappen på första raden):",
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
         ).pack(
             anchor="w", padx=scaled(15, s),
@@ -6028,7 +5499,7 @@ class FolderForgeApp(_DnDCTkBase):
         )
 
         preview_box = ctk.CTkTextbox(
-            win, height=scaled(130, s),
+            body, height=scaled(130, s),
             font=ctk.CTkFont(family="Consolas", size=scaled_font(11, s)),
         )
         preview_box.pack(fill="x", padx=scaled(15, s))
@@ -6040,14 +5511,52 @@ class FolderForgeApp(_DnDCTkBase):
                 preview_box.insert("1.0", templates[sel])
 
         selected_var.trace_add("write", on_select)
+        if self.settings.default_template in templates:
+            selected_var.set(self.settings.default_template)
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(15, s), pady=scaled(12, s))
+        edit_row = ctk.CTkFrame(body, fg_color="transparent")
+        edit_row.pack(fill="x", padx=scaled(15, s), pady=scaled(5, s))
+
+        def save_edited():
+            name = ctk.CTkInputDialog(title="Spara mall", text="Namn på den egna mallen:").get_input()
+            if not name or not name.strip():
+                return
+            name = name.strip()
+            if name in templates and not messagebox.askyesno("Skriv över mall", f"Ersätt '{name}'?"):
+                return
+            try:
+                self.template_mgr.save_template(name, preview_box.get("1.0", "end-1c"))
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Kunde inte spara mall", str(exc))
+                return
+            win.destroy()
+            self._template_dialog()
+
+        def set_default():
+            sel = selected_var.get()
+            if sel not in templates:
+                messagebox.showwarning("Välj mall", "Spara och välj en mall först.")
+                return
+            self.settings.default_template = sel
+            self._save_settings_silent()
+            self._update_ui_from_settings()
+            messagebox.showinfo("Standardmall", f"Nya standardprojekt använder nu '{sel}'.")
+            win.destroy()
+            self._template_dialog()
+
+        ctk.CTkButton(edit_row, text="Ny mall", command=lambda: (
+            selected_var.set(""), preview_box.delete("1.0", "end"),
+            preview_box.insert("1.0", "projektnamn/\n    Bilder/\n")), width=100).pack(fill="x", pady=3)
+        ctk.CTkButton(edit_row, text="Spara som mall", command=save_edited, width=130).pack(fill="x", pady=3)
+        ctk.CTkButton(edit_row, text="Ange som standard", command=set_default, width=150).pack(fill="x", pady=3)
+
+        btn_row = footer
+        for column in range(3):
+            btn_row.grid_columnconfigure(column, weight=1)
 
         def use_template():
-            sel = selected_var.get()
-            if not sel:
-                messagebox.showwarning("Välj mall", "Välj en mall i listan.")
+            if not preview_box.get("1.0", "end-1c").strip():
+                messagebox.showwarning("Tom struktur", "Välj en mall eller skriv en egen struktur.")
                 return
             name = ctk.CTkInputDialog(
                 title="Projektnamn", text="Namnge projektet:",
@@ -6059,7 +5568,7 @@ class FolderForgeApp(_DnDCTkBase):
             except ValueError as e:
                 messagebox.showwarning("Ogiltigt namn", str(e))
                 return
-            structure = templates[sel].replace(
+            structure = preview_box.get("1.0", "end-1c").replace(
                 "projektnamn", safe,
             ).replace("ärendenummer", safe)
             _, items = StructureEngine.parse_structure_text(structure)
@@ -6071,6 +5580,9 @@ class FolderForgeApp(_DnDCTkBase):
             # v4.2, och strip_root_level() gör aldrig en icke-tom lista tom
             # (den returnerar items oförändrad om resultatet skulle bli tomt).
             items, _stripped = strip_root_level(items, safe)
+            if not items:
+                messagebox.showwarning("Tom struktur", "Ange en struktur först.")
+                return
             if self._show_preview(safe, items):
                 if self._build_structure(safe, items):
                     win.destroy()
@@ -6078,6 +5590,9 @@ class FolderForgeApp(_DnDCTkBase):
         def delete_template():
             sel = selected_var.get()
             if not sel:
+                return
+            if sel == self.settings.default_template:
+                messagebox.showinfo("Standardmall", "Välj en annan standardmall innan denna tas bort.")
                 return
             if not self.template_mgr.delete_template(sel):
                 messagebox.showinfo(
@@ -6089,12 +5604,12 @@ class FolderForgeApp(_DnDCTkBase):
             self._template_dialog()
 
         ctk.CTkButton(
-            btn_row, text="✅ Använd mall",
+            btn_row, text="✅ Skapa (tillfälligt)",
             command=use_template,
             fg_color=ACCENT_GREEN, hover_color="#27ae60",
             height=scaled(38, s), corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s), weight="bold"),
-        ).pack(side="right")
+        ).grid(row=0, column=2, sticky="ew", padx=3)
 
         ctk.CTkButton(
             btn_row, text="🗑 Ta bort",
@@ -6103,7 +5618,7 @@ class FolderForgeApp(_DnDCTkBase):
             width=scaled(90, s), height=scaled(38, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
-        ).pack(side="right", padx=(0, scaled(8, s)))
+        ).grid(row=0, column=1, sticky="ew", padx=3)
 
         ctk.CTkButton(
             btn_row, text="Stäng", command=win.destroy,
@@ -6111,17 +5626,22 @@ class FolderForgeApp(_DnDCTkBase):
             width=scaled(80, s), height=scaled(38, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
-        ).pack(side="left")
+        ).grid(row=0, column=0, sticky="ew", padx=3)
 
     # ============================================================
     # Hjälpfunktioner
     # ============================================================
     def _open_path(self, path: Path) -> None:
+        if not path.exists():
+            messagebox.showwarning("Mappen saknas", f"Mappen finns inte längre:\n{path}")
+            return
         try:
             if IS_WINDOWS:
                 os.startfile(path)
+            elif sys.platform == 'darwin':
+                subprocess.Popen(['open', str(path.resolve())])
             else:
-                subprocess.Popen(['xdg-open', str(path)])
+                subprocess.Popen(['xdg-open', str(path.resolve())])
         except OSError as e:
             logger.warning("Kunde inte öppna mapp: %s", e)
 
@@ -6129,6 +5649,7 @@ class FolderForgeApp(_DnDCTkBase):
     # Hotkeys
     # ============================================================
     def _load_hotkey(self) -> Set[str]:
+        self._hotkey_fallback_reason = ""
         # M2/C41.3 — read_json_safe() med .bak/.bak2-fallback.
         data = read_json_safe(HOTKEY_CONFIG, None)
         if isinstance(data, dict):
@@ -6138,12 +5659,17 @@ class FolderForgeApp(_DnDCTkBase):
             ok, norm, err = validate_hotkey_combo(data.get("hotkey") or [])
             if ok:
                 return set(norm)
+            self._hotkey_fallback_reason = err
             logger.warning("Sparad snabbtangent ogiltig (%s) — standard används", err)
         elif data is not None:
+            self._hotkey_fallback_reason = "Felaktigt konfigurationsformat"
             logger.warning("Hotkey-config hade oväntat format — standard används")
         return set(DEFAULT_HOTKEY)
 
     def _rec_hotkey(self) -> None:
+        if keyboard is None:
+            self._set_hotkey_status("Global snabbtangent stöds inte av detta skrivbord.")
+            return
         # Stoppa en eventuell gammal inspelningslyssnare FÖRST — annars läggs
         # två keyboard.Listener-trådar ovanpå varandra om man trycker Spela in
         # på nytt utan att spara/avbryta, och båda matar samma set.
@@ -6194,15 +5720,24 @@ class FolderForgeApp(_DnDCTkBase):
             messagebox.showwarning("Ogiltig snabbtangent", err)
             self._cancel_hotkey_rec()
             return
+        try:
+            keyboard.HotKey.parse(hotkey_expression(norm))
+        except Exception as exc:
+            messagebox.showwarning("Ogiltig snabbtangent", str(exc), parent=self)
+            self._cancel_hotkey_rec()
+            return
+        if not atomic_write_json(HOTKEY_CONFIG, {"hotkey": list(norm)}):
+            logger.error("Kunde inte spara snabbtangent")
+            messagebox.showerror("Snabbtangent", "Kunde inte spara. Din tidigare kombination behålls.", parent=self)
+            self._cancel_hotkey_rec()
+            return
         self.current_hotkey = set(norm)
-        # M1/F1 — atomisk skrivning med backup.
-        if not atomic_write_json(HOTKEY_CONFIG, {"hotkey": list(self.current_hotkey)}):
-            logger.error("Kunde inte spara snabbtangent "
-                         "(atomisk skrivning misslyckades)")
+        self._hotkey_fallback_reason = ""
         self._setup_global_hotkey()
         self._cancel_hotkey_rec()
 
     def _cancel_hotkey_rec(self) -> None:
+        self.recording_hotkey = False
         if self.hotkey_listener:
             self.hotkey_listener.stop()
         self.hk_rec_frame.pack_forget()
@@ -6213,32 +5748,306 @@ class FolderForgeApp(_DnDCTkBase):
         )
         self._update_ui_from_settings()
 
+    def _set_hotkey_status(self, text, active=False):
+        self._hotkey_status = text
+        if hasattr(self, "hk_status_label"):
+            self.hk_status_label.configure(text=text, text_color=UI_MUTED if active else "#c0392b")
+
     def _setup_global_hotkey(self) -> None:
+        if keyboard is None:
+            self._set_hotkey_status("Ej tillgänglig – använd systemfältets meny.")
+            return
         if self.global_hotkey:
             self.global_hotkey.stop()
-        # M11/C42 — samma validering som vid sparning: registrera aldrig en
-        # kombination som kan stjäla vanlig skrivning i hela systemet.
+        self.global_hotkey = None
         ok, norm, err = validate_hotkey_combo(self.current_hotkey)
         if not ok:
+            self._set_hotkey_status("Fungerar inte: " + err + " Spela in en ny kombination.")
             logger.warning("Global snabbtangent ej registrerad: %s", err)
             return
-        # M10 — normalize_hotkey_keys() ger stabil ordning (modifierare först)
-        # istället för alfabetisk, så strängen blir deterministisk och läsbar.
-        hk_str = "+".join(f"<{k}>" for k in normalize_hotkey_keys(norm))
         try:
+            expression = hotkey_expression(norm)
+            keyboard.HotKey.parse(expression)
             self.global_hotkey = keyboard.GlobalHotKeys({
-                # M10/C43 — återanrop via ui_call: GlobalHotKeys avfyras i
-                # pynput-tråden, så self.after() därifrån är inte trådsäkert.
-                hk_str: lambda: ui_call(self, self._restore_from_tray),
+                expression: lambda: ui_call(self, self._restore_from_tray),
             })
             self.global_hotkey.start()
-        except ValueError as e:
-            logger.warning("Ogiltig hotkey-kombination: %s", e)
+        except Exception as exc:
+            self._set_hotkey_status("Fungerar inte: " + str(exc) + " Spela in en ny kombination.")
+            logger.exception("Kunde inte registrera global snabbtangent")
+            return
+        reason = getattr(self, "_hotkey_fallback_reason", "")
+        self._set_hotkey_status("Aktiv: " + hotkey_label(norm) +
+                               (". Standard används: " + reason + " Spela in en ny kombination." if reason else ""), active=True)
+        listener = self.global_hotkey
+        def verify():
+            if self.global_hotkey is not listener:
+                return
+            if not listener.is_alive():
+                self._set_hotkey_status("Snabbtangenten har stoppats. Spela in en ny kombination.")
+                logger.error("Snabbtangentens bakgrundslyssnare har stoppats")
+                return
+            self.after(5000, verify)
+        self.after(2000, verify)
 
     # ============================================================
     # Tray & Autostart
     # ============================================================
+    def report_callback_exception(self, exc_type, exc_value, tb) -> None:
+        # Tkinter skickar annars callback-fel bara till stderr, som saknas i pythonw.
+        logger.error("OFÅNGAT GUI-FEL", exc_info=(exc_type, exc_value, tb))
+
+    def _enable_detailed_logs(self, minutes=15):
+        from logg import enable_detailed_logging
+        enable_detailed_logging(minutes)
+        text = ("Detaljerad loggning är aktiv i 15 minuter och stängs sedan av automatiskt."
+                if minutes else "Normalt loggläge är återställt.")
+        logger.info(text)
+        messagebox.showinfo("Loggning", text, parent=self)
+
+    def _display_diagnostics(self):
+        """Geometry only: never titles, entered text, screenshots or project paths."""
+        def rectangle(window):
+            return [window.winfo_x(), window.winfo_y(), window.winfo_width(), window.winfo_height()]
+        info = {"screen_pixels": [self.winfo_screenwidth(), self.winfo_screenheight()],
+                "text_size": self.settings.text_size,
+                "widget_scaling": self._get_widget_scaling(),
+                "window_scaling": self._get_window_scaling(),
+                "main_window": rectangle(self), "dialogs": [], "work_areas": []}
+        for child in self.winfo_children():
+            if isinstance(child, tk.Toplevel) and child.winfo_exists():
+                info["dialogs"].append(rectangle(child))
+        for monitor in enumerate_monitors():
+            info["work_areas"].append({"rectangle": [monitor.left, monitor.top, monitor.width, monitor.height],
+                                       "dpi": monitor.dpi, "primary": monitor.is_primary})
+        info["work_area_source"] = "windows-monitor-api" if info["work_areas"] else "unavailable"
+        return info
+
+    def _export_diagnostics(self):
+        from logg import export_diagnostic_package
+        if not messagebox.askyesno("Granska innan delning", "Paketet innehåller loggar, uppdateringsstatus och skärmmått/DPI/textskalning. Skärmbilder och fönstertitlar tas inte med. Loggar kan innehålla personliga sökvägar och felmeddelanden. Inställningsfiler och projekt tas inte med.\n\nVill du skapa ett ZIP-paket? Granska innehållet innan du delar det.", parent=self):
+            return
+        target = filedialog.asksaveasfilename(parent=self, title="Spara felsökningspaket", defaultextension=".zip",
+                                            filetypes=[("ZIP-paket", "*.zip")], initialfile="FolderForge-felsokning.zip")
+        if not target:
+            return
+        try:
+            export_diagnostic_package(target, display_info=self._display_diagnostics())
+            messagebox.showinfo("Felsökningspaket", "Paketet sparades. Granska innan delning:\n" + target, parent=self)
+        except Exception as exc:
+            logger.exception("Kunde inte exportera felsökningspaket")
+            messagebox.showerror("Felsökningspaket", str(exc), parent=self)
+
+    def _show_error_issues(self):
+        from logg import get_error_issues, resolve_error_issue, detailed_logging_remaining, filter_error_issues
+        win = ctk.CTkToplevel(self)
+        win.title("Fellista och felsökning")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry("760x660")
+        body, footer = dialog_layout(win)
+        summary = ctk.CTkLabel(body, text="", wraplength=650)
+        summary.pack(fill="x", padx=15, pady=10)
+        query = ctk.StringVar(value="")
+        level = ctk.StringVar(value="Alla nivåer")
+        module = ctk.StringVar(value="Alla moduler")
+        ctk.CTkLabel(body, text="Sök i felmeddelande eller traceback", anchor="w").pack(fill="x", padx=15)
+        ctk.CTkEntry(body, textvariable=query, placeholder_text="Sök felmeddelande eller traceback…").pack(fill="x", padx=15, pady=(0, 8))
+        filters = ctk.CTkFrame(body, fg_color="transparent")
+        filters.pack(fill="x", padx=15, pady=(0, 8))
+        ctk.CTkOptionMenu(filters, variable=level, values=["Alla nivåer", "Varningar", "Fel", "Kritiska"]).pack(side="left", padx=(0, 8))
+        module_menu = ctk.CTkOptionMenu(filters, variable=module, values=["Alla moduler"])
+        module_menu.pack(side="left")
+        adapt_control_row(filters)
+        listing = ctk.CTkScrollableFrame(body, height=190)
+        listing.pack(fill="both", expand=True, padx=15)
+        details = ctk.CTkTextbox(body, height=160)
+        details.pack(fill="x", padx=15, pady=10)
+        selected = {"id": None, "snapshot": None, "detail_key": None}
+        state = {"paused": False, "rendering": False, "closed": False, "job": None, "view_key": None}
+        buttons = {}
+
+        def choose(issue):
+            selected["id"] = issue["id"]
+            detail_key = (issue['id'], issue['count'], issue['text'])
+            if selected["detail_key"] != detail_key:
+                details.configure(state="normal")
+                details.delete("1.0", "end")
+                details.insert("1.0", f"Valt fel: {issue['module']} · {issue['level']}\nFörsta: {issue['first']}\nSenaste: {issue['last']}\nAntal: {issue['count']}\n\n{issue['text']}")
+                details.configure(state="disabled")
+                selected["detail_key"] = detail_key
+            for identity, button in buttons.items():
+                button.configure(fg_color=UI_PRIMARY if identity == issue['id'] else UI_BACKGROUND,
+                                 text_color="white" if identity == issue['id'] else UI_TEXT,
+                                 hover_color=UI_PRIMARY if identity == issue['id'] else UI_BORDER,
+                                 border_width=2 if identity == issue['id'] else 0)
+            resolve_button.configure(state="normal")
+
+        def refresh(automatic=False):
+            if state['closed'] or state['paused'] or state['rendering']:
+                return
+            state['rendering'] = True
+            try:
+                issues, snapshot = get_error_issues()
+                values = ["Alla moduler", *sorted({issue['module'] for issue in issues})]
+                module_menu.configure(values=values)
+                if module.get() not in values:
+                    module.set("Alla moduler")
+                visible = filter_error_issues(issues, query.get(), level.get(), module.get())
+                seconds = detailed_logging_remaining()
+                summary.configure(text=f"{len(visible)} av {len(issues)} aktiva feltyper · uppdateras automatiskt varannan sekund. " +
+                                  (f"Detaljerad loggning: {seconds // 60 + 1} min kvar." if seconds else "Normalt loggläge."))
+                view_key = (snapshot, query.get(), level.get(), module.get())
+                if view_key == state['view_key']:
+                    return
+                state['view_key'] = view_key
+                canvas = getattr(listing, "_parent_canvas", None)
+                position = canvas.yview()[0] if canvas is not None else 0
+                for child in listing.winfo_children():
+                    child.destroy()
+                buttons.clear()
+                selected['snapshot'] = snapshot
+                for issue in sorted(visible, key=lambda item: item['last'], reverse=True):
+                    text = f"{issue['level']} · {issue['count']} gånger · {issue['module']}\n{issue['message'][:120]}"
+                    button = ctk.CTkButton(listing, text=text, anchor="w", fg_color=UI_BACKGROUND, text_color=UI_TEXT,
+                                           hover_color=UI_BORDER, command=lambda value=issue: choose(value))
+                    button.pack(fill="x", pady=3)
+                    buttons[issue['id']] = button
+                retained = next((issue for issue in visible if issue['id'] == selected['id']), None)
+                if retained:
+                    choose(retained)
+                else:
+                    selected.update(id=None, detail_key=None)
+                    resolve_button.configure(state="disabled")
+                    details.configure(state="normal")
+                    details.delete("1.0", "end")
+                    details.configure(state="disabled")
+                if canvas is not None:
+                    listing.update_idletasks()
+                    canvas.yview_moveto(position)
+            except Exception as exc:
+                state['view_key'] = None
+                if automatic:
+                    summary.configure(text="Kunde inte läsa fellistan. Nytt försök om två sekunder.")
+                else:
+                    messagebox.showerror("Fellista", str(exc), parent=win)
+            finally:
+                state['rendering'] = False
+
+        def resolve():
+            identity, snapshot = selected['id'], selected['snapshot']
+            if not identity:
+                return
+            state['paused'] = True
+            try:
+                if messagebox.askyesno("Bekräfta åtgärdat fel", "Är orsaken till just detta fel åtgärdad? Alla förekomster av vald feltyp arkiveras. Detta reparerar inte appen. Återkommer felet visas det igen.", parent=win):
+                    resolve_error_issue(identity, snapshot)
+            except Exception as exc:
+                messagebox.showerror("Fellista", str(exc), parent=win)
+            finally:
+                state['paused'] = False
+                refresh()
+
+        def close(event=None):
+            if event is not None and event.widget is not win:
+                return
+            state['closed'] = True
+            if state['job'] is not None:
+                try:
+                    win.after_cancel(state['job'])
+                except Exception:
+                    pass
+                state['job'] = None
+            if event is None:
+                win.destroy()
+
+        def tick():
+            if state['closed']:
+                return
+            refresh(automatic=True)
+            if not state['closed']:
+                state['job'] = win.after(2000, tick)
+
+        resolve_button = ctk.CTkButton(footer, text="Markera valt fel åtgärdat", command=resolve, state="disabled")
+        resolve_button.pack(fill="x", padx=15, pady=5)
+        ctk.CTkButton(footer, text="Uppdatera listan", command=refresh).pack(side="left", padx=10, pady=10)
+        ctk.CTkButton(footer, text="Exportera felsökningspaket…", command=self._export_diagnostics).pack(side="left", padx=5)
+        ctk.CTkButton(footer, text="Stäng", command=close).pack(side="right", padx=10)
+        for variable in (query, level, module):
+            variable.trace_add("write", lambda *_: refresh())
+        win.protocol("WM_DELETE_WINDOW", close)
+        win.bind("<Destroy>", close, add="+")
+        refresh()
+        state['job'] = win.after(2000, tick)
+
+    def _open_error_log(self) -> None:
+        if not ERROR_LOG_FILE.is_file():
+            messagebox.showinfo("Fellogg", "Ingen fellogg finns ännu. Sökväg:\n" + str(ERROR_LOG_FILE))
+            return
+        if IS_WINDOWS:
+            try:
+                subprocess.Popen(["notepad.exe", str(ERROR_LOG_FILE)],
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            except OSError as exc:
+                logger.error("Kunde inte öppna felloggen", exc_info=True)
+                messagebox.showerror("Fellogg", str(exc))
+        else:
+            self._open_path(ERROR_LOG_FILE)
+
+    def _resolve_logged_errors(self) -> None:
+        from logg import archive_resolved_errors, error_log_snapshot
+        try:
+            snapshot = error_log_snapshot()
+        except OSError as exc:
+            messagebox.showerror("Fellogg", str(exc), parent=self)
+            return
+        if not messagebox.askyesno(
+            "Bekräfta åtgärdade fel",
+            "Är samtliga varningar och fel i felloggen åtgärdade?\n\n"
+            "Detta reparerar inte appen. Posterna flyttas till ett permanent arkiv "
+            "för åtgärdade fel. Nya eller återkommande fel hamnar i felloggen igen.",
+            parent=self,
+        ):
+            return
+        try:
+            target = archive_resolved_errors(expected_digest=snapshot)
+        except Exception as exc:
+            logger.exception("Kunde inte arkivera åtgärdade fel")
+            messagebox.showerror("Fellogg", str(exc), parent=self)
+            return
+        if target is None:
+            messagebox.showinfo("Fellogg", "Det finns inga loggade fel att markera.", parent=self)
+        else:
+            logger.info("Användaren markerade felloggens poster som åtgärdade: %s", target)
+            messagebox.showinfo("Fellogg", "Åtgärdade poster sparades i:\n" + str(target), parent=self)
+
+    def _on_window_mapped(self, event) -> None:
+        window = event.widget
+        if window is not self and not isinstance(window, tk.Toplevel):
+            return
+        # CTk sätter sin standardikon efter 200 ms. Applicera vår efteråt,
+        # även på CTkInputDialog och fönster som återställs från systemfältet.
+        def apply():
+            if window.winfo_exists():
+                apply_icon_to_window(window, APP_ICON)
+        self.after(350, apply)
+
+    def _on_window_unmap(self, event) -> None:
+        # Barnwidgetar och withdraw() får också Unmap. Bara en verklig
+        # minimering av huvudfönstret ska skapa/återanvända tray-ikonen.
+        if event.widget is self:
+            self.after_idle(self._send_iconic_window_to_tray)
+
+    def _send_iconic_window_to_tray(self) -> None:
+        # Läs läget efter att fönsterhanteraren hunnit uppdatera det.
+        # Ett återställt fönster ska inte döljas av ett gammalt event.
+        if self.winfo_exists() and self.state() == "iconic":
+            self._minimize_to_systray()
+
     def _minimize_to_systray(self) -> None:
+        self._remember_window_placement()
+        if hasattr(self, "_tab_view"):
+            self._tab_view._dolj_tip()
         self.withdraw()
         # ENDAST EN TRAY-IKON, alltid:
         #  • ikon finns redan          → gör inget (dubbelminimering/X+hotkey)
@@ -6249,10 +6058,22 @@ class FolderForgeApp(_DnDCTkBase):
         if self._tray_stopping:
             self.after(500, self._minimize_to_systray)
             return
-        # Samma ikonkedja som fönstren (M28): cachad, RGBA och med
-        # procedurell reserv — inte rå Image.open som kraschar om .ico saknas.
+        if not linux_tray_available():
+            attempts = getattr(self, "_tray_start_attempts", 0) + 1
+            self._tray_start_attempts = attempts
+            if attempts < 40:  # Let the desktop panel initialize after login.
+                self.after(500, self._minimize_to_systray)
+            else:
+                logger.error("Inget Linux-systemfält hittades; dold start avbröts. Aktivera ett systemfält och starta igen.")
+                self._quit_app()
+            return
+        self._tray_start_attempts = 0
+        # Dedicated, bold tray badge: dark backing remains visible on light
+        # taskbars, gold edge separates it from dark taskbars. Other app icons
+        # share the same vector master; older installs retain a fallback.
+        tray_path = BASE_DIR / "Icon" / "folderforge-tray.png"
         img = load_app_icon(
-            APP_ICON_PNG if APP_ICON_PNG.exists() else APP_ICON, 64)
+            tray_path if tray_path.is_file() else (APP_ICON_PNG if APP_ICON_PNG.exists() else APP_ICON), 64)
         if img is None:
             img = Image.new('RGB', (64, 64), (76, 158, 241))
         # lambda *args: pystray anropar menycallbacks med (icon, item) i
@@ -6260,16 +6081,33 @@ class FolderForgeApp(_DnDCTkBase):
         menu = pystray.Menu(
             pystray.MenuItem(
                 "Öppna FolderForge",
-                lambda *args: self.after(0, self._restore_from_tray),
+                lambda *args: ui_call(self, self._restore_from_tray),
                 default=True,
             ),
             pystray.MenuItem(
+                "Öppna appens mapp",
+                lambda *args: ui_call(self, self._open_path, BASE_DIR),
+            ),
+            pystray.MenuItem(
+                "Sök uppdatering nu",
+                lambda *args: ui_call(self, self._check_updates_now),
+            ),
+            pystray.MenuItem(
                 "Avsluta",
-                lambda *args: self.after(0, self._quit_app),
+                lambda *args: ui_call(self, self._quit_app),
             ),
         )
         self.systray_icon = pystray.Icon(APP_NAME, img, APP_NAME, menu)
-        threading.Thread(target=self.systray_icon.run, daemon=True).start()
+        try:
+            if sys.platform == "darwin":
+                # Cocoa integrates with Tk's main event loop. Xorg's detached
+                # implementation starts setup twice and leaks a waiting thread.
+                self.systray_icon.run_detached()
+            else:
+                threading.Thread(target=self.systray_icon.run, daemon=True).start()
+        except Exception:
+            logger.exception("Systemfältet kunde inte startas; ingen osynlig app lämnas körande")
+            self._quit_app()
 
     def _stop_tray_icon(self) -> None:
         """Stoppa tray-ikonen exakt en gång — den ENDA vägen att plocka bort den.
@@ -6294,19 +6132,329 @@ class FolderForgeApp(_DnDCTkBase):
         self._tray_stopping = False
 
     def _restore_from_tray(self, *_) -> None:
+        logger.debug("Återställning: stoppar tray")
         self._stop_tray_icon()
+        logger.debug("Återställning: anpassar placering")
+        self._restore_window_placement()
+        logger.debug("Återställning: visar fönster")
         self.deiconify()
         self.lift()
         self.focus_force()
+        logger.debug("Återställning: klar")
+
+    def _shutdown_background_services(self) -> None:
+        if hasattr(self, "_log_archive_stop"):
+            self._log_archive_stop.set()
+        if hasattr(self, "_cleanup_stop"):
+            self._cleanup_stop.set()
+        if hasattr(self, "_update_stop"):
+            self._update_stop.set()
+        self._stop_tray_icon()
+        for listener in (self.global_hotkey, self.hotkey_listener):
+            if listener:
+                try:
+                    listener.stop()
+                except Exception:
+                    logger.warning("Kunde inte stoppa tangentbordslyssnare", exc_info=True)
+        self.quit()
 
     def _quit_app(self, *_) -> None:
-        self._stop_tray_icon()
-        if self.global_hotkey:
-            self.global_hotkey.stop()
-        if self.hotkey_listener:
-            self.hotkey_listener.stop()
-        self.quit()
+        self._remember_window_placement()
+        self._shutdown_background_services()
         sys.exit(0)
+
+    def _restart_after_update(self) -> bool:
+        from updater import pending_ready_for_restart
+        if getattr(self, "_restart_requested", False):
+            return True
+        if not pending_ready_for_restart(BASE_DIR):
+            return False
+        # Förlora inte osparad strukturtext eller avbryt pågående export.
+        try:
+            if (self.grab_current() is not None or getattr(self, "_active_exports", 0)
+                    or getattr(self, "recording_hotkey", False)):
+                return False
+            status_window = getattr(self, "_update_status_window", None)
+            for child in self.winfo_children():
+                if isinstance(child, tk.Toplevel) and child is not status_window and child.winfo_exists():
+                    return False
+        except Exception:
+            # Native fil-/meddelandedialoger har inte alltid en Python-widget.
+            logger.debug("Omstart väntar tills dialogläget kan avläsas", exc_info=True)
+            return False
+        self._save_settings_silent()
+        self._restart_requested = True
+        logger.info("Verifierad uppdatering redo — startar om minimerat")
+        self._shutdown_background_services()
+        return True
+
+    def _show_cache_cleanup(self) -> None:
+        from cache_cleanup import clean_cache, status_text
+
+        win = ctk.CTkToplevel(self)
+        win.title("Smart cacherensning")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f"{scaled(520, self._scale)}x{scaled(460, self._scale)}")
+        body, footer = dialog_layout(win)
+        content = ctk.CTkScrollableFrame(body)
+        content.pack(fill="both", expand=True, padx=15, pady=15)
+        rules = ("Automatisk rensning en gång per 24 timmar när appen körs.\n"
+                 "Om appen varit stängd görs förfallen rensning vid nästa start.\n\n"
+                 "Smartfilter (gäller även manuell rensning):\n"
+                 "• Filer i data/cache och data/tmp: minst 24 timmar gamla.\n"
+                 "• Roterade loggarkiv: minst 14 dagar gamla.\n"
+                 "• Länkar, aktiv logg och okända filer utanför cache lämnas kvar.\n\n"
+                 "Projekt, mallar, historik, inställningar, väntande uppdateringar "
+                 "och uppdateringsbackuper rörs aldrig.")
+        ctk.CTkLabel(content, text=rules, justify="left", wraplength=scaled(450, self._scale)).pack(fill="x")
+        status = ctk.CTkLabel(content, text=status_text(BASE_DIR), justify="left")
+        status.pack(fill="x", pady=15)
+
+        def finished(result=None, error=None):
+            if not win.winfo_exists():
+                return
+            button.configure(state="normal")
+            status.configure(text=(f"Rensningen misslyckades: {error}" if error else status_text(BASE_DIR)))
+
+        def run():
+            if not messagebox.askyesno("Rensa cache", "Rensa gamla filer enligt smartfiltret?", parent=win):
+                return
+            button.configure(state="disabled")
+            status.configure(text="Rensar…")
+
+            def worker():
+                try:
+                    result = clean_cache(BASE_DIR, manual=True)
+                except Exception as exc:
+                    ui_call(self, finished, None, str(exc))
+                else:
+                    ui_call(self, finished, result)
+
+            threading.Thread(target=worker, name="manual-cache-cleanup", daemon=True).start()
+
+        button = ctk.CTkButton(footer, text="Rensa nu med smartfilter", command=run)
+        button.pack(pady=(0, 10))
+        ctk.CTkButton(footer, text="Stäng", command=win.destroy).pack(pady=(0, 15))
+
+    def _refresh_update_controls(self) -> None:
+        from updater import get_update_activity
+        busy = get_update_activity(BASE_DIR)["busy"]
+        self._update_check_button.configure(state="disabled" if busy else "normal",
+                                            text="Kontrollerar uppdatering…" if busy else "Sök uppdatering nu")
+        if not busy and self._restart_after_update():
+            return
+        self.after(1000, self._refresh_update_controls)
+
+    def _check_updates_now(self) -> None:
+        from updater import check_once
+
+        # Tray-menyn använder samma vy och bakgrundsjobb som knappen i appen.
+        self._restore_from_tray()
+        self._show_update_status()
+        if getattr(self, "_manual_update_running", False):
+            return
+        self._manual_update_running = True
+
+        def finished():
+            self._manual_update_running = False
+
+        def worker():
+            try:
+                if not check_once(BASE_DIR, APP_VERSION, force=True):
+                    logger.info("En uppdateringskontroll pågår redan")
+            except Exception:
+                logger.warning("Manuell uppdateringskontroll misslyckades", exc_info=True)
+            finally:
+                ui_call(self, finished)
+
+        threading.Thread(target=worker, name="manual-release-check", daemon=True).start()
+
+    def _show_update_status(self) -> None:
+        from updater import get_update_activity, get_update_status
+
+        existing = getattr(self, "_update_status_window", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify()
+            existing.lift()
+            return
+        s = self._scale
+        win = ctk.CTkToplevel(self)
+        self._update_status_window = win
+        win.title("Uppdateringar · FolderForge")
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f"{scaled(580, s)}x{scaled(640, s)}")
+        win.minsize(scaled(400, s), scaled(350, s))
+        body, footer = dialog_layout(win)
+        ctk.CTkLabel(body, text="Uppdateringar", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(24, s), weight="bold")).pack(fill="x", padx=16, pady=(16, 4))
+        ctk.CTkLabel(body, text="Samma version kan innehålla en nyare releasebyggnad.",
+                     anchor="w", text_color=UI_MUTED).pack(fill="x", padx=16, pady=(0, 14))
+        panel = ctk.CTkFrame(body, fg_color=UI_SURFACE, corner_radius=14, border_width=1, border_color=UI_BORDER)
+        panel.pack(fill="x", padx=12, pady=(0, 14))
+        headline = ctk.CTkLabel(panel, text="", anchor="w", justify="left", text_color=UI_TEXT,
+                               font=ctk.CTkFont(size=scaled_font(16, s), weight="bold"))
+        headline.pack(fill="x", padx=16, pady=(16, 8))
+        progress_bar = ctk.CTkProgressBar(panel, height=6, progress_color=ACCENT_BLUE)
+        progress_bar.pack(fill="x", padx=16, pady=(0, 10))
+        detail = ctk.CTkLabel(panel, text="", anchor="w", justify="left", text_color=UI_MUTED)
+        detail.pack(fill="x", padx=16, pady=(0, 16))
+        labels = {}
+        for name in get_update_status(BASE_DIR, APP_VERSION):
+            if name in {"Status", "Ändringar i hämtad uppdatering", "Hämtning"}:
+                continue
+            row = ctk.CTkFrame(body, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=3)
+            ctk.CTkLabel(row, text=name, anchor="w", text_color=UI_MUTED).pack(fill="x")
+            value = ctk.CTkLabel(row, text="", anchor="w", justify="left", text_color=UI_TEXT)
+            value.pack(fill="x")
+            labels[name] = value
+        ctk.CTkLabel(body, text="Det här ändras", anchor="w", text_color=UI_TEXT,
+                     font=ctk.CTkFont(size=scaled_font(16, s), weight="bold")).pack(fill="x", padx=16, pady=(18, 8))
+        notes = ctk.CTkTextbox(body, height=scaled(140, s), wrap="word", fg_color=UI_SURFACE)
+        notes.pack(fill="x", padx=12, pady=(0, 12))
+        ctk.CTkLabel(body, text="Appen startar om minimerat automatiskt. Öppna dialoger får först avslutas.",
+                     justify="left", anchor="w", text_color=UI_MUTED).pack(fill="x", padx=16, pady=(0, 12))
+        check_button = ctk.CTkButton(footer, text="Sök uppdatering nu", command=self._check_updates_now,
+                                     height=scaled(38, s), corner_radius=9, fg_color=UI_PRIMARY)
+        check_button.pack(fill="x", pady=(0, 8))
+        action_row = ctk.CTkFrame(footer, fg_color="transparent")
+        action_row.pack(fill="x")
+        action_row.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkButton(action_row, text="Öppna fellogg", command=self._open_error_log,
+                      fg_color=UI_SURFACE, text_color=UI_TEXT, hover_color=UI_BORDER).grid(row=0, column=0, sticky="ew", padx=(0, 4))
+        ctk.CTkButton(action_row, text="Stäng", command=win.destroy,
+                      fg_color=UI_SURFACE, text_color=UI_TEXT, hover_color=UI_BORDER).grid(row=0, column=1, sticky="ew", padx=(4, 0))
+        previous = {"notes": None, "indeterminate": False}
+
+        def refresh():
+            if not win.winfo_exists():
+                return
+            values = get_update_status(BASE_DIR, APP_VERSION)
+            activity = get_update_activity(BASE_DIR)
+            busy, ready = activity["busy"], activity["ready"]
+            headline.configure(text=("Kontroll misslyckades" if activity["error"] and not busy else
+                                      "Uppdatering redo för omstart" if ready and not busy else
+                                      "Kontroll pågår" if busy else
+                                      "Appen är uppdaterad" if activity["phase"] == "checked" else
+                                      "Redo att söka uppdateringar"))
+            detail.configure(text=values["Status"] + "\n" + values["Hämtning"])
+            width = max(180, body.winfo_width() - 48)
+            headline.configure(wraplength=width)
+            detail.configure(wraplength=width)
+            check_button.configure(state="disabled" if busy else "normal",
+                                   text="Kontrollerar…" if busy else "Sök uppdatering nu")
+            if busy and activity["progress"] is None:
+                if not previous["indeterminate"]:
+                    progress_bar.configure(mode="indeterminate")
+                    progress_bar.start()
+                    previous["indeterminate"] = True
+            else:
+                progress_bar.stop()
+                previous["indeterminate"] = False
+                progress_bar.configure(mode="determinate")
+                progress_bar.set(activity["progress"] if busy and activity["progress"] is not None else (1 if ready else 0))
+            for name, label in labels.items():
+                label.configure(text=values[name], wraplength=width)
+            text = values["Ändringar i hämtad uppdatering"]
+            if text != previous["notes"]:
+                notes.configure(state="normal")
+                notes.delete("1.0", "end")
+                notes.insert("1.0", text)
+                notes.configure(state="disabled")
+                previous["notes"] = text
+            win.after(500, refresh)
+
+        refresh()
+
+    def _show_support(self) -> None:
+        """Fixed recipients: local Swish QR and explicit external payment buttons."""
+        import webbrowser
+
+        existing = getattr(self, '_support_window', None)
+        if existing is not None and existing.winfo_exists():
+            existing.lift()
+            existing.focus_set()
+            return
+        s = self._scale
+        win = ctk.CTkToplevel(self)
+        self._support_window = win
+        win.title('Donationer – Stöd FolderForge')
+        win.transient(self)
+        apply_icon_to_window(win, APP_ICON)
+        win.geometry(f'{scaled(560, s)}x{scaled(640, s)}')
+        win.resizable(True, True)
+        body, footer = dialog_layout(win)
+        hero = ctk.CTkFrame(body, fg_color='#12324A', corner_radius=18)
+        hero.pack(fill='x', padx=16, pady=(16, 12))
+        ctk.CTkLabel(hero, text='STÖD FOLDERFORGE', text_color='#59E0D0',
+                     font=ctk.CTkFont(size=scaled_font(12, s), weight='bold')).pack(pady=(18, 4))
+        title = ctk.CTkLabel(hero, text='Gillar du FolderForge?', text_color='white',
+                            font=ctk.CTkFont(size=scaled_font(24, s), weight='bold'))
+        title.pack(fill='x', padx=18, pady=(0, 8))
+        intro = ctk.CTkLabel(hero, text='Har FolderForge gjort din vardag lite enklare?\n'
+                            'Med en frivillig gåva visar du uppskattning för arbetet\n'
+                            'bakom appen och uppmuntrar fortsatt utveckling.\n\n'
+                            'Du väljer själv om du vill bidra och med hur mycket.\n'
+                            'Alla funktioner fungerar precis lika bra utan donation.\n'
+                            'Tack för att du använder FolderForge!\n– Rickard Längkvist',
+                            text_color='#E0EEF4', justify='center')
+        intro.pack(fill='x', padx=18, pady=(0, 18))
+        ctk.CTkLabel(body, text='Skanna med Swish-appen',
+                     font=ctk.CTkFont(size=scaled_font(18, s), weight='bold')).pack(pady=(2, 8))
+        try:
+            with Image.open(BASE_DIR / 'Icon' / 'swish-folderforge.png') as source:
+                qr_image = source.convert('RGB')
+            # Keep a white quiet zone and identical light/dark images for scanning.
+            win._swish_qr = ctk.CTkImage(light_image=qr_image, dark_image=qr_image, size=(260, 260))
+            qr_label = ctk.CTkLabel(body, text='', image=win._swish_qr, fg_color='white', corner_radius=0)
+            qr_label.pack(padx=12, pady=4)
+        except (OSError, ValueError):
+            logger.exception('Kunde inte läsa den lokala Swish-koden')
+            ctk.CTkLabel(body, text='QR-koden kunde inte läsas. Hämta appens release igen.').pack(pady=16)
+        recipient = ctk.CTkLabel(body, text='Fast mottagarnummer: 0721817177',
+                                font=ctk.CTkFont(size=scaled_font(13, s), weight='bold'))
+        recipient.pack(fill='x', padx=18, pady=(8, 4))
+        note = ctk.CTkLabel(body, text='Välj själv belopp i Swish. Kontrollera alltid mottagarens namn\n'
+                           'och belopp innan du godkänner betalningen.\n\n'
+                           'FolderForge behandlar inga betalningar och läser ingen betalstatus.\n'
+                           'QR-koden skapas lokalt och kräver ingen extern QR-tjänst.', justify='center')
+        note.pack(fill='x', padx=18, pady=(0, 14))
+
+        payment_buttons = ctk.CTkFrame(body, fg_color='transparent')
+        payment_buttons.pack(fill='x', padx=18, pady=(0, 8))
+        ctk.CTkButton(payment_buttons, text='PayPal – valfritt belopp',
+                      fg_color='#0070BA', hover_color='#005A96', text_color='white',
+                      command=lambda: webbrowser.open('https://paypal.me/Rickard3dPrint', new=2)
+                      ).pack(fill='x', pady=(0, 8))
+        ctk.CTkButton(payment_buttons, text='Ko-fi – stöd utvecklingen',
+                      fg_color='#A82C39', hover_color='#87232E', text_color='white',
+                      command=lambda: webbrowser.open('https://ko-fi.com/tokke2', new=2)
+                      ).pack(fill='x')
+        external_note = ctk.CTkLabel(body,
+                      text='PayPal och Ko-fi öppnas i din webbläsare först när du klickar.\n'
+                           'Välj belopp och kontrollera mottagaren hos betaltjänsten.\n'
+                           'Mottagarlänkarna är fasta och kan inte ändras i appen.', justify='center')
+        external_note.pack(fill='x', padx=18, pady=(0, 14))
+
+        last_qr_edge = [260]
+
+        def resize_support(event):
+            width = max(100, event.width - 56)
+            for label in (title, intro, recipient, note, external_note):
+                label.configure(wraplength=width)
+            if hasattr(win, '_swish_qr'):
+                edge = max(96, min(260, event.width - 48))
+                if edge != last_qr_edge[0]:
+                    last_qr_edge[0] = edge
+                    win._swish_qr.configure(size=(edge, edge))
+
+        body.bind('<Configure>', resize_support, add='+')
+        close = ctk.CTkButton(footer, text='Stäng', command=win.destroy)
+        close.pack(fill='x', padx=8)
+        win.bind('<Escape>', lambda _event: win.destroy())
+        win.after(150, close.focus_set)
 
     def _show_info(self) -> None:
         s = self._scale
@@ -6317,19 +6465,20 @@ class FolderForgeApp(_DnDCTkBase):
         apply_icon_to_window(win, APP_ICON)
         win.grab_set()
         win.geometry(f"{scaled(420, s)}x{scaled(500, s)}")
-        win.resizable(False, False)
+        body, footer = dialog_layout(win)
+        win.resizable(True, True)
 
         ctk.CTkFrame(
-            win, fg_color=ACCENT_BLUE,
+            body, fg_color=ACCENT_BLUE,
             height=scaled(60, s), corner_radius=0,
         ).pack(fill="x")
         ctk.CTkLabel(
-            win, text="📁 FolderForge",
+            body, text="" if self._brand_image else "FolderForge", image=self._brand_image, compound="left",
             font=ctk.CTkFont(size=scaled_font(22, s), weight="bold"),
             text_color="white",
         ).place(x=scaled(15, s), y=scaled(15, s))
 
-        info_frame = ctk.CTkFrame(win, fg_color="transparent")
+        info_frame = ctk.CTkFrame(body, fg_color="transparent")
         info_frame.pack(
             fill="both", expand=True,
             padx=scaled(20, s), pady=scaled(15, s),
@@ -6340,6 +6489,7 @@ class FolderForgeApp(_DnDCTkBase):
         for label, value in [
             ("Version", APP_VERSION),
             ("Upphovsman", "Rickard Längkvist"),
+            ("Copyright", COPYRIGHT_OWNER),
             ("År", str(datetime.now().year)),
             ("Snabbtangent", " + ".join(
                 k.capitalize() for k in sorted(self.current_hotkey)
@@ -6369,7 +6519,7 @@ class FolderForgeApp(_DnDCTkBase):
         # Autostart-status per mekanism (M29) — samma avläsning som
         # _check_autostart() men uppdelad, så att användaren ser VAR appen
         # startas ifrån istället för bara "på/av".
-        status_frame = ctk.CTkFrame(win, fg_color="transparent")
+        status_frame = ctk.CTkFrame(body, fg_color="transparent")
         status_frame.pack(
             fill="x", padx=scaled(20, s), pady=(0, scaled(8, s)),
         )
@@ -6397,8 +6547,8 @@ class FolderForgeApp(_DnDCTkBase):
                 anchor="w",
             ).pack(anchor="w")
 
-        btn_row = ctk.CTkFrame(win, fg_color="transparent")
-        btn_row.pack(fill="x", padx=scaled(20, s), pady=(0, scaled(10, s)))
+        btn_row = ctk.CTkFrame(footer, fg_color="transparent")
+        btn_row.pack(fill="x", pady=(0, scaled(8, s)))
         ctk.CTkButton(
             btn_row, text="🔍 Testa autostart",
             command=self._test_autostart_ui,
@@ -6413,7 +6563,7 @@ class FolderForgeApp(_DnDCTkBase):
         ).pack(side="left", fill="x", expand=True, padx=(scaled(6, s), 0))
 
         ctk.CTkButton(
-            win, text="Stäng", command=win.destroy,
+            footer, text="Stäng", command=win.destroy,
             fg_color=ACCENT_BLUE, height=scaled(36, s),
             corner_radius=8,
             font=ctk.CTkFont(size=scaled_font(13, s)),
@@ -6473,6 +6623,7 @@ class FolderForgeApp(_DnDCTkBase):
                     "history": HISTORY_FILE,
                     "templates": TEMPLATES_DIR,
                     "hotkey_config": HOTKEY_CONFIG,
+                    "error_log": ERROR_LOG_FILE,
                 },
                 providers={
                     "python_version": lambda: sys.version.split()[0],
@@ -6532,19 +6683,27 @@ class FolderForgeApp(_DnDCTkBase):
         1. exe = sys.executable.replace("python.exe", "pythonw.exe") träffade
            INTE python3.12.exe / python3.13.exe, så en svart konsolruta kunde
            dyka upp vid inloggning. build_autostart_command() hanterar alla
-           varianter och faller tillbaka på 'start "" /B' om pythonw saknas.
+           fryst exe eller en byggd FolderForge.exe med egen ikon.
         2. Ingen återläsning efter skrivning. write_autostart_entry() läser
            tillbaka värdet och rapporterar om registret inte accepterade det.
         """
         if not IS_WINDOWS:
             return
-        if initial:
-            # Uppstartssynk: rutan initierades redan ur faktiskt läge via
-            # _check_autostart(), så här finns inget att göra. Utan spärren
-            # SKREV __init__ om registret och startup-genvägen (en PowerShell-
-            # underprocess!) vid VARJE appstart — dessutom kunde en tillfälligt
-            # nekad skrivning slå över rutan till "av" trots fungerande genväg.
+        if initial and not enable:
             return
+        # Kontrollera och uppdatera launcher-resursen även efter ikonbyte.
+        command = None
+        if enable:
+            try:
+                command = build_autostart_command(["--tray"])
+            except Exception as exc:
+                logger.exception("Kunde inte skapa startprogram med FolderForge-ikon")
+                self.autostart_var.set(self._check_autostart())
+                if not initial:
+                    messagebox.showerror("Autostart", str(exc))
+                return
+            if initial and read_autostart_entry(APP_NAME) == command:
+                return
         # M29/v5.0 — ALLA TRE mekanismer istället för endast registret.
         #
         # På domänanslutna och företagsstyrda datorer är HKCU\...\Run ofta låst
@@ -6558,8 +6717,10 @@ class FolderForgeApp(_DnDCTkBase):
         # misslyckades istället för bara att något gjorde det.
         if enable:
             resultat = enable_autostart_all_methods(
-                APP_NAME, build_autostart_command(["--tray"]),
-                icon_path=APP_ICON)
+                APP_NAME, command, icon_path=APP_ICON)
+            if resultat.get("ok"):
+                # En synlig startgenväg bredvid källkoden använder också vår ikon.
+                write_startup_shortcut(APP_NAME, command, startup_dir=BASE_DIR, icon_path=APP_ICON)
             if not resultat.get("ok") and not initial:
                 missade = [n for n, v in resultat.get("methods", {}).items()
                            if not v.get("ok")]
@@ -6575,7 +6736,7 @@ class FolderForgeApp(_DnDCTkBase):
             disable_autostart_all_methods(APP_NAME)
         # verify-after-write: rutan visar vad som FAKTISKT står i registret
         try:
-            self.autostart_var.set(bool(read_autostart_entry(APP_NAME)))
+            self.autostart_var.set(self._check_autostart())
         except Exception:
             logger.warning("Kunde inte verifiera autostart-status", exc_info=True)
 
@@ -6643,30 +6804,65 @@ if __name__ == "__main__":
     # instanserna skrev till settings.json/history.json med varsin kopia av
     # datat i minnet (sista skrivning vann → tyst dataförlust).
     #
-    # En andra start begär fokus på det befintliga fönstret via en triggerfil
-    # och avslutar sig själv. Låset frigörs i finally OCH via atexit, och
+    # En andra start avslutas utan att öppna eller fokusera den befintliga instansen.
+    # Låset frigörs i finally OCH via atexit, och
     # release() är idempotent — en krasch lämnar alltså aldrig ett zombielås.
     _instance_lock = SingleInstanceLock(APP_NAME)
     if not _instance_lock.acquire():
-        _instance_lock.request_focus()
-        logger.info("FolderForge körs redan — fokus begärt på befintligt fönster.")
+        from updater import recover_unresponsive_instance
+        if not recover_unresponsive_instance(_instance_lock, BASE_DIR / "folder.pyw"):
+            logger.info("FolderForge körs redan — ingen ny instans eller automatisk fönstervisning.")
+            sys.exit(0)
+    if IS_WINDOWS and sys.prefix != sys.base_prefix:
+        # Recovery of a legacy private instance must still migrate the new primary.
+        _instance_lock.release()
+        os.environ.pop("FOLDERFORGE_RUNTIME_SECONDARY", None)
+        from updater import launch_runtime_bootstrap
+        launch_runtime_bootstrap(BASE_DIR, sys.executable, sys.argv[1:])
         sys.exit(0)
-    # Startläge (användarens beslut): "start_minimized" i settings.json styr
-    # — default PÅ = starta alltid minimerad, oavsett startsätt. --tray
-    # (autostart/CLI) tvingar minimerat även om inställningen vore avstängd.
+    # All start, även efter uppdatering, ska vara dold i systemfältet.
     _raw_start = read_json_safe(SETTINGS_FILE, {}) or {}
     _start_clean, _start_rep, _start_log = validate_settings(_raw_start)
     for _rad in _start_log:
         logger.warning("Inställning reparerad: %s", _rad)
-    _start_minimerad = (bool(_start_clean.get("start_minimized", True))
-                        or "--tray" in sys.argv)
+    _start_minimerad = True
 
     try:
+        from updater import apply_pending, start_updates, launch_update_trial
+        try:
+            _updated = apply_pending(BASE_DIR)
+        except Exception as exc:
+            logger.exception("Kunde inte installera release; befintlig version används")
+            from updater import mark_installation_failed
+            mark_installation_failed(BASE_DIR, exc)
+            _updated = False
+        if _updated:
+            # Läs in alla nya moduler i en ren process, med samma startläge.
+            _instance_lock.release()
+            launch_update_trial(BASE_DIR, sys.executable)
+            sys.exit(0)
         app = FolderForgeApp(start_minimerad=_start_minimerad)
+        app._update_stop = (threading.Event() if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1"
+                            else start_updates(BASE_DIR, APP_VERSION))
+        from cache_cleanup import start_cleanup
+        app._cleanup_stop = start_cleanup(BASE_DIR)
+        from logg import start_log_archiver
+        app._log_archive_stop = start_log_archiver()
         app._instance_lock = _instance_lock  # visar lås-backend i Om-dialogen
         # Polla triggerfilen i Tk-huvudtråden (~1 s) och återställ fönstret.
         # root.after() är den trådsäkra vägen in i Tk (C43).
         _instance_lock.poll_start(app, app._restore_from_tray)
+        app.after(250, app._confirm_update_start)
+        if os.environ.get("FOLDERFORGE_WINDOWS_SMOKE") == "1":
+            app.after(100, app._service_windows_smoke)
         app.mainloop()
     finally:
         _instance_lock.release()
+
+    # Kör först när Tk-loopen är avslutad och finally har släppt instanslåset.
+    if getattr(app, "_restart_requested", False):
+        try:
+            os.execv(sys.executable, [sys.executable, str(BASE_DIR / "folder.pyw"), "--tray"])
+        except OSError:
+            logger.exception("Automatisk omstart misslyckades; starta FolderForge manuellt")
+            sys.exit(1)
