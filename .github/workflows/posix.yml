@@ -1,7 +1,7 @@
 name: Linux and macOS desktop
 on:
   push:
-    branches: ['arena/ff88fe29-folderforge']
+    branches: ['arena/**']
   pull_request:
   workflow_dispatch:
 permissions:
