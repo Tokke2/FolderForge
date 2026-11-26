@@ -10,11 +10,12 @@ Denna fil är **källan till sanning** för alla AI-agenter och utvecklare i **F
 
 ---
 
-## 1. HÅRD REGEL – Branch-, PR- och Standardbranch-disciplin (`REQ-BRANCH`)
+## 1. HÅRD REGEL – Alltid Arbeta Mot Standardbranchen, Aldrig `main`, Aldrig PR/Merge (`REQ-BRANCH`)
 
-- **Endast en aktiv arbetsbranch (standardbranch):** Ta bort överblivna sidobrancher så att endast en aktiv branch används, och arbeta endast emot den – även efter byte av chatt (via GitHubs *Default branch / standardbranch*).
-  - *Notis i Arena Agent Mode:* Arena låser varje session till sessionens tilldelade aktiva branch (`arena/...`). Pusha alltid enbart till sessionens aktiva branch och påminn vid behov ägaren att sätta den senaste branchen som *Default branch* på GitHub om en gammal branch ligger kvar.
-- **Arbeta ALDRIG emot `main`:** Varken commits, pushar eller appuppdateringar får ske emot `main`.
+- **Arbeta ALLTID mot standardbranchen (Default branch):** All utveckling, alla commits, alla pushar och alla releaseuppdateringar ska alltid gå direkt mot repots **standardbranch** (och aldrig ligga utspridda på sidobrancher).
+- **Endast en branch i repot:** Överblivna sidobrancher ska tas bort så att **endast standardbranchen** är kvar – även efter byte av chatt. `tools/publish_release.py` synkar automatiskt *Default branch* och raderar eventuella överblivna sidobrancher när GitHub-token tillåter det.
+  - *Miljöbegränsning i webbaserade sandlådor som låser sessionens push-branch:* Om plattformen låst den aktuella sessionen till en ny sessionsbranch (`arena/...`) och saknar admin-rättighet (`HTTP 403`) för att ändra *Default branch*, pushas allt till den aktiva sessionsbranchen och ägaren sätter den som *Default branch* under GitHub Settings så att den blir repots enda standardbranch.
+- **Arbeta ALDRIG emot `main`:** Varken commits, pushar, CI-triggers eller appuppdateringar får ske emot `main`.
 - **ALDRIG merge eller Pull Request:** Öppna **aldrig** en PR och **merga aldrig** grenar.
 
 ---

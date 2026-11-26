@@ -1,3 +1,10 @@
+# FolderForge v0.0.7
+
+## Ändringar i v0.0.7
+- **Standardbranch-disciplin i CI, releaseverktyg och `AGENTS.md`**: Alla GitHub Actions-workflows (`windows.yml`, `posix.yml`, `qt-preview.yml`) körs nu mot valfri aktiv standardbranch (`branches-ignore: ['main']`, helt utan PR-triggers), och `tools/publish_release.py` synkar automatiskt *Default branch* samt rensar överblivna sidobrancher när behörighet finns. Hårda regeln **alltid jobba mot standardbranchen** är sparad i `AGENTS.md` / `CLAUDE.md`.
+
+---
+
 # FolderForge v0.0.6
 
 ## Ändringar i v0.0.6

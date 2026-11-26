@@ -1,8 +1,7 @@
 name: Windows startup and update safety
 on:
   push:
-    branches: ['arena/**']
-  pull_request:
+    branches-ignore: ['main']
   workflow_dispatch:
 permissions:
   contents: read

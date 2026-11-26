@@ -1,8 +1,7 @@
 name: Linux and macOS desktop
 on:
   push:
-    branches: ['arena/**']
-  pull_request:
+    branches-ignore: ['main']
   workflow_dispatch:
 permissions:
   contents: read

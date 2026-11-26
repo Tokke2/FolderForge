@@ -210,7 +210,7 @@ Färdiga kodändringar testas och pushas enbart till den aktiva arbetsgrenen
 (`arena/ff88fe29-folderforge`), aldrig via merge till `main`.
 Vid varje kodförändring uppdateras den publicerade GitHub-releasen och markeras
 som **Latest** så att appen jämför appfilerna med SHA-256 via uppdateraren.
-Senaste version: **v0.0.6**. Se RELEASE_NOTES.md för ändringslista.
+Senaste version: **v0.0.7**. Se RELEASE_NOTES.md för ändringslista.
 
 ## År i projektnamnet
 

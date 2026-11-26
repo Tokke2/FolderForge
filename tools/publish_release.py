@@ -43,7 +43,7 @@ def extract_current_release_notes(tag: str) -> str:
     return "\n".join(collected).strip() or f"FolderForge {tag}"
 
 
-def ensure_not_main_and_clean(*, skip_clean_check: bool) -> str:
+def ensure_not_main_and_clean(*, skip_clean_check: bool) -> tuple[str, str]:
     branch = run_cmd(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip()
     if branch == "main":
         raise SystemExit("FEL (hård regel): Arbeta eller publicera aldrig direkt från `main`.")
@@ -51,7 +51,39 @@ def ensure_not_main_and_clean(*, skip_clean_check: bool) -> str:
         dirty = run_cmd(["git", "status", "--porcelain"]).stdout.strip()
         if dirty:
             raise SystemExit(f"FEL: Ocommittade ändringar i arbetskatalogen:\n{dirty}")
-    return run_cmd(["git", "rev-parse", "HEAD"]).stdout.strip()
+    return branch, run_cmd(["git", "rev-parse", "HEAD"]).stdout.strip()
+
+
+def sync_standard_branch(active_branch: str) -> None:
+    """Säkerställer standardbranch-disciplin (endast aktiv standardbranch kvar när API tillåter)."""
+    info = run_cmd(["gh", "api", f"repos/{REPO}", "--jq", ".default_branch"], check=False)
+    if info.returncode != 0:
+        return
+    default_branch = info.stdout.strip()
+    if default_branch != active_branch:
+        patched = run_cmd(
+            ["gh", "api", "-X", "PATCH", f"repos/{REPO}", "-f", f"default_branch={active_branch}"],
+            check=False,
+        )
+        if patched.returncode == 0:
+            default_branch = active_branch
+            print(f"Standardbranch på GitHub uppdaterad till: {active_branch}")
+        else:
+            print(
+                f"OBS: GitHub-token saknar admin-rättighet att byta Default branch ({default_branch} -> {active_branch}). "
+                f"Byt en gång under https://github.com/{REPO}/settings så raderas gamla sidobrancher automatiskt."
+            )
+    branches_res = run_cmd(["gh", "api", f"repos/{REPO}/branches", "--jq", ".[].name"], check=False)
+    if branches_res.returncode == 0:
+        for other in branches_res.stdout.splitlines():
+            other = other.strip()
+            if other and other != active_branch and other != default_branch:
+                deleted = run_cmd(
+                    ["gh", "api", "-X", "DELETE", f"repos/{REPO}/git/refs/heads/{other}"],
+                    check=False,
+                )
+                if deleted.returncode == 0:
+                    print(f"Tog bort överbliven sidobranch: {other}")
 
 
 def sync_tag_and_release(target_sha: str) -> str:
@@ -147,7 +179,9 @@ def main() -> None:
     parser.add_argument("--skip-clean-check", action="store_true", help="Hoppa över git status-kontroll i CI")
     args = parser.parse_args()
 
-    head_sha = args.sha or ensure_not_main_and_clean(skip_clean_check=args.skip_clean_check)
+    active_branch, detected_sha = ensure_not_main_and_clean(skip_clean_check=args.skip_clean_check)
+    head_sha = args.sha or detected_sha
+    sync_standard_branch(active_branch)
     tag = sync_tag_and_release(head_sha)
     verify_live_updater(tag, head_sha)
 
