@@ -1,0 +1,27 @@
+name: Sync Latest Release on Verified Branch Push
+on:
+  workflow_run:
+    workflows: ["Default Qt desktop and recovery"]
+    types: [completed]
+permissions:
+  contents: write
+jobs:
+  sync-latest-release:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch != 'main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PYTHONUTF8: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Update release tag to verified commit and mark Latest
+        run: python tools/publish_release.py --sha "${{ github.event.workflow_run.head_sha }}" --skip-clean-check

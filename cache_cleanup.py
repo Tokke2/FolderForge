@@ -109,7 +109,15 @@ def clean_cache(base, *, manual=False, now=None):
             except OSError:
                 failed += 1
                 logger.warning('Kunde inte rensa cachefil %s', path, exc_info=True)
-        result = {'last_run': now, 'removed': removed, 'bytes': freed, 'failed': failed}
+        archived_removed = 0
+        try:
+            from logg import prune_archived_logs
+            log_day = datetime.fromtimestamp(now).date()
+            archived_removed = prune_archived_logs(base / 'logs', today=log_day)
+            removed += archived_removed
+        except Exception:
+            logger.warning('Kunde inte rensa äldre loggarkiv', exc_info=True)
+        result = {'last_run': now, 'removed': removed, 'bytes': freed, 'failed': failed, 'archived_logs': archived_removed}
         if not atomic_write_json(state_path(base), result):
             raise OSError('Kunde inte spara tid för cacherensning')
         logger.info('Smart cacherensning: %s filer, %s byte, %s fel', removed, freed, failed)

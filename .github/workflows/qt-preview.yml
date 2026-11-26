@@ -1,7 +1,7 @@
 name: Default Qt desktop and recovery
 on:
   push:
-    branches: ['main']
+    branches: ['arena/**']
   pull_request:
   workflow_dispatch:
 permissions:

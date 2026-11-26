@@ -206,10 +206,11 @@ tray-menyn för att avsluta programmet. Separata dialogers X stänger bara dialo
 
 ## Publicering av kodändringar
 
-Färdiga kodändringar testas och slås ihop till huvudgrenen `main`, med
-versionsbeteckning och stabil GitHub-release. Appen uppdaterar från publicerade
-releaser, inte direkt från en branch.
-Senaste version: **v0.0.2**. Se RELEASE_NOTES.md för ändringslista.
+Färdiga kodändringar testas och pushas enbart till den aktiva arbetsgrenen
+(`arena/ff88fe29-folderforge`), aldrig via merge till `main`.
+Vid varje kodförändring uppdateras den publicerade GitHub-releasen och markeras
+som **Latest** så att appen jämför appfilerna med SHA-256 via uppdateraren.
+Senaste version: **v0.0.4**. Se RELEASE_NOTES.md för ändringslista.
 
 ## År i projektnamnet
 

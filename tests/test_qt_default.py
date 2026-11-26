@@ -91,6 +91,36 @@ class QtDefaultTests(unittest.TestCase):
                       "QSystemTrayIcon.DoubleClick", "FolderForge redo i systemfältet"):
             self.assertIn(token, source)
 
+    def test_qt_project_dialog_has_ruta_damage_chips_and_settings_profiles_subtab(self):
+        source = Path('qt_app.py').read_text(encoding='utf-8')
+        for token in ('DAMAGE_TYPE_CHIPS', 'RUTA_CHOICES', 'toggle_damage_word',
+                      "self.settings_subtabs.addTab(profiles_tab, 'Profiler')",
+                      'folderforge-logo-inverse.svg', '_default_screen_geometry'):
+            self.assertIn(token, source)
+        import ast
+        tree = ast.parse(source)
+        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'toggle_damage_word')
+        ns = {'RUTA_CHOICES': ('SIDORUTA', 'BAKRUTA')}
+        exec(compile(ast.Module(body=[fn], type_ignores=[]), 'damage', 'exec'), ns)
+        toggle = ns['toggle_damage_word']
+        self.assertEqual(toggle('ABC123', 'VINDRUTA'), 'ABC123 VINDRUTA')
+        self.assertEqual(toggle('ABC123 vindruta', 'VINDRUTA'), 'ABC123')
+        self.assertEqual(toggle('ABC123 SIDORUTA', 'BAKRUTA'), 'ABC123 BAKRUTA')
+        self.assertEqual(toggle('ABC123 BAKRUTA', 'STENSKOTT'), 'ABC123 BAKRUTA STENSKOTT')
+
+    def test_sortable_movable_columns_resolved_error_cleanup_and_agents_rules(self):
+        qt_app_src = Path('qt_app.py').read_text(encoding='utf-8')
+        qt_help_src = Path('qt_help.py').read_text(encoding='utf-8')
+        agents_src = Path('AGENTS.md').read_text(encoding='utf-8')
+        for src in (qt_app_src, qt_help_src):
+            self.assertIn('setSortingEnabled(True)', src)
+            self.assertIn('setSectionsMovable(True)', src)
+        for token in ('def resolve(', 'def resolve_all(', 'archive_resolved_errors', 'resolve_error_issue'):
+            self.assertIn(token, qt_help_src)
+        self.assertIn('-WindowStyle Hidden', Path('Starta-FolderForge.vbs').read_text(encoding='utf-8'))
+        for rule in ('Latest', 'REQ-K4', 'publish_release.py', 'ARCHIVE_RETENTION_DAYS = 7', '- hård regel'):
+            self.assertIn(rule, agents_src)
+
 
 class ProductNameTests(unittest.TestCase):
     def test_production_uses_product_name_without_gui_framework(self):
