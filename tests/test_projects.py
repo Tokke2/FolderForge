@@ -117,5 +117,23 @@ class ProjectTests(unittest.TestCase):
             self.assertEqual(len(reloaded.get_all()), 24)
 
 
+    def test_dotfiles_allowed_while_unsafe_dot_segments_rejected(self):
+        created = create_project_tree(
+            self.base / 'Out',
+            'FGZ029 VINDRUTA LAXÅ 2021',
+            [
+                {'path': ['src'], 'is_dir': True},
+                {'path': ['.gitignore'], 'is_dir': False},
+                {'path': ['.env'], 'is_dir': False},
+            ],
+        )
+        self.assertTrue((created / '.gitignore').is_file())
+        self.assertTrue((created / '.env').is_file())
+        for bad in (['.'], ['..'], ['..outside'], ['.gitignore.'], ['.CON'], ['. gitignore']):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
+                create_project_tree(self.base / 'BadOut', 'TEST', [{'path': bad, 'is_dir': False}])
+        self.assertFalse((self.base / 'BadOut').exists())
+
+
 if __name__ == '__main__':
     unittest.main()

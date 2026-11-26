@@ -303,6 +303,25 @@ class NameValidator:
         return sanitize_name(name)
 
     @staticmethod
+    def is_valid_structure_part(part: str) -> bool:
+        """Validerar ett mapp- eller filnamnssegment i en projektstruktur.
+
+        Tillåter giltiga punktfiler (t.ex. '.gitignore', '.env', '.editorconfig')
+        som annars skalas av sanitize_name(), men avvisar '.', '..', dubbla
+        inledande punkter, avslutande punkt/mellanslag, ogiltiga tecken och
+        reserverade Windows-enhetsnamn.
+        """
+        if not isinstance(part, str) or not part or len(part) > 255 or part in {'.', '..'}:
+            return False
+        try:
+            if part.startswith('.') and not part.startswith('..') and len(part) > 1:
+                rest = part[1:]
+                return not rest.startswith(' ') and sanitize_name(rest) == rest
+            return sanitize_name(part) == part
+        except ValueError:
+            return False
+
+    @staticmethod
     def is_safe_path(base: Path, target: Path) -> bool:
         try:
             target.resolve().relative_to(base.resolve())
@@ -357,6 +376,8 @@ class AppSettings:
 
 
 class TemplateManager:
+    _DELETED_STATE_NAME = "_deleted_builtins.state"
+
     def __init__(self, directory=None) -> None:
         self.directory = Path(directory) if directory is not None else TEMPLATES_DIR
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -381,9 +402,67 @@ class TemplateManager:
             ),
         }
 
+    def _deleted_state_path(self) -> Path:
+        return self.directory / self._DELETED_STATE_NAME
+
+    @staticmethod
+    def _unlink_with_backups(path: Path) -> bool:
+        existed = path.exists()
+        for cand in (
+            path,
+            path.with_suffix(path.suffix + ".bak"),
+            path.with_suffix(path.suffix + ".bak2"),
+        ):
+            if cand.exists():
+                cand.unlink()
+        return existed
+
+    def deleted_builtins(self) -> set:
+        raw = read_json_safe(self._deleted_state_path(), None)
+        if isinstance(raw, dict) and isinstance(raw.get("deleted"), list):
+            return {x for x in raw["deleted"] if isinstance(x, str) and x in self._builtin}
+        return set()
+
+    def _write_deleted_builtins(self, names: set) -> None:
+        clean = sorted(x for x in names if x in self._builtin)
+        state_path = self._deleted_state_path()
+        if not clean:
+            self._unlink_with_backups(state_path)
+            return
+        if not atomic_write_json(state_path, {"deleted": clean}):
+            raise OSError("Kunde inte uppdatera borttagna standardmallar.")
+
+    def profile_file(self, name: str) -> Optional[Path]:
+        clean = str(name or "").strip()
+        if not clean:
+            return None
+        try:
+            safe = NameValidator.sanitize(clean)
+        except ValueError:
+            safe = ""
+        if safe:
+            exact = self.directory / f"{safe}.json"
+            if exact.exists():
+                return exact
+        folded = clean.casefold()
+        safe_folded = safe.casefold()
+        for f in sorted(self.directory.glob("*.json")):
+            if f.name.startswith("."):
+                continue
+            data = read_json_safe(f, None)
+            if isinstance(data, dict) and isinstance(data.get("name"), str):
+                if data["name"].casefold() == folded:
+                    return f
+            if safe_folded and f.stem.casefold() == safe_folded:
+                return f
+        return None
+
     def list_templates(self) -> Dict[str, str]:
-        templates = dict(self._builtin)
-        for f in self.directory.glob("*.json"):
+        deleted = self.deleted_builtins()
+        templates = {k: v for k, v in self._builtin.items() if k not in deleted}
+        for f in sorted(self.directory.glob("*.json")):
+            if f.name.startswith("."):
+                continue
             # M2/C41.3 — read_json_safe() återställer från .bak/.bak2 om filen
             # är trasig, istället för att bara hoppa över mallen.
             data = read_json_safe(f, None)
@@ -393,44 +472,94 @@ class TemplateManager:
                 continue
             try:
                 if isinstance(data["name"], str) and isinstance(data["structure"], str):
-                    templates[data["name"]] = data["structure"]
+                    saved_name = data["name"]
+                    for existing_key in list(templates):
+                        if existing_key != saved_name and existing_key.casefold() == saved_name.casefold():
+                            templates.pop(existing_key, None)
+                    templates[saved_name] = data["structure"]
             except KeyError as e:
                 logger.warning("Kunde inte läsa mall %s: %s", f.name, e)
         return templates
 
     def save_template(self, name: str, structure: str, *, save_root=None) -> None:
-        if name in self._builtin:
-            raise ValueError("Inbyggda mallar kan inte skrivas över. Välj ett eget namn.")
-        if not StructureEngine.parse_structure_text(structure)[1]:
+        clean_name = str(name or "").strip()
+        if not clean_name:
+            raise ValueError("Mallnamn kan inte vara tomt.")
+        _, items = StructureEngine.parse_structure_text(structure)
+        if not items:
             raise ValueError("Mallen måste innehålla en struktur.")
-        safe = NameValidator.sanitize(name)
+        for item in items:
+            for part in item.get("path", ()):
+                if not NameValidator.is_valid_structure_part(part):
+                    raise ValueError(f"Otillåtet namn i strukturen: {part!r}")
+        safe = NameValidator.sanitize(clean_name)
         path = self.directory / f"{safe}.json"
-        existing = read_json_safe(path, {})
+        prior_file = self.profile_file(clean_name)
+        existing = read_json_safe(prior_file if prior_file is not None else path, {})
         payload = dict(existing) if isinstance(existing, dict) else {}
-        payload.update(name=name, structure=structure)
+        payload.update(name=clean_name, structure=structure)
         if save_root is not None:
             root = str(save_root).strip()
             if not root or not Path(root).is_absolute():
                 raise ValueError('Profilens sparplats måste vara en fullständig sökväg.')
             payload['save_root'] = root
-        # M1/F1 — atomisk skrivning med backup. Obs: filen får nu indent=2
-        # (atomic_write_json:s standard) istället för en enda lång rad;
-        # innehållet och inläsningsvägen är oförändrade.
+        # M1/F1 — atomisk skrivning med backup; stöder nu även överskrivning av
+        # både befintliga egna profiler och standardmallar.
         if not atomic_write_json(
             path,
             payload,
         ):
-            raise OSError(f"Kunde inte spara mall {name!r}")
+            raise OSError(f"Kunde inte spara mall {clean_name!r}")
+        if prior_file is not None and prior_file.resolve() != path.resolve():
+            self._unlink_with_backups(prior_file)
+        deleted = self.deleted_builtins()
+        restored_builtins = {k for k in deleted if k.casefold() == clean_name.casefold()}
+        if restored_builtins:
+            self._write_deleted_builtins(deleted - restored_builtins)
 
     def delete_template(self, name: str) -> bool:
-        if name in self._builtin:
+        clean_name = str(name or "").strip()
+        if not clean_name:
             return False
-        safe = NameValidator.sanitize(name)
-        p = self.directory / f"{safe}.json"
-        if p.exists():
-            p.unlink()
-            return True
-        return False
+        folded = clean_name.casefold()
+        current = self.list_templates()
+        matched_key = next((k for k in current if k == clean_name), None) or next(
+            (k for k in current if k.casefold() == folded), None
+        )
+        builtin_key = next((k for k in self._builtin if k.casefold() == folded), None)
+        prior_file = self.profile_file(clean_name)
+        if matched_key is None and prior_file is None:
+            return False
+        if matched_key is not None and len(current) <= 1:
+            raise ValueError("Minst en profil måste finnas kvar. Skapa en annan profil först.")
+        removed_any = False
+        try:
+            safe_folded = NameValidator.sanitize(clean_name).casefold()
+        except ValueError:
+            safe_folded = ""
+        for f in list(self.directory.glob("*.json")):
+            if f.name.startswith("."):
+                continue
+            data = read_json_safe(f, None)
+            data_name = data.get("name", "") if isinstance(data, dict) else ""
+            if (isinstance(data_name, str) and data_name.casefold() == folded) or (
+                safe_folded and f.stem.casefold() == safe_folded
+            ):
+                self._unlink_with_backups(f)
+                removed_any = True
+        if builtin_key is not None:
+            deleted = self.deleted_builtins()
+            if builtin_key not in deleted:
+                deleted.add(builtin_key)
+                self._write_deleted_builtins(deleted)
+                removed_any = True
+        return removed_any
+
+    def restore_builtin_templates(self) -> List[str]:
+        deleted = sorted(self.deleted_builtins())
+        if deleted:
+            self._write_deleted_builtins(set())
+        return deleted
 
 
 class StructureEngine:
@@ -578,7 +707,7 @@ def create_project_tree(save_root, root_name, items):
         if not isinstance(parts, (list, tuple)) or not parts:
             raise ValueError('Tom sökväg i strukturen')
         for part in parts:
-            if not isinstance(part, str) or part in {'.', '..'} or sanitize_name(part) != part:
+            if not NameValidator.is_valid_structure_part(part):
                 raise ValueError(f'Otillåten sökväg i strukturen: {parts!r}')
         if not NameValidator.is_safe_path(base, base.joinpath(*parts)):
             raise ValueError('Strukturen lämnar projektmappen')

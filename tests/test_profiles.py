@@ -121,3 +121,77 @@ class RecentProfileTests(unittest.TestCase):
         self.assertEqual(self.ws.selected_profile(), 'Skaderapport')
         with self.assertRaises(ValueError):
             self.ws.remember_profile('saknas')
+
+    def test_overwrite_existing_custom_and_builtin_profiles_atomically(self):
+        bilar_root = self.base / 'Bilder' / 'Bilar'
+        # Initial creation returns False (new profile)
+        self.assertFalse(self.ws.save_profile('Bilrutan', 'Bilder/\nREADME.md\n.gitignore\n', str(bilar_root)))
+        # Overwriting existing custom profile returns True and updates structure + save_root
+        new_root = self.base / 'Bilder' / 'Verkstad'
+        self.assertTrue(self.ws.save_profile('bilrutan', 'Bilder/\nUnderlag/\n.gitignore\n', str(new_root)))
+        reopened = Workspace(self.lock, self.base)
+        names = list(reopened.templates.list_templates())
+        self.assertEqual([n for n in names if n.casefold() == 'bilrutan'], ['bilrutan'])
+        self.assertEqual(reopened.profile_root('bilrutan'), new_root)
+        self.assertIn('Underlag/', reopened.templates.list_templates()['bilrutan'])
+
+        # Overwriting built-in profile updates both structure and save_root across reloads
+        skade_root = self.base / 'Skador'
+        self.assertTrue(self.ws.save_profile('Skaderapport', 'Bilder/\nKvitton/\n', str(skade_root)))
+        reopened2 = Workspace(self.lock, self.base)
+        self.assertEqual(reopened2.profile_root('Skaderapport'), skade_root)
+        self.assertEqual(reopened2.templates.list_templates()['Skaderapport'], 'Bilder/\nKvitton/\n')
+
+    def test_delete_custom_and_builtin_profiles_and_restore_builtins(self):
+        # Create Bilrutan with .bak backup present by saving twice
+        self.ws.save_profile('Bilrutan', 'Bilder/\n', str(self.base / 'Bilar1'))
+        self.ws.save_profile('Bilrutan', 'Bilder/\nUnderlag/\n', str(self.base / 'Bilar2'))
+        self.ws.config.default_template = 'Bilrutan'
+        self.ws.remember_profile('Bilrutan')
+        self.ws.save_settings()
+        self.assertTrue((self.base / 'data/templates/Bilrutan.json.bak').exists())
+
+        # Deleting active/default custom profile cleans up .json + .bak and updates fallback
+        fallback = self.ws.delete_profile('Bilrutan')
+        self.assertNotIn('Bilrutan', self.ws.templates.list_templates())
+        self.assertFalse((self.base / 'data/templates/Bilrutan.json').exists())
+        self.assertFalse((self.base / 'data/templates/Bilrutan.json.bak').exists())
+        self.assertEqual(fallback, 'Skaderapport')
+        self.assertEqual(self.ws.config.default_template, 'Skaderapport')
+
+        # Deleting built-in profiles persists across Workspace reloads
+        self.ws.delete_profile('Python Projekt')
+        self.ws.delete_profile('Webb Projekt')
+        self.ws.delete_profile('Skaderapport')
+        # Only 'Privat' remains now
+        reopened = Workspace(self.lock, self.base)
+        self.assertEqual(list(reopened.templates.list_templates()), ['Privat'])
+        self.assertEqual(reopened.selected_profile(), 'Privat')
+
+        # Cannot delete the very last remaining profile
+        with self.assertRaises(ValueError):
+            reopened.delete_profile('Privat')
+        self.assertEqual(list(reopened.templates.list_templates()), ['Privat'])
+
+        # Restoring built-in templates brings them back cleanly
+        restored = reopened.restore_builtin_profiles()
+        self.assertEqual(set(restored), {'Python Projekt', 'Webb Projekt', 'Skaderapport'})
+        for builtin_name in ('Python Projekt', 'Webb Projekt', 'Skaderapport'):
+            self.assertIn(builtin_name, reopened.templates.list_templates())
+
+    def test_create_project_with_gitignore_and_dotfiles_succeeds(self):
+        bilar_root = self.base / 'Bilder' / 'Bilar'
+        self.ws.save_profile(
+            'Bilrutan',
+            'projektnamn/\n    src/\n        __init__.py\n        main.py\n'
+            '    tests/\n        test_main.py\n    docs/\n'
+            '    requirements.txt\n    README.md\n    .gitignore\n',
+            str(bilar_root),
+        )
+        name, items = self.ws.prepare_project('FGZ029 VINDRUTA LAXÅ 2021', 'Bilrutan')
+        created = self.ws.create_project(name, items, 'Bilrutan')
+        self.assertEqual(created, bilar_root / 'FGZ029 VINDRUTA LAXÅ 2021')
+        self.assertTrue((created / '.gitignore').is_file())
+        self.assertTrue((created / 'src' / 'main.py').is_file())
+        self.assertTrue((created / 'docs').is_dir())
+

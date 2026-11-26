@@ -2,7 +2,7 @@
 
 ## Ingår i samma release som appen
 
-Hämta **Source code (zip)** från senaste releasen (`v0.0.4`, Latest) under Assets. Tryckoriginalen ligger redan i `Icon/` i samma ZIP som appen. **Inget separat grafikpaket eller någon extra SVG-nedladdning behövs.** Efter uppackning öppnar du rätt SVG-fil lokalt och lämnar den till tryckeriet. Se även `RELEASE_INNEHALL.md` i paketets rot.
+Hämta **Source code (zip)** från senaste releasen (`v0.0.5`, Latest) under Assets. Tryckoriginalen ligger redan i `Icon/` i samma ZIP som appen. **Inget separat grafikpaket eller någon extra SVG-nedladdning behövs.** Efter uppackning öppnar du rätt SVG-fil lokalt och lämnar den till tryckeriet. Se även `RELEASE_INNEHALL.md` i paketets rot.
 
 ## Levererade original
 

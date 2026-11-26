@@ -1,3 +1,13 @@
+# FolderForge v0.0.5
+
+## Ändringar i v0.0.5
+- **Spara över befintliga profiler överallt**: Både egna profiler och standardprofiler (`Skaderapport`, `Python Projekt`, `Webb Projekt`) kan nu sparas över direkt (både mappstruktur och egen sparplats) i **Inställningar → Profiler**, under **Mallar**, samt med snabbknappen **Spara över profil…** direkt i **Skapa nytt projekt**. Även skiftlägesändringar i profilnamn hanteras rent utan dubblettfiler.
+- **Ta bort valfri profil (även standardmallar)**: Alla profiler kan nu tas bort via **Ta bort profil…** i både **Inställningar → Profiler** och **Mallar** (så länge minst en profil finns kvar), inklusive städning av `.bak`-filer och automatisk växling av aktiv/standardprofil om den raderade profilen var aktiv. Borttagna standardmallar kan när som helst återställas med **Återställ borttagna standardmallar**.
+- **Åtgärdat fel vid projektskapande med punktfiler (`['.gitignore']`)**: Giltiga punktfiler som `.gitignore`, `.env` och `.editorconfig` tillåts nu i `create_project_tree()` och `NameValidator.is_valid_structure_part()`, samtidigt som osäkra sökvägar (`.`, `..`, avslutande punkt/mellanslag och reserverade Windows-namn som `CON.txt`) fortsatt blockeras.
+- **Rätt förvald profil & direktgenväg från projektskaparen**: **Mallar** och **Inställningar → Profiler** öppnas nu alltid med din senast valda/aktiva profil förvald (istället för *Python Projekt*), strukturräknaren under *Inställningar → Profiler* visar korrekt antal mappar/filer i realtid, och knappen **Hantera profiler…** i *Skapa nytt projekt* öppnar profilhanteraren direkt på vald profil.
+
+---
+
 # FolderForge v0.0.4
 
 ## Ändringar i v0.0.4

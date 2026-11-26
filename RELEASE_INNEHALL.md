@@ -1,6 +1,6 @@
 # Ett releasepaket – app, ikoner och tryckoriginal
 
-Hämta **Source code (zip)** under Assets på FolderForge **v0.0.4**:
+Hämta **Source code (zip)** under Assets på FolderForge **v0.0.5**:
 https://github.com/Tokke2/FolderForge/releases/latest
 
 **Inget separat grafikpaket behövs.** Samma ZIP innehåller både appen och tryckoriginalen. Packa upp hela paketet; projekt och inställningar i en befintlig `data/` ska bevaras vid manuell uppdatering.

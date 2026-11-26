@@ -285,10 +285,53 @@ class ProjectDialog(QDialog):
             dialog.exec()
             dialog.deleteLater()
 
+        def save_custom_over_profile():
+            custom_text = self.custom.toPlainText().strip()
+            target = self.template.currentText().strip()
+            if not custom_text:
+                QMessageBox.information(
+                    self,
+                    'Ingen ny struktur angiven',
+                    'Skriv eller klistra in den nya mappstrukturen i rutan nedan för att spara över vald profil, '
+                    'eller klicka på "Hantera profiler…" för att redigera sparplats, skapa eller ta bort profiler.',
+                )
+                return
+            if QMessageBox.question(
+                self,
+                'Spara över profil?',
+                f'Vill du spara över mappstrukturen i profilen "{target}"?',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            ) != QMessageBox.Yes:
+                return
+            try:
+                root_path = self.window.workspace.profile_root(target)
+                self.window.workspace.save_profile(target, custom_text + '\n', str(root_path))
+                self.custom.clear()
+                self.window._sync_all_template_lists(target)
+                self.window._load_template_into_editor(target)
+                if hasattr(self.window, '_load_settings_profile'):
+                    self.window._load_settings_profile(target)
+                self.refresh()
+                self.window.statusBar().showMessage(f'Profilen "{target}" uppdaterades (sparades över)')
+            except (OSError, ValueError, RuntimeError) as exc:
+                QMessageBox.warning(self, 'Kunde inte spara över profil', str(exc))
+
+        def manage_profiles():
+            self.window.open_profiles_subtab(self.template.currentText())
+
         inspect_btn = QPushButton('Visa struktur…')
         inspect_btn.setObjectName('secondaryAction')
         inspect_btn.clicked.connect(show_structure)
         custom_header.addWidget(inspect_btn)
+        overwrite_btn = QPushButton('Spara över profil…')
+        overwrite_btn.setObjectName('secondaryAction')
+        overwrite_btn.clicked.connect(save_custom_over_profile)
+        custom_header.addWidget(overwrite_btn)
+        manage_btn = QPushButton('Hantera profiler…')
+        manage_btn.setObjectName('secondaryAction')
+        manage_btn.clicked.connect(manage_profiles)
+        custom_header.addWidget(manage_btn)
         custom_layout.addLayout(custom_header)
         self.custom = QPlainTextEdit()
         self.custom.setFont(monospace_font())
@@ -688,10 +731,18 @@ class QtWindow(PreviewWindow):
                     event.acceptProposedAction()
                     return
 
-    def open_profiles_subtab(self):
+    def open_profiles_subtab(self, profile_name=None):
         self.tabs.setCurrentIndex(4)
         if hasattr(self, 'settings_subtabs'):
             self.settings_subtabs.setCurrentIndex(1)
+        if isinstance(profile_name, str) and profile_name in self.workspace.templates.list_templates():
+            if hasattr(self, 'settings_profile_picker'):
+                self.settings_profile_picker.setCurrentText(profile_name)
+                self._load_settings_profile(profile_name)
+        if not self.isVisible():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1152,8 +1203,22 @@ class QtWindow(PreviewWindow):
                 combo.addItems(names)
                 if current in names:
                     combo.setCurrentText(current)
+                elif self.workspace.selected_profile() in names:
+                    combo.setCurrentText(self.workspace.selected_profile())
                 combo.blockSignals(False)
         self.refresh_profile_choices()
+        if getattr(self, 'dialog', None) is not None:
+            try:
+                dlg_current = selected_name or self.dialog.template.currentText()
+                self.dialog.template.blockSignals(True)
+                self.dialog.template.clear()
+                self.dialog.template.addItems(names)
+                target_dlg = dlg_current if dlg_current in names else self.workspace.selected_profile()
+                self.dialog.template.setCurrentText(target_dlg)
+                self.dialog.template.blockSignals(False)
+                self.dialog.refresh()
+            except RuntimeError:
+                pass
 
     def template_page(self):
         layout = page(self.tabs, 'Mallar')
@@ -1164,15 +1229,16 @@ class QtWindow(PreviewWindow):
 
         left_card, left_body = card_frame()
         left_body.addWidget(label('Mallar & profiler', 'cardHeading'))
-        left_body.addWidget(label('Välj profil för att redigera både mappstruktur och egen sparplats. '
-            'Ge en inbyggd mall ett nytt namn för att spara en egen profil.', 'mutedText'))
+        left_body.addWidget(label('Välj en profil för att redigera och spara över den direkt, '
+            'eller ange ett nytt namn för att skapa en ny profil.', 'mutedText'))
         left_body.addWidget(label('Befintlig mall / profil', 'mutedText'))
         self.templates = QComboBox()
         self.templates.addItems(list(self.workspace.templates.list_templates()))
+        self.templates.setCurrentText(self.workspace.selected_profile())
         left_body.addWidget(self.templates)
         left_body.addWidget(label('Profilnamn', 'mutedText'))
         self.template_name = QLineEdit()
-        self.template_name.setPlaceholderText('Profilnamn (nytt namn skapar en egen profil)')
+        self.template_name.setPlaceholderText('Behåll namnet för att spara över, eller skriv nytt namn')
         left_body.addWidget(self.template_name)
         left_body.addWidget(label('Sparplats för profilen', 'mutedText'))
         self.profile_root_edit = QLineEdit()
@@ -1196,7 +1262,7 @@ class QtWindow(PreviewWindow):
             self.statusBar().showMessage('Välj standardprofil och tryck Spara inställningar')
 
         button(left_body, 'Välj standardprofil i Inställningar…', set_default, 'settings', self._action_icons)
-        button(left_body, 'Ta bort vald egen mall…', self._remove_template_page_profile, 'trash', self._action_icons)
+        button(left_body, 'Ta bort vald profil…', self._remove_template_page_profile, 'trash', self._action_icons)
         left_body.addStretch(1)
         grid.addWidget(left_card, 0, 0)
 
@@ -1227,34 +1293,37 @@ class QtWindow(PreviewWindow):
         try:
             self.workspace.require_lock()
             name = self.template_name.text().strip()
-            self.workspace.save_profile(name, self.structure.toPlainText(), self.profile_root_edit.text())
+            overwrote = self.workspace.save_profile(name, self.structure.toPlainText(), self.profile_root_edit.text())
             self._sync_all_template_lists(name)
             self._load_template_into_editor(name)
             if hasattr(self, '_load_settings_profile'):
                 self._load_settings_profile(name)
-            self.statusBar().showMessage('Profil sparad – struktur och sparplats')
+            action_msg = 'uppdaterades (sparades över)' if overwrote else 'skapades'
+            self.statusBar().showMessage(f'Profilen "{name}" {action_msg}')
         except (OSError, ValueError, RuntimeError) as exc:
             logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
             QMessageBox.warning(self, 'Kunde inte spara mall', str(exc))
 
     def _remove_template_page_profile(self):
-        target = self.templates.currentText()
-        if QMessageBox.question(self, 'Ta bort egen mall?', target,
+        typed = self.template_name.text().strip()
+        templates = self.workspace.templates.list_templates()
+        target = next((k for k in templates if k.casefold() == typed.casefold()), None) or self.templates.currentText()
+        if not target:
+            return
+        if QMessageBox.question(self, 'Ta bort profil?',
+                f'Vill du ta bort profilen "{target}"?\nRedan skapade projektmappar på disken påverkas inte.',
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
-            if not self.workspace.templates.delete_template(target):
-                raise ValueError('Inbyggda mallar kan inte tas bort')
-            if self.workspace.config.default_template == target:
-                self.workspace.config.default_template = 'Skaderapport'
-                self.workspace.save_settings()
-            self._sync_all_template_lists()
+            fallback = self.workspace.delete_profile(target)
+            self._sync_all_template_lists(fallback)
+            self.select_profile(fallback)
             self._load_template_into_editor(self.templates.currentText())
             if hasattr(self, '_load_settings_profile'):
                 self._load_settings_profile(self.settings_profile_picker.currentText())
-            self.save_settings()
-        except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, 'Kunde inte ta bort mall', str(exc))
+            self.statusBar().showMessage(f'Profilen "{target}" togs bort. Aktiv profil: "{fallback}".')
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'Kunde inte ta bort profil', str(exc))
 
     def export_page(self):
         layout = page(self.tabs, 'Exportera')
@@ -1412,11 +1481,12 @@ class QtWindow(PreviewWindow):
 
         prof_left, prof_left_body = card_frame()
         prof_left_body.addWidget(label('Skapa & hantera profiler', 'cardHeading'))
-        prof_left_body.addWidget(label('Varje profil kopplar ihop ett eget mappstrukturträd med en egen sparplats.', 'mutedText'))
+        prof_left_body.addWidget(label('Redigera och spara över befintliga profiler, skapa nya eller ta bort profiler du inte använder.', 'mutedText'))
         prof_left_body.addWidget(label('Utgå från befintlig profil / mall', 'mutedText'))
         self.settings_profile_picker = QComboBox()
         self.settings_profile_picker.setAccessibleName('Välj profil i Inställningar')
         self.settings_profile_picker.addItems(list(self.workspace.templates.list_templates()))
+        self.settings_profile_picker.setCurrentText(self.workspace.selected_profile())
         prof_left_body.addWidget(self.settings_profile_picker)
 
         def start_blank_profile():
@@ -1431,7 +1501,7 @@ class QtWindow(PreviewWindow):
         prof_left_body.addWidget(label('Profilens namn', 'mutedText'))
         self.settings_profile_name = QLineEdit()
         self.settings_profile_name.setAccessibleName('Ny eller vald profils namn')
-        self.settings_profile_name.setPlaceholderText('T.ex. Verkstad, Besiktning eller Kundprojekt')
+        self.settings_profile_name.setPlaceholderText('Behåll namnet för att spara över, eller ange nytt namn')
         prof_left_body.addWidget(self.settings_profile_name)
 
         prof_left_body.addWidget(label('Profilens sparplats', 'mutedText'))
@@ -1451,9 +1521,10 @@ class QtWindow(PreviewWindow):
         self.settings_profile_summary = label('', 'mutedText')
         prof_left_body.addWidget(self.settings_profile_summary)
 
-        button(prof_left_body, 'Skapa / spara profil', self._save_settings_profile, 'save', self._action_icons)
+        button(prof_left_body, 'Spara / spara över profil', self._save_settings_profile, 'save', self._action_icons)
         button(prof_left_body, 'Använd som aktiv & standardprofil', self._activate_settings_profile, 'profiles', self._action_icons)
-        button(prof_left_body, 'Ta bort egen profil…', self._delete_settings_profile, 'trash', self._action_icons)
+        button(prof_left_body, 'Ta bort profil…', self._delete_settings_profile, 'trash', self._action_icons)
+        button(prof_left_body, 'Återställ borttagna standardmallar', self._restore_builtin_profiles, 'undo', self._action_icons)
         prof_left_body.addStretch(1)
         prof_grid.addWidget(prof_left, 0, 0)
 
@@ -1531,7 +1602,7 @@ class QtWindow(PreviewWindow):
 
     def _update_settings_profile_summary(self):
         try:
-            items = StructureEngine.parse_structure(self.settings_profile_structure.toPlainText())
+            _, items = StructureEngine.parse_structure_text(self.settings_profile_structure.toPlainText())
             folders, files = StructureEngine.count_items(items)
             self.settings_profile_summary.setText(f'Struktur: {folders} mappar, {files} filer')
         except Exception as exc:
@@ -1544,6 +1615,7 @@ class QtWindow(PreviewWindow):
             root = self.workspace.profile_root(name) if name else Path(self.workspace.config.save_root)
             self.settings_profile_root.setText(str(root))
         except ValueError:
+            self.profile_root_fallback = self.workspace.config.save_root
             self.settings_profile_root.clear()
         self.settings_profile_name.setModified(False)
         self.settings_profile_root.setModified(False)
@@ -1554,11 +1626,16 @@ class QtWindow(PreviewWindow):
         try:
             self.workspace.require_lock()
             name = self.settings_profile_name.text().strip()
-            self.workspace.save_profile(name, self.settings_profile_structure.toPlainText(), self.settings_profile_root.text())
+            overwrote = self.workspace.save_profile(
+                name,
+                self.settings_profile_structure.toPlainText(),
+                self.settings_profile_root.text(),
+            )
             self._sync_all_template_lists(name)
             self._load_settings_profile(name)
             self._load_template_into_editor(name)
-            self.statusBar().showMessage(f'Profilen "{name}" sparades')
+            action_msg = 'uppdaterades (sparades över)' if overwrote else 'skapades'
+            self.statusBar().showMessage(f'Profilen "{name}" {action_msg}')
         except (OSError, ValueError, RuntimeError) as exc:
             logging.getLogger('qt.profiles').exception('Profil kunde inte sparas')
             QMessageBox.warning(self, 'Kunde inte spara profil', str(exc))
@@ -1578,22 +1655,37 @@ class QtWindow(PreviewWindow):
         self.statusBar().showMessage(f'"{name}" är nu aktiv och sparad som standardprofil')
 
     def _delete_settings_profile(self):
-        target = self.settings_profile_picker.currentText()
-        if QMessageBox.question(self, 'Ta bort egen profil?', target,
+        typed = self.settings_profile_name.text().strip()
+        templates = self.workspace.templates.list_templates()
+        target = next((k for k in templates if k.casefold() == typed.casefold()), None) or self.settings_profile_picker.currentText()
+        if not target:
+            return
+        if QMessageBox.question(self, 'Ta bort profil?',
+                f'Vill du ta bort profilen "{target}"?\nRedan skapade projektmappar på disken påverkas inte.',
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         try:
-            if not self.workspace.templates.delete_template(target):
-                raise ValueError('Inbyggda standardmallar kan inte tas bort')
-            if self.workspace.config.default_template == target:
-                self.workspace.config.default_template = 'Skaderapport'
-                self.workspace.save_settings()
-            self._sync_all_template_lists()
+            fallback = self.workspace.delete_profile(target)
+            self._sync_all_template_lists(fallback)
+            self.select_profile(fallback)
             self._load_settings_profile(self.settings_profile_picker.currentText())
             self._load_template_into_editor(self.templates.currentText())
-            self.save_settings()
-        except (OSError, ValueError) as exc:
+            self.statusBar().showMessage(f'Profilen "{target}" togs bort. Aktiv profil: "{fallback}".')
+        except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(self, 'Kunde inte ta bort profil', str(exc))
+
+    def _restore_builtin_profiles(self):
+        try:
+            restored = self.workspace.restore_builtin_profiles()
+            if not restored:
+                self.statusBar().showMessage('Alla standardmallar är redan synliga')
+                return
+            self._sync_all_template_lists(restored[0])
+            self._load_settings_profile(self.settings_profile_picker.currentText())
+            self._load_template_into_editor(self.templates.currentText())
+            self.statusBar().showMessage('Återställde standardmallar: ' + ', '.join(restored))
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self, 'Kunde inte återställa standardmallar', str(exc))
 
     def toggle_theme(self):
         self.workspace.config.theme = 'Light' if self._dark_theme else 'Dark'
@@ -1997,6 +2089,7 @@ class QtWindow(PreviewWindow):
             QMessageBox.warning(self, 'Ångra stoppades', str(exc))
 
     save_settings_profile = property(lambda self: self._save_settings_profile)
+    delete_settings_profile = property(lambda self: self._delete_settings_profile)
 
 
 def run():

@@ -335,9 +335,47 @@ def main():
             functional.settings_subtabs.setCurrentIndex(1)
             functional.settings_profile_name.setText('Inställningsprofil')
             functional.settings_profile_root.setText(str(root / 'Settings Profile Projects'))
-            functional.settings_profile_structure.setPlainText('Foto/\nKvitton/\n')
+            functional.settings_profile_structure.setPlainText('Foto/\nKvitton/\n.gitignore\n')
             functional.save_settings_profile()
             assert ws.profile_root('Inställningsprofil') == root / 'Settings Profile Projects'
+            assert '2 mappar, 1 filer' in functional.settings_profile_summary.text()
+
+            # Overwrite existing custom profile AND built-in profile cleanly.
+            overwritten_root = root / 'Overwritten Profile Projects'
+            functional.settings_profile_name.setText('Inställningsprofil')
+            functional.settings_profile_root.setText(str(overwritten_root))
+            functional.settings_profile_structure.setPlainText('Bilder/\nUnderlag/\nDokument/\n.gitignore\n')
+            functional.save_settings_profile()
+            assert ws.profile_root('Inställningsprofil') == overwritten_root
+            assert 'Dokument/' in ws.templates.list_templates()['Inställningsprofil']
+
+            # Create project containing .gitignore via ProjectDialog (regression for FGZ029 screenshot).
+            functional.dialog.template.setCurrentText('Inställningsprofil')
+            functional.dialog.name.setText('FGZ029 VINDRUTA')
+            functional.dialog.location.setCurrentText('LAXÅ')
+            functional.dialog.year.setEditText('2021')
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
+                functional.dialog.create()
+            assert (overwritten_root / 'FGZ029 VINDRUTA LAXÅ 2021/.gitignore').is_file()
+
+            # Overwrite built-in profile and delete both custom and built-in profiles cleanly.
+            builtin_custom_root = root / 'Custom Webb Root'
+            functional.settings_profile_picker.setCurrentText('Webb Projekt')
+            functional.settings_profile_root.setText(str(builtin_custom_root))
+            functional.settings_profile_structure.setPlainText('public/\nREADME.md\n')
+            functional.save_settings_profile()
+            assert ws.profile_root('Webb Projekt') == builtin_custom_root
+
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
+                functional.settings_profile_picker.setCurrentText('Inställningsprofil')
+                functional.delete_settings_profile()
+                assert 'Inställningsprofil' not in ws.templates.list_templates()
+                functional.settings_profile_picker.setCurrentText('Webb Projekt')
+                functional.delete_settings_profile()
+                assert 'Webb Projekt' not in ws.templates.list_templates()
+            functional._restore_builtin_profiles()
+            assert 'Webb Projekt' in ws.templates.list_templates()
+
             functional.fit_window_to_screen()
             QTest.qWait(50)
             assert functional.screen().availableGeometry().contains(functional.frameGeometry())

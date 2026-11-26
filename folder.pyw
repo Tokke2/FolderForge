@@ -5591,14 +5591,17 @@ class FolderForgeApp(_DnDCTkBase):
             sel = selected_var.get()
             if not sel:
                 return
-            if sel == self.settings.default_template:
-                messagebox.showinfo("Standardmall", "Välj en annan standardmall innan denna tas bort.")
+            try:
+                if not self.template_mgr.delete_template(sel):
+                    messagebox.showinfo("Info", "Profilen hittades inte.")
+                    return
+            except ValueError as exc:
+                messagebox.showwarning("Kunde inte ta bort profil", str(exc))
                 return
-            if not self.template_mgr.delete_template(sel):
-                messagebox.showinfo(
-                    "Info", "Inbyggda mallar kan inte tas bort.",
-                )
-                return
+            remaining = list(self.template_mgr.list_templates())
+            if self.settings.default_template not in remaining and remaining:
+                self.settings.default_template = "Skaderapport" if "Skaderapport" in remaining else remaining[0]
+                self._save_settings_silent()
             messagebox.showinfo("Borttaget", f"Mall '{sel}' borttagen.")
             win.destroy()
             self._template_dialog()

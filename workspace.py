@@ -57,14 +57,21 @@ class Workspace:
 
     def profile_root(self, template=None):
         """Legacy templates inherit the global path; profiles store their own path."""
-        selected = template or self.config.default_template
-        if selected not in self.templates.list_templates():
-            raise ValueError('Vald profil/mall saknas.')
+        profiles = self.templates.list_templates()
+        if template is None:
+            selected = self.config.default_template if self.config.default_template in profiles else self.selected_profile()
+        else:
+            selected = next((k for k in profiles if k == template), None) or next(
+                (k for k in profiles if k.casefold() == str(template).casefold()), None
+            )
+            if selected is None:
+                raise ValueError('Vald profil/mall saknas.')
         root = self.config.save_root
-        if selected not in self.templates._builtin:
-            path = self.templates.directory / (NameValidator.sanitize(selected) + '.json')
+        path = self.templates.profile_file(selected)
+        if path is not None:
             data = read_json_safe(path, {})
-            if isinstance(data, dict) and data.get('name') == selected and 'save_root' in data:
+            if (isinstance(data, dict) and isinstance(data.get('name'), str)
+                    and data['name'].casefold() == selected.casefold() and 'save_root' in data):
                 root = data['save_root']
         if not isinstance(root, str) or not root.strip() or not Path(root).is_absolute():
             raise ValueError('Profilens sparplats är ogiltig. Välj en fullständig sökväg under Mallar.')
@@ -74,7 +81,45 @@ class Workspace:
         self.require_lock()
         if not isinstance(name, str) or not name.strip():
             raise ValueError('Ange ett profilnamn.')
-        self.templates.save_template(name.strip(), structure, save_root=save_root)
+        clean_name = name.strip()
+        existing_keys = list(self.templates.list_templates())
+        prior_match = next((k for k in existing_keys if k.casefold() == clean_name.casefold()), None)
+        self.templates.save_template(clean_name, structure, save_root=save_root)
+        settings_changed = False
+        if prior_match is not None and prior_match != clean_name:
+            if self.config.default_template == prior_match:
+                self.config.default_template = clean_name
+                settings_changed = True
+            if self.config.last_template == prior_match:
+                self.config.last_template = clean_name
+                settings_changed = True
+        if settings_changed:
+            self.save_settings()
+        return prior_match is not None
+
+    def delete_profile(self, name):
+        self.require_lock()
+        clean_name = str(name or '').strip()
+        if not clean_name:
+            raise ValueError('Välj en profil att ta bort.')
+        if not self.templates.delete_template(clean_name):
+            raise ValueError(f'Profilen "{clean_name}" hittades inte.')
+        remaining = list(self.templates.list_templates())
+        fallback = 'Skaderapport' if 'Skaderapport' in remaining else remaining[0]
+        changed = False
+        if self.config.default_template not in remaining:
+            self.config.default_template = fallback
+            changed = True
+        if self.config.last_template and self.config.last_template not in remaining:
+            self.config.last_template = self.config.default_template
+            changed = True
+        if changed:
+            self.save_settings()
+        return self.selected_profile()
+
+    def restore_builtin_profiles(self):
+        self.require_lock()
+        return self.templates.restore_builtin_templates()
 
     def prepare_project(self, name, template=None, custom_structure=None):
         self.require_lock()
