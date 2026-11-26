@@ -199,7 +199,11 @@ def main():
             assert project.parent == root / 'Projects'
             assert project.name == 'ABC123 VINDRUTA 2026', project
             assert (project / 'Bilder').is_dir()
-            assert dialog.name.selectedText() == 'abc123 vindruta'
+            # Fälten ska tömmas efter lyckat skapande (behåller vald profil/template).
+            assert dialog.name.text() == '', 'Project name must clear after creation'
+            assert dialog.year.currentText() == '—', 'Year must reset after creation'
+            assert not dialog.create_button.isEnabled(), 'Create disabled until next name entered'
+            assert all(not b.isChecked() for b in dialog.damage_buttons.values()), 'Damage chips must clear after creation'
             assert len(historik.ProjectHistory(root / 'data/history.json').get_all()) == 1
             assert Workspace(lock, root).raw['future_key'] == 'preserved'
             assert Workspace(lock, root).config.last_template == dialog.template.currentText(), 'Remember even when user created with the initial default'
@@ -354,9 +358,41 @@ def main():
             functional.dialog.name.setText('FGZ029 VINDRUTA')
             functional.dialog.location.setCurrentText('LAXÅ')
             functional.dialog.year.setEditText('2021')
+            functional.dialog.vehicle.setCurrentIndex(1)
+            functional.dialog.custom.setPlainText('Bilder/\nUnderlag/\nDokument/\n.gitignore\n')
+            project_name, _ = functional.dialog.prepare()
+            before_fields = (functional.dialog.name.text(), functional.dialog.vehicle.currentText(),
+                functional.dialog.location.currentText(), functional.dialog.year.currentText(),
+                functional.dialog.template.currentText(), functional.dialog.custom.toPlainText())
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.No):
+                functional.dialog.create()
+            assert not (overwritten_root / project_name).exists()
+            assert before_fields == (functional.dialog.name.text(), functional.dialog.vehicle.currentText(),
+                functional.dialog.location.currentText(), functional.dialog.year.currentText(),
+                functional.dialog.template.currentText(), functional.dialog.custom.toPlainText())
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes), \
+                 patch.object(QMessageBox, 'warning'), \
+                 patch.object(ws, 'create_project', side_effect=OSError('test failure')):
+                functional.dialog.create()
+            assert before_fields == (functional.dialog.name.text(), functional.dialog.vehicle.currentText(),
+                functional.dialog.location.currentText(), functional.dialog.year.currentText(),
+                functional.dialog.template.currentText(), functional.dialog.custom.toPlainText())
             with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
                 functional.dialog.create()
-            assert (overwritten_root / 'FGZ029 VINDRUTA LAXÅ 2021/.gitignore').is_file()
+            assert (overwritten_root / project_name / '.gitignore').is_file()
+            assert functional.dialog.name.text() == ''
+            assert functional.dialog.custom.toPlainText() == ''
+            assert functional.dialog.vehicle.currentText() == '—'
+            assert functional.dialog.location.currentText() == '—'
+            assert functional.dialog.year.currentText() == '—'
+            assert functional.dialog.template.currentText() == 'Inställningsprofil'
+            assert all(not b.isChecked() for b in functional.dialog.damage_buttons.values())
+            assert not functional.dialog.create_button.isEnabled()
+            functional.dialog.name.setText('NEXT')
+            with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
+                functional.dialog.create()
+            assert (overwritten_root / 'NEXT' / '.gitignore').is_file()
+            assert functional.dialog.name.text() == ''
 
             # Overwrite built-in profile and delete both custom and built-in profiles cleanly.
             builtin_custom_root = root / 'Custom Webb Root'

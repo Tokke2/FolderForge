@@ -1,3 +1,10 @@
+# FolderForge v0.0.8
+
+## Ändringar i v0.0.8
+- **Tomma fält efter projektskapande:** Projektnamn, skadetyp, fordon, lokal, år och tillfällig struktur återställs efter lyckat skapande. Vald profil behålls. Vid avbrytande eller misslyckat skapande behålls inmatningen.
+
+---
+
 # FolderForge v0.0.7
 
 ## Ändringar i v0.0.7

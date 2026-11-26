@@ -418,6 +418,7 @@ class ProjectDialog(QDialog):
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
             path = self.window.workspace.create_project(name, items, self.template.currentText())
+            self.reset_fields_for_next()
             try:
                 from logg import resolve_matching_errors
                 resolve_matching_errors(modules=('qt.projects',))
@@ -430,8 +431,6 @@ class ProjectDialog(QDialog):
             self.window.refresh_history()
             if self.window.workspace.config.open_after_creation:
                 QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
-            self.name.setFocus()
-            self.name.selectAll()
         except ExistingProject as exc:
             if QMessageBox.question(self, 'Projektet finns redan',
                     f'Ingenting har slagits ihop eller skrivits över.\nÖppna {exc.path}?',
@@ -440,6 +439,21 @@ class ProjectDialog(QDialog):
         except (ValueError, OSError, RuntimeError) as exc:
             logging.getLogger('qt.projects').exception('Projektet kunde inte skapas')
             QMessageBox.warning(self, 'Projektet kunde inte skapas', str(exc))
+
+    def reset_fields_for_next(self):
+        """Tömmer inmatningsfälten efter ett lyckat skapande så nästa
+        projekt kan matas in direkt. Den aktiva profilen (template) behålls
+        för att underlätta serier av projekt med samma mall."""
+        # name.clear() utlöser textChanged -> on_name_changed -> sync_damage_chips + refresh,
+        # så skadetyp-chipen (STENSKOTT/VINDRUTA/SIDORUTA/BAKRUTA) rensas automatiskt.
+        self.name.clear()
+        self.custom.clear()
+        self.vehicle.setCurrentText('—')
+        self.location.setCurrentText('—')
+        self.year.setCurrentText('—')
+        self.sync_damage_chips()
+        self.refresh()
+        self.name.setFocus()
 
     def showEvent(self, event):
         super().showEvent(event)
