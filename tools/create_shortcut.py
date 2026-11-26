@@ -23,7 +23,7 @@ def create_shortcut(base, interpreter, system):
             plistlib.dump(dict(CFBundleName='FolderForge', CFBundleDisplayName='FolderForge',
                 CFBundleIdentifier='se.folderforge.desktop', CFBundleExecutable='FolderForge',
                 CFBundlePackageType='APPL', CFBundleIconFile='folderforge.icns',
-                CFBundleShortVersionString='0.0.5', NSHighResolutionCapable=True,
+                CFBundleShortVersionString='0.0.6', NSHighResolutionCapable=True,
                 NSHumanReadableCopyright='© Rickard Längkvist'), stream)
         return bundle
     if system.startswith('linux'):

@@ -1,3 +1,13 @@
+# FolderForge v0.0.6
+
+## Ändringar i v0.0.6
+- **Automatisk borttagning av åtgärdade fel ur felloggen + sparad kolumnordning i Fellistan**: När ett tidigare felande moment (t.ex. projektskapande, profilsparning eller appuppdatering) nu genomförs utan fel flyttas motsvarande äldre fel automatiskt bort ur `logs/folderforge-errors.log` till `logs/resolved-errors/` (raderas efter 7 dagar), samtidigt som manuell rensning av enskilda eller alla åtgärdade fel kvarstår i *Felsökning och fellista*. Kolumnordning och sortering i fellistan sparas nu också automatiskt i `data/qt-diagnostics-columns.json`.
+- **Ännu skarpare High-DPI vid skärmbyte & vektorrenderad systemfältsikon**: Vid flytt av fönstret mellan bildskärmar med olika DPI/upplösning (`screenChanged`) återskapas vektorikoner, logotyp, kolumnbredder och skärmklämning omedelbart. Systemfältsikonen (tray) får dessutom knivskarpa vektorrenderade storlekar upp till 128 px från `Icon/folderforge-symbol.svg`.
+- **Lägre CPU- och energiförbrukning i viloläge**: Bakgrundsbevakning i både huvudfönstret och fellistan drivs av `QFileSystemWatcher` med glesare `Qt.CoarseTimer`-intervall och pausar helt när fönstret eller dialogen är dold.
+- **Uppdaterad `AGENTS.md` / `CLAUDE.md` på GitHub**: Samtliga hårda projektregler och registret över visade chattförslag (`#1–#100`) synkroniserade i repots rot.
+
+---
+
 # FolderForge v0.0.5
 
 ## Ändringar i v0.0.5

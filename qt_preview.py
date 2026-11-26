@@ -294,6 +294,24 @@ def run(window_factory=None, production=False):
     if not tray_png.isNull():
         for px in (16, 20, 24, 32, 48, 64):
             tray_icon.addPixmap(tray_png.scaled(px, px, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+    try:
+        from PySide6.QtGui import QImage, QPainter
+        from PySide6.QtSvg import QSvgRenderer
+        svg_symbol = ROOT / 'Icon/folderforge-symbol.svg'
+        if svg_symbol.is_file():
+            renderer = QSvgRenderer(str(svg_symbol))
+            if renderer.isValid():
+                for px in (24, 32, 40, 48, 64, 96, 128):
+                    img = QImage(px, px, QImage.Format_ARGB32_Premultiplied)
+                    img.fill(Qt.transparent)
+                    painter = QPainter(img)
+                    painter.setRenderHint(QPainter.Antialiasing, True)
+                    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+                    renderer.render(painter)
+                    painter.end()
+                    tray_icon.addPixmap(QPixmap.fromImage(img))
+    except Exception:
+        pass
     if tray_icon.isNull():
         tray_icon = window.windowIcon()
     tray = QSystemTrayIcon(tray_icon, window)
@@ -320,16 +338,18 @@ def run(window_factory=None, production=False):
             service_instance_health(lock.lock_dir, ROOT / 'folder.pyw')
             if lock.check_trigger():
                 window.restore()
+        lock_watcher = None
         try:
             lock_watcher = QFileSystemWatcher([str(lock.lock_dir)], window)
             lock_watcher.directoryChanged.connect(lambda _path: poll_instance())
         except Exception:
-            pass
+            lock_watcher = None
+        smoke_mode = os.environ.get('FOLDERFORGE_QT_SMOKE') == '1'
         health = QTimer(window)
         health.setTimerType(Qt.CoarseTimer)
         health.timeout.connect(poll_instance)
-        health.start(2000)
-        if os.environ.get('FOLDERFORGE_QT_SMOKE') == '1':
+        health.start(500 if smoke_mode else (15000 if lock_watcher is not None else 2000))
+        if smoke_mode:
             import threading
             stop = threading.Event()
         else:
@@ -350,6 +370,11 @@ def run(window_factory=None, production=False):
                     if not tray.isVisible():
                         raise RuntimeError('Tray-ikonen är inte redo')
                 confirm_startup(ROOT)
+                try:
+                    from logg import resolve_matching_errors
+                    resolve_matching_errors(modules=('qt.update', 'updater'))
+                except Exception:
+                    pass
                 save_startup_report(ROOT, 'ready')
                 log.info('FolderForge redo i systemfältet (pid=%d)', os.getpid())
             except Exception as exc:
@@ -357,6 +382,7 @@ def run(window_factory=None, production=False):
                 save_startup_report(ROOT, 'confirmation-failed', str(exc))
         QTimer.singleShot(500, acknowledge)
         restart_timer = QTimer(window)
+        restart_timer.setTimerType(Qt.CoarseTimer)
         def restart_if_safe():
             if hasattr(window, 'can_restart') and window.can_restart() and pending_ready_for_restart(ROOT):
                 log.info('Uppdatering klar; säker dold Qt-omstart begärd')

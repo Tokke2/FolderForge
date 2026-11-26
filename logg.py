@@ -592,6 +592,37 @@ def resolve_error_issue(issue_id, expected_digest):
         return target
 
 
+def resolve_matching_errors(*, modules=(), text_contains=''):
+    """Tar automatiskt bort åtgärdade felposter ur den aktiva felloggen när motsvarande
+    operation nu lyckats. Arkiveras till resolved-errors/ och raderas efter 7 dagar."""
+    mod_set = {str(m) for m in modules if m}
+    needle = str(text_contains or '').casefold()
+    if not mod_set and not needle:
+        return 0
+    with _locked_logs(ERROR_LOG_FILE.parent):
+        if not ERROR_LOG_FILE.is_file() or not ERROR_LOG_FILE.stat().st_size:
+            return 0
+        raw = ERROR_LOG_FILE.read_bytes()
+        entries = _error_entries(raw.decode('utf-8', errors='replace'))
+        matched, kept = [], []
+        for entry in entries:
+            mod_ok = (not mod_set) or (entry['module'] in mod_set)
+            txt_ok = (not needle) or (needle in entry['text'].casefold())
+            if mod_ok and txt_ok:
+                matched.append(entry['text'])
+            else:
+                kept.append(entry['text'])
+        if not matched:
+            return 0
+        target = (ERROR_LOG_FILE.parent / 'resolved-errors' / local_today().isoformat()
+                  / ('auto-' + uuid.uuid4().hex + '.log'))
+        (ERROR_LOG_FILE.parent / '.errors-history-imported').touch(exist_ok=True)
+        _atomic_text(target, ''.join(matched))
+        _atomic_text(ERROR_LOG_FILE, ''.join(kept))
+        prune_archived_logs(ERROR_LOG_FILE.parent)
+        return len(matched)
+
+
 def export_diagnostic_package(destination, display_info=None):
     """Endast utvalda loggar/status, inga inställningar, projekt eller miljövariabler."""
     import json

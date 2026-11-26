@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, QUrl, Qt
+from PySide6.QtCore import QFileSystemWatcher, QTimer, QUrl, Qt
 from PySide6.QtGui import QDesktopServices, QFontDatabase, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox,
@@ -70,6 +70,9 @@ class DiagnosticsDialog(QDialog):
         for col in range(len(self.COLUMNS) - 1):
             hdr.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         self.table.setSortingEnabled(True)
+        self._restore_columns()
+        hdr.sectionMoved.connect(lambda *_: self._save_columns())
+        hdr.sortIndicatorChanged.connect(lambda *_: self._save_columns())
         layout.addWidget(self.table, 1)
 
         # Synkad QListWidget för bakåtkompatibilitet vid skriptad åtkomst
@@ -123,9 +126,65 @@ class DiagnosticsDialog(QDialog):
         self.timer = QTimer(self)
         self.timer.setTimerType(Qt.CoarseTimer)
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(2000)
+        self._log_watcher = None
+        try:
+            log_dir = self._base_dir() / 'logs'
+            log_dir.mkdir(parents=True, exist_ok=True)
+            err_file = log_dir / 'folderforge-errors.log'
+            err_file.touch(exist_ok=True)
+            self._log_watcher = QFileSystemWatcher([str(log_dir), str(err_file)], self)
+            self._log_watcher.fileChanged.connect(lambda _p: self.refresh())
+            self._log_watcher.directoryChanged.connect(lambda _p: self.refresh())
+        except Exception:
+            self._log_watcher = None
+        self.timer.start(10000 if self._log_watcher is not None else 3000)
         self.refresh()
-        fit_to_screen(self, 900, 740)
+        screen = self.screen() or QApplication.primaryScreen()
+        max_h = screen.availableGeometry().height() - 24 if screen else 780
+        fit_to_screen(self, 960, max(620, max_h))
+
+    def _columns_state_file(self) -> Path:
+        return self._base_dir() / 'data/qt-diagnostics-columns.json'
+
+    def _restore_columns(self):
+        try:
+            data = json.loads(self._columns_state_file().read_text(encoding='utf-8'))
+            hdr = self.table.horizontalHeader()
+            order = data.get('visual_order')
+            if isinstance(order, list) and len(order) == len(self.COLUMNS) and sorted(order) == list(range(len(self.COLUMNS))):
+                for target_visual, logical in enumerate(order):
+                    current_visual = hdr.visualIndex(logical)
+                    if current_visual != target_visual:
+                        hdr.moveSection(current_visual, target_visual)
+            sec = data.get('sort_section')
+            asc = data.get('sort_ascending', True)
+            if isinstance(sec, int) and 0 <= sec < len(self.COLUMNS):
+                hdr.setSortIndicator(sec, Qt.AscendingOrder if asc else Qt.DescendingOrder)
+        except Exception:
+            pass
+
+    def _save_columns(self):
+        try:
+            from historik import atomic_write_json
+            hdr = self.table.horizontalHeader()
+            order = [hdr.logicalIndex(v) for v in range(len(self.COLUMNS))]
+            atomic_write_json(self._columns_state_file(), {
+                'visual_order': order,
+                'sort_section': hdr.sortIndicatorSection(),
+                'sort_ascending': hdr.sortIndicatorOrder() == Qt.AscendingOrder,
+            }, backup=False)
+        except Exception:
+            pass
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not self.timer.isActive():
+            self.timer.start(10000 if self._log_watcher is not None else 3000)
+        self.refresh()
+
+    def hideEvent(self, event):
+        self.timer.stop()
+        super().hideEvent(event)
 
     def _base_dir(self) -> Path:
         parent = self.parentWidget()

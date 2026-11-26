@@ -205,6 +205,23 @@ class DiagnosticsTests(unittest.TestCase):
             self.assertIn(token, code)
 
 
+    def test_auto_resolve_matching_errors_archives_and_keeps_unmatched_active(self):
+        (self.logs / 'folderforge-errors.log').write_text(
+            '2026-11-26 08:00:00 ERROR [qt.projects:380] [MainThread] Projektet kunde inte skapas\n'
+            'Traceback (most recent call last):\n'
+            'ValueError: Otillåten sökväg i strukturen: [\'.gitignore\']\n'
+            '2026-11-26 08:01:00 ERROR [qt.hotkey:1500] [MainThread] Snabbtangent upptagen\n',
+            encoding='utf-8',
+        )
+        removed = logg.resolve_matching_errors(modules=('qt.projects',))
+        self.assertEqual(removed, 1)
+        remaining_issues, _ = logg.get_error_issues()
+        self.assertEqual(len(remaining_issues), 1)
+        self.assertEqual(remaining_issues[0]['module'], 'qt.hotkey')
+        archived_files = list((self.logs / 'resolved-errors').rglob('auto-*.log'))
+        self.assertEqual(len(archived_files), 1)
+        self.assertIn('.gitignore', archived_files[0].read_text(encoding='utf-8'))
+
     def test_display_geometry_is_in_export_when_supplied(self):
         self.write('example')
         target = self.base / 'display.zip'

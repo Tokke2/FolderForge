@@ -418,6 +418,11 @@ class ProjectDialog(QDialog):
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
             path = self.window.workspace.create_project(name, items, self.template.currentText())
+            try:
+                from logg import resolve_matching_errors
+                resolve_matching_errors(modules=('qt.projects',))
+            except Exception:
+                pass
             self.window.select_profile(self.template.currentText())
             self.window.statusBar().showMessage(f'Skapad: {path}')
             stat = path.stat()
@@ -746,9 +751,19 @@ class QtWindow(PreviewWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if not getattr(self, '_screen_hooked', False) and self.windowHandle() is not None:
+            self._screen_hooked = True
+            self.windowHandle().screenChanged.connect(self._on_screen_changed)
         if hasattr(self, '_update_summary_timer'):
             self.refresh_update_summary(force=True)
             self._update_summary_timer.start()
+
+    def _on_screen_changed(self, _screen):
+        # Vid skärmflytt mellan olika DPI/upplösningar återskapas vektorikoner, logotyp och ramklämning direkt.
+        self.apply_accessibility()
+        self._clamp_frame_to_screen()
+        self._reflow_header(force=True)
+        self.reflow_home(force=True)
 
     def hideEvent(self, event):
         # A hidden tray window does not need UI status polling.
@@ -1299,6 +1314,11 @@ class QtWindow(PreviewWindow):
             if hasattr(self, '_load_settings_profile'):
                 self._load_settings_profile(name)
             action_msg = 'uppdaterades (sparades över)' if overwrote else 'skapades'
+            try:
+                from logg import resolve_matching_errors
+                resolve_matching_errors(modules=('qt.profiles', 'qt.templates'))
+            except Exception:
+                pass
             self.statusBar().showMessage(f'Profilen "{name}" {action_msg}')
         except (OSError, ValueError, RuntimeError) as exc:
             logging.getLogger('qt.templates').exception('Mall kunde inte sparas')
@@ -1635,6 +1655,11 @@ class QtWindow(PreviewWindow):
             self._load_settings_profile(name)
             self._load_template_into_editor(name)
             action_msg = 'uppdaterades (sparades över)' if overwrote else 'skapades'
+            try:
+                from logg import resolve_matching_errors
+                resolve_matching_errors(modules=('qt.profiles', 'qt.templates'))
+            except Exception:
+                pass
             self.statusBar().showMessage(f'Profilen "{name}" {action_msg}')
         except (OSError, ValueError, RuntimeError) as exc:
             logging.getLogger('qt.profiles').exception('Profil kunde inte sparas')
