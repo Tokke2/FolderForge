@@ -2,7 +2,7 @@
   <img src="Icon/folderforge-logo.png" alt="FolderForge" width="440">
 </p>
 <p align="center"><b>Skapa projektmappar med rätt struktur – på några sekunder.</b></p>
-<p align="center">Windows · macOS · Linux &nbsp; | &nbsp; v0.0.8</p>
+<p align="center">Windows · macOS · Linux &nbsp; | &nbsp; v0.0.9</p>
 
 ## Vad gör appen?
 
@@ -27,7 +27,7 @@
 
 ## Kom igång
 
-1. [Hämta senaste v0.0.8](https://github.com/Tokke2/FolderForge/releases/latest) → **Source code (zip)**.
+1. [Hämta senaste v0.0.9](https://github.com/Tokke2/FolderForge/releases/latest) → **Source code (zip)**.
 2. Packa upp **hela** mappen till en plats där du har skrivbehörighet.
 3. Appen kräver **Python 3.11+ med PySide6 (Qt)** och paketen i `requirements.txt`.
    Om Python saknas kan startfilen erbjuda installation enligt nedan. Extra apppaket installeras inte av startfilen.
@@ -170,7 +170,7 @@ Det lokala GUI-provet väljer bara bland redan installerade tolkar. Ingen
 nedladdning, paketinstallation eller uppgradering körs automatiskt.
 Tkinter behövs endast för det uttryckliga Tk-reservvalet, inte för Qt.
 Om appen inte kan öppnas kan dess uppdateringsknapp inte användas:
-packa i så fall upp appfilerna från v0.0.8 manuellt och **behåll `data/`**.
+packa i så fall upp appfilerna från v0.0.9 manuellt och **behåll `data/`**.
 
 ## Felsökning
 
@@ -182,7 +182,7 @@ packa i så fall upp appfilerna från v0.0.8 manuellt och **behåll `data/`**.
   egna ikoner ändrar inte systemets delade Python-programfil.
 
 [Mer om funktioner, tangentbord och felsökning](docs/TEKNISK_GUIDE.md) ·
-[Ändringar i v0.0.8](RELEASE_NOTES.md)
+[Ändringar i v0.0.9](RELEASE_NOTES.md)
 
 © 2026 **Rickard Längkvist**
 

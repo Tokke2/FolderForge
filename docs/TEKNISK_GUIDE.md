@@ -102,9 +102,10 @@ start lämnar den redan körande appens fönster oförändrat och skapar ingen n
 ## Automatiska release-uppdateringar
 
 - Kontrollerar senaste stabila publicerade release i `Tokke2/FolderForge`
-  vid första start och därefter var 12:e timme när appen körs.
+  vid första start och därefter dagligen kl. 00.00 lokal tid när appen körs.
+  En missad dagskontroll görs vid nästa start eller när datorn vaknar.
 - Senaste kontrolltid sparas, så omstarter inte orsakar extra kontroller.
-  Efter nätverksfel görs nästa försök efter 12 timmar.
+  Efter nätverksfel görs nästa automatiska försök nästa dag; manuell kontroll är möjlig.
 - Hämtar endast nyare numeriska releasetaggar, exempelvis `v5.1.0`.
   Prereleaser, utkast och grenen `main` används inte.
 - Uppdateringen hämtas i bakgrunden och installeras automatiskt **vid nästa
@@ -210,7 +211,7 @@ Färdiga kodändringar testas och pushas enbart till den aktiva arbetsgrenen
 (`arena/ff88fe29-folderforge`), aldrig via merge till `main`.
 Vid varje kodförändring uppdateras den publicerade GitHub-releasen och markeras
 som **Latest** så att appen jämför appfilerna med SHA-256 via uppdateraren.
-Senaste version: **v0.0.8**. Se RELEASE_NOTES.md för ändringslista.
+Senaste version: **v0.0.9**. Se RELEASE_NOTES.md för ändringslista.
 
 ## År i projektnamnet
 
@@ -304,8 +305,9 @@ Användardata, mallar, historik och inställningar ingår inte i filjämförelse
 Filmanifestet sparas efter installation. Hämtade filer verifieras också mot
 manifestet före installation. Oförändrad commit med matchande filer ger ingen
 ny arkivhämtning. Äldre tillstånd utan filmanifest jämförs mot releasearkivet
-en gång. Automatisk kontroll sker var 12:e timme och manuell kontroll kan
-startas direkt; installation sker fortfarande vid nästa appstart.
+en gång. Automatisk kontroll sker kl. 00.00 lokal tid när appen körs och manuell kontroll kan
+startas direkt. Hämtade uppdateringar installeras genom den säkra automatiska omstarten
+när inga blockerande dialoger eller arbeten är aktiva.
 
 
 ## Obligatorisk konsolfri start

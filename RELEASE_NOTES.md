@@ -1,3 +1,11 @@
+# FolderForge v0.0.9
+
+## Ändringar i v0.0.9
+- **Daglig automatisk uppdatering:** Kontrollerar senaste stabila release kl. 00.00 lokal tid när appen körs. Missade dagskontroller görs vid nästa start eller efter datorvila. Verifierad uppdatering installeras genom säker omstart när pågående arbete tillåter det.
+- **Projektregler och nya idéer:** Hårda regler och förslagsregistret har uppdaterats och speglats i instruktionerna.
+
+---
+
 # FolderForge v0.0.8
 
 ## Ändringar i v0.0.8

@@ -20,7 +20,7 @@ import time
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from http.client import IncompleteRead
-from datetime import datetime
+from datetime import datetime, timedelta
 import math
 import zipfile
 
@@ -210,9 +210,17 @@ def _check_once(base, current_version, now=None, *, force=False):
     recover_pending(base, state)
     last = state.get("last_check", 0)
     unfinished = state.get("status") in {"checking", "resolving", "comparing", "downloading", "verifying"}
-    if not force and not unfinished and isinstance(last, (int, float)) and 0 <= now - last < INTERVAL:
+    # Ett automatiskt försök per lokal kalenderdag, även efter omstart.
+    # Midnatt passerar även om föregående kontroll skedde strax före midnatt.
+    same_day = False
+    if isinstance(last, (int, float)) and not isinstance(last, bool) and math.isfinite(last) and 0 < last <= now:
+        try:
+            same_day = datetime.fromtimestamp(last).date() == datetime.fromtimestamp(now).date()
+        except (ValueError, OverflowError, OSError):
+            pass
+    if not force and not unfinished and same_day:
         return
-    # Även nätverksfel begränsas till två försök per dygn, även efter omstart.
+    # Även nätverksfel begränsas till ett automatiskt försök per lokal dag.
     state["last_check"] = now
     state["status"] = "checking"
     if force:
@@ -447,9 +455,17 @@ def get_update_status(base, current_version):
         "Ändringar i hämtad uppdatering": (state.get("pending_notes") or "Ingen ändringslista publicerad.")
             if version(pending) and (base / "data/update-pending").is_dir() else "Ingen hämtad uppdatering väntar.",
         "Senaste fel": state.get("error") or state.get("installation_error") or "Inget registrerat",
-        "Kontrollintervall": "Var 12:e timme när appen körs",
+        "Kontrollintervall": "Dagligen kl. 00.00 lokal tid när appen körs; missad kontroll vid start",
         "Källa": f"GitHub Releases: {REPOSITORY} (latest)",
     }
+
+
+def seconds_until_next_midnight(now=None):
+    """Lokala kalenderdygn används även vid sommartid och tidszonsbyte."""
+    now = time.time() if now is None else now
+    tomorrow = datetime.fromtimestamp(now).date() + timedelta(days=1)
+    midnight = datetime.combine(tomorrow, datetime.min.time()).timestamp()
+    return max(0.01, midnight - now)
 
 
 def start_updates(base, current_version):
@@ -461,8 +477,9 @@ def start_updates(base, current_version):
                 check_once(base, current_version)
             except Exception:
                 logger.warning("Release-uppdatering misslyckades; appen fortsätter", exc_info=True)
-            # Kontrollera förfallotiden utan att göra extra nätverksanrop.
-            stop.wait(60)
+            # Kort tak fångar datorvila och klock-/tidszonsändringar. Ingen
+            # extra nätverkskontroll sker samma dag. Vakna exakt vid midnatt.
+            stop.wait(min(60, seconds_until_next_midnight()))
 
     threading.Thread(target=worker, name="release-updater", daemon=True).start()
     return stop

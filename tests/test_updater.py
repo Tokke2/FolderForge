@@ -8,6 +8,7 @@ from unittest.mock import patch
 import zipfile
 
 from urllib.error import HTTPError
+from datetime import datetime, timedelta
 
 import updater
 
@@ -86,6 +87,37 @@ class UpdateTests(unittest.TestCase):
             updater.check_once(self.base, '5.0', now=101)
             fetch.assert_not_called()
 
+    def test_daily_check_crosses_midnight_and_survives_restart(self):
+        midnight = datetime(2026, 5, 5).timestamp()
+        updater.write_state(self.base, {'last_check': midnight - 1, 'status': 'checked'})
+        release = json.dumps({'tag_name': 'v4.0'}).encode()
+        with patch.object(updater, 'fetch', return_value=release) as fetch:
+            updater.check_once(self.base, '5.0', now=midnight - 0.5)
+            fetch.assert_not_called()
+            updater.check_once(self.base, '5.0', now=midnight)
+            fetch.assert_called_once()
+            updater.check_once(self.base, '5.0', now=midnight + 3600)
+            fetch.assert_called_once()
+        self.assertEqual(updater.read_state(self.base)['last_check'], midnight)
+
+    def test_failed_daily_attempt_retries_next_day(self):
+        midnight = datetime(2026, 5, 5).timestamp()
+        tomorrow = datetime(2026, 5, 6).timestamp()
+        with patch.object(updater, 'fetch', side_effect=OSError('offline')) as fetch:
+            with self.assertRaises(OSError):
+                updater.check_once(self.base, '5.0', now=midnight)
+            updater.check_once(self.base, '5.0', now=midnight + 60)
+            with self.assertRaises(OSError):
+                updater.check_once(self.base, '5.0', now=tomorrow)
+            self.assertEqual(fetch.call_count, 2)
+
+    def test_seconds_until_local_midnight(self):
+        moment = datetime(2026, 5, 4, 23, 59, 45).timestamp()
+        self.assertEqual(updater.seconds_until_next_midnight(moment), 15)
+        noon = datetime(2026, 5, 4, 12).timestamp()
+        expected = datetime(2026, 5, 5).timestamp() - noon
+        self.assertEqual(updater.seconds_until_next_midnight(noon), expected)
+
     def test_download_and_apply_preserves_data(self):
         release = json.dumps({'tag_name': 'v5.1', 'draft': False, 'prerelease': False}).encode()
         with patch.object(updater, 'fetch', side_effect=[release, COMMIT, archive()]) as fetch:
@@ -139,7 +171,7 @@ class UpdateTests(unittest.TestCase):
         with patch.dict(os.environ, FOLDERFORGE_UPDATE_TOKEN=journal['token']):
             self.assertTrue(updater.confirm_startup(self.base))
         with patch.object(updater, 'fetch', side_effect=[self.release(), COMMIT]) as fetch:
-            updater.check_once(self.base, '0.0.2', now=100000 + updater.INTERVAL)
+            updater.check_once(self.base, '0.0.2', now=100000 + 86400)
             self.assertEqual(fetch.call_count, 2)
         self.assertFalse(updater.apply_pending(self.base))
 
